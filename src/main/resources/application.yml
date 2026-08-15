@@ -1,0 +1,60 @@
+server:
+  port: 9120
+spring:
+  application:
+    name: alm-backend
+  datasource:
+    url: ${ALM_DB_URL:jdbc:postgresql://localhost:5433/almdb}
+    username: ${ALM_DB_USERNAME:keycloak}
+    password: ${ALM_DB_PASSWORD:keycloak}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${AUTH_JWKS_URI:http://localhost:9000/.well-known/jwks.json}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+platform:
+  jwt:
+    issuer: ${PLATFORM_ISSUER:http://localhost:9000}
+    audience: ${PLATFORM_AUDIENCE:platform-api}
+  org-grpc:
+    host: ${ORG_GRPC_HOST:localhost}
+    port: ${ORG_GRPC_PORT:9131}
+  grpc:
+    enabled: ${ALM_GRPC_ENABLED:true}
+    port: ${ALM_GRPC_PORT:9121}
+  events:
+    enabled: ${EVENTS_ENABLED:true}
+    stream: ${EVENTS_STREAM:platform:events:v1}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+eureka:
+  client:
+    enabled: false
+logging:
+  structured:
+    format:
+      console: ecs
+

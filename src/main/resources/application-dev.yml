@@ -1,0 +1,22 @@
+# 도커 배포본과 공존하는 +10000 개발 클러스터.
+server:
+  port: 19120
+spring:
+  data:
+    redis:
+      database: 1
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:19000/.well-known/jwks.json
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:18761/eureka
+platform:
+  org-grpc:
+    port: 19131
+  grpc:
+    port: 19121
+
