@@ -43,7 +43,8 @@ jobs:
             ghcr.io/chanho4702/alm-backend:sha-${{ github.sha }}
 
       - name: Dispatch deploy
-        if: github.ref == 'refs/heads/main'
+        # infra-settings의 alm-backend deploy 매핑이 main에 합쳐진 뒤 repo variable을 true로 켠다.
+        if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.DISPATCH_PAT }}
