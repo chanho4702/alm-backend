@@ -1,5 +1,11 @@
 # alm-backend
 
+[![CI](https://github.com/chanho4702/alm-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/chanho4702/alm-backend/actions/workflows/ci.yml)
+![Java](https://img.shields.io/badge/Java-24-ED8B00?logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.6-6DB33F?logo=springboot&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-almdb-4169E1?logo=postgresql&logoColor=white)
+![Redis Streams](https://img.shields.io/badge/Redis-Streams-DC382D?logo=redis&logoColor=white)
+
 MSA_TEMPLATE의 **ALM 프로젝트·이슈 정본 서비스**다. PostgreSQL에 데이터를 저장하고,
 org-service의 `PROJECT` grant로 요청을 인가한다. 변경 이벤트는 Redis Streams에 발행하며,
 search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱스를 만든다.
