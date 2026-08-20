@@ -78,6 +78,33 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 프로젝트 키와 이슈 키는 생성 후 바뀌지 않는다. 프로젝트·이슈 수정 요청에는
 `expectedVersion`이 필요하며, 현재 버전과 다르면 `409 Conflict`를 반환한다.
 
+이슈는 부모·마감일·예상 시간·라벨·정렬 순서를 저장한다. 생성/수정 요청에서는 확장값을
+`details`로 묶는다. `PUT`에서 `details`를 생략하면 V1 클라이언트로 간주해 기존 확장값을
+보존하며, 객체를 보내면 nullable 필드를 `null`로 명시적으로 해제할 수 있다.
+
+```json
+{
+  "title": "로그인 오류",
+  "description": "OIDC callback 실패",
+  "type": "BUG",
+  "status": "todo",
+  "priority": "HIGH",
+  "assigneeId": 2,
+  "details": {
+    "parentId": null,
+    "dueDate": "2026-08-20",
+    "estimateHours": 3.5,
+    "labels": ["security", "backend"]
+  },
+  "expectedVersion": 2
+}
+```
+
+계층은 에픽→일반 이슈(작업·스토리·버그)→하위 작업의 2단계만 허용한다. 부모는 같은
+프로젝트에 있어야 하며, 부모 삭제 시 자식의 `parentId`는 해제된다. `order`는 응답에만
+포함되는 서버 관리 값이며 생성 시 프로젝트 내 다음 번호로 발급한다. 재정렬은 별도 API로
+제공하기 전까지 일반 수정 요청으로 바꿀 수 없다.
+
 ## 서비스 경계
 
 ```text

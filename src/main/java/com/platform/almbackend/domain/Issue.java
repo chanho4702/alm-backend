@@ -7,7 +7,11 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "issue")
@@ -51,6 +55,24 @@ public class Issue {
     @Column(name = "reporter_id", nullable = false, updatable = false)
     private Long reporterId;
 
+    @Column(name = "parent_id")
+    private Long parentId;
+
+    @Column(name = "due_date")
+    private LocalDate dueDate;
+
+    @Column(name = "estimate_hours", precision = 10, scale = 2)
+    private BigDecimal estimateHours;
+
+    @ElementCollection
+    @CollectionTable(name = "issue_label", joinColumns = @JoinColumn(name = "issue_id"))
+    @OrderColumn(name = "label_order")
+    @Column(name = "label", nullable = false, length = 80)
+    private List<String> labels = new ArrayList<>();
+
+    @Column(name = "sort_order", nullable = false)
+    private Long sortOrder;
+
     @Column(nullable = false)
     private Integer version;
 
@@ -73,6 +95,26 @@ public class Issue {
             IssuePriority priority,
             Long assigneeId,
             long reporterId) {
+        return of(projectId, issueNumber, key, title, description, type, status, priority,
+                assigneeId, reporterId, null, null, null, List.of(), 1L);
+    }
+
+    public static Issue of(
+            long projectId,
+            long issueNumber,
+            String key,
+            String title,
+            String description,
+            IssueType type,
+            String status,
+            IssuePriority priority,
+            Long assigneeId,
+            long reporterId,
+            Long parentId,
+            LocalDate dueDate,
+            BigDecimal estimateHours,
+            List<String> labels,
+            long sortOrder) {
         Issue issue = new Issue();
         issue.projectId = projectId;
         issue.issueNumber = issueNumber;
@@ -84,6 +126,11 @@ public class Issue {
         issue.priority = priority;
         issue.assigneeId = assigneeId;
         issue.reporterId = reporterId;
+        issue.parentId = parentId;
+        issue.dueDate = dueDate;
+        issue.estimateHours = estimateHours;
+        issue.labels = new ArrayList<>(labels);
+        issue.sortOrder = sortOrder;
         issue.version = 1;
         return issue;
     }
@@ -94,14 +141,24 @@ public class Issue {
             IssueType type,
             String status,
             IssuePriority priority,
-            Long assigneeId) {
+            Long assigneeId,
+            Long parentId,
+            LocalDate dueDate,
+            BigDecimal estimateHours,
+            List<String> labels,
+            long sortOrder) {
         if (title != null) this.title = title;
         if (description != null) this.description = description;
         if (type != null) this.type = type;
         if (status != null) this.status = status;
         if (priority != null) this.priority = priority;
         this.assigneeId = assigneeId;
+        this.parentId = parentId;
+        this.dueDate = dueDate;
+        this.estimateHours = estimateHours;
+        this.labels.clear();
+        this.labels.addAll(labels);
+        this.sortOrder = sortOrder;
         this.version += 1;
     }
 }
-
