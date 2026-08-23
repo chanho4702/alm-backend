@@ -21,6 +21,7 @@ public record IssueResponse(
         Long assigneeId,
         long reporterId,
         Long parentId,
+        Long sprintId,
         LocalDate dueDate,
         BigDecimal estimateHours,
         List<String> labels,
@@ -32,7 +33,8 @@ public record IssueResponse(
     public static IssueResponse from(Issue issue) {
         return new IssueResponse(issue.getId(), issue.getKey(), issue.getProjectId(), issue.getTitle(),
                 issue.getDescription(), issue.getType(), issue.getStatus(), issue.getPriority(),
-                issue.getAssigneeId(), issue.getReporterId(), issue.getParentId(), issue.getDueDate(),
+                issue.getAssigneeId(), issue.getReporterId(), issue.getParentId(), issue.getSprintId(),
+                issue.getDueDate(),
                 issue.getEstimateHours(), List.copyOf(issue.getLabels()), issue.getSortOrder(),
                 issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt());
     }

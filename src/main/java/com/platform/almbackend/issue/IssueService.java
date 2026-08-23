@@ -10,10 +10,13 @@ import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueDetailsRequest;
+import com.platform.almbackend.issue.dto.IssueMoveRequest;
+import com.platform.almbackend.issue.dto.IssueRankRequest;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.issue.dto.IssueUpdateRequest;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
+import com.platform.almbackend.sprint.SprintService;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +37,7 @@ public class IssueService {
     private final IssueRepository issues;
     private final ProjectRepository projects;
     private final ProjectService projectService;
+    private final SprintService sprintService;
     private final EventRelay events;
 
     @Transactional(readOnly = true)
@@ -61,7 +65,9 @@ public class IssueService {
         IssueDetailsRequest details = request.details();
         Long parentId = details == null ? null : details.parentId();
         validateParent(projectId, null, type, parentId);
-        long order = issues.findMaxSortOrderByProjectId(projectId) + 1;
+        Long sprintId = details == null ? null : details.sprintId();
+        if (sprintId != null) sprintService.requireSprintInProject(sprintId, projectId);
+        long order = issues.findMaxSortOrderInRankGroup(projectId, sprintId) + 1;
         Issue issue = issues.save(Issue.of(
                 projectId,
                 number,
@@ -74,6 +80,7 @@ public class IssueService {
                 request.assigneeId(),
                 userId,
                 parentId,
+                sprintId,
                 details == null ? null : details.dueDate(),
                 details == null ? null : details.estimateHours(),
                 normalizeLabels(details == null ? null : details.labels()),
@@ -96,24 +103,43 @@ public class IssueService {
         IssueDetailsRequest details = request.details();
         Long requestedParentId = details == null ? issue.getParentId() : details.parentId();
         Long parentId = resolveParent(issue, request.type(), requestedParentId);
+        Long sprintId = details == null ? issue.getSprintId() : details.sprintId();
+        if (sprintId != null && !Objects.equals(sprintId, issue.getSprintId())) {
+            sprintService.requireSprintInProject(sprintId, issue.getProjectId());
+        }
         LocalDate dueDate = details == null ? issue.getDueDate() : details.dueDate();
         BigDecimal estimateHours = details == null ? issue.getEstimateHours() : details.estimateHours();
         List<String> labels = details == null
                 ? List.copyOf(issue.getLabels())
                 : normalizeLabels(details.labels());
+        String status = normalizeStatus(request.status());
+        // 상태나 스프린트가 바뀌면 대상 컬럼 맨 뒤로 보낸다. 정밀 배치는 move/rank가 한다.
+        Long previousSprintId = issue.getSprintId();
+        boolean regrouped = !Objects.equals(status, issue.getStatus())
+                || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
         issue.edit(
                 request.title().trim(),
                 normalizeDescription(request.description()),
                 request.type(),
-                normalizeStatus(request.status()),
+                status,
                 request.priority(),
                 request.assigneeId(),
                 parentId,
+                sprintId,
                 dueDate,
                 estimateHours,
                 labels,
                 order);
+        if (regrouped) {
+            List<Issue> source = Objects.equals(previousSprintId, sprintId)
+                    ? List.of()
+                    : rankGroupWithout(issue, previousSprintId);
+            List<Issue> group = rankGroupWithout(issue, sprintId);
+            group.add(afterLastOfStatus(group, status), issue);
+            resequence(group);
+            resequence(source);
+        }
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -127,6 +153,98 @@ public class IssueService {
         events.afterCommit(AlmEvents.issueDeleted(userId, issue));
         issues.clearParentByParentId(issueId);
         issues.delete(issue);
+    }
+
+    /**
+     * 보드 컬럼 이동. `sortOrder`는 랭크 그룹(프로젝트+스프린트) 하나에만 존재하는 단일 순서열이고
+     * 보드 컬럼은 그 순서열을 상태로 거른 결과다 — 컬럼마다 따로 1부터 매기면 같은 그룹 안에서
+     * 번호가 충돌한다. 그래서 컬럼 기준으로 자리를 찾은 뒤 그룹 전체를 다시 매긴다.
+     */
+    public IssueResponse move(long userId, long issueId, IssueMoveRequest request) {
+        Issue snapshot = requireIssue(issueId);
+        projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
+        lockProject(snapshot.getProjectId());
+        Issue issue = issues.findByIdForUpdate(issueId)
+                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
+        String status = normalizeStatus(request.status());
+        issue.moveTo(status, issue.getSortOrder());
+        List<Issue> group = rankGroupWithout(issue, issue.getSprintId());
+        int insertAt = indexOfInColumn(group, request.beforeId(), status);
+        if (insertAt < 0) insertAt = afterLastOfStatus(group, status);
+        group.add(insertAt, issue);
+        resequence(group);
+        events.afterCommit(AlmEvents.issueUpdated(userId, issue));
+        return IssueResponse.from(issue);
+    }
+
+    /**
+     * 백로그/스프린트 랭크 이동 — 대상 그룹(프로젝트+스프린트, 상태 무관) 안에서 자리를 잡는다.
+     * 요청 본문이 없으면 백로그 맨 뒤로 본다.
+     */
+    public IssueResponse rank(long userId, long issueId, IssueRankRequest request) {
+        Issue snapshot = requireIssue(issueId);
+        projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
+        lockProject(snapshot.getProjectId());
+        Issue issue = issues.findByIdForUpdate(issueId)
+                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
+        Long sprintId = request == null ? null : request.sprintId();
+        if (sprintId != null) sprintService.requireSprintInProject(sprintId, issue.getProjectId());
+        Long previousSprintId = issue.getSprintId();
+        List<Issue> source = Objects.equals(previousSprintId, sprintId)
+                ? List.of()
+                : rankGroupWithout(issue, previousSprintId);
+        issue.rankTo(sprintId, issue.getSortOrder());
+        List<Issue> group = rankGroupWithout(issue, sprintId);
+        int insertAt = indexOf(group, request == null ? null : request.beforeId());
+        if (insertAt < 0) insertAt = group.size();
+        group.add(insertAt, issue);
+        resequence(group);
+        // 떠난 그룹도 다시 조밀하게 만든다 — 그룹이 항상 1..n이면 이후 삽입 위치 계산이 단순하다.
+        resequence(source);
+        events.afterCommit(AlmEvents.issueUpdated(userId, issue));
+        return IssueResponse.from(issue);
+    }
+
+    private List<Issue> rankGroupWithout(Issue issue, Long sprintId) {
+        List<Issue> group = new ArrayList<>(issues.findRankGroup(issue.getProjectId(), sprintId));
+        group.removeIf(entry -> entry.getId().equals(issue.getId()));
+        return group;
+    }
+
+    /**
+     * beforeId는 대상 컬럼 안의 이슈여야 한다. 다른 컬럼의 이슈거나 이미 사라졌으면 -1이다 —
+     * 드래그 도중 다른 사용자가 그 이슈를 옮겼을 수 있고, 화면은 이동 후 항상 재조회한다.
+     */
+    private static int indexOfInColumn(List<Issue> group, Long beforeId, String status) {
+        if (beforeId == null) return -1;
+        for (int i = 0; i < group.size(); i++) {
+            Issue entry = group.get(i);
+            if (entry.getId().equals(beforeId) && Objects.equals(entry.getStatus(), status)) return i;
+        }
+        return -1;
+    }
+
+    private static int indexOf(List<Issue> group, Long beforeId) {
+        if (beforeId == null) return -1;
+        for (int i = 0; i < group.size(); i++) {
+            if (group.get(i).getId().equals(beforeId)) return i;
+        }
+        return -1;
+    }
+
+    /** 대상 컬럼의 마지막 다음 자리. 컬럼이 비었으면 그룹 맨 뒤다. */
+    private static int afterLastOfStatus(List<Issue> group, String status) {
+        int last = -1;
+        for (int i = 0; i < group.size(); i++) {
+            if (Objects.equals(group.get(i).getStatus(), status)) last = i;
+        }
+        return last < 0 ? group.size() : last + 1;
+    }
+
+    private static void resequence(List<Issue> group) {
+        for (int i = 0; i < group.size(); i++) {
+            group.get(i).resequence(i + 1L);
+        }
     }
 
     private Issue requireIssue(long issueId) {

@@ -14,6 +14,7 @@ import com.platform.almbackend.project.dto.ProjectResponse;
 import com.platform.almbackend.project.dto.ProjectUpdateRequest;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
+import com.platform.almbackend.repository.SprintRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ import java.util.Locale;
 public class ProjectService {
     private final ProjectRepository projects;
     private final IssueRepository issues;
+    private final SprintRepository sprints;
     private final PermissionClient permissions;
     private final EventRelay events;
 
@@ -76,7 +78,9 @@ public class ProjectService {
         Project project = projects.findByIdForUpdate(projectId)
                 .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
         require(userId, projectId, AlmAction.ADMIN);
+        // 이슈가 스프린트를 참조하므로 순서가 있다. DB cascade에 기대지 않고 여기서 명시한다.
         issues.deleteByProjectId(projectId);
+        sprints.deleteByProjectId(projectId);
         projects.delete(project);
         permissions.revokeProjectGrants(projectId);
         events.afterCommit(AlmEvents.projectDeleted(userId, projectId));

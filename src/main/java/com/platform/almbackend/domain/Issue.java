@@ -58,6 +58,9 @@ public class Issue {
     @Column(name = "parent_id")
     private Long parentId;
 
+    @Column(name = "sprint_id")
+    private Long sprintId;
+
     @Column(name = "due_date")
     private LocalDate dueDate;
 
@@ -96,7 +99,7 @@ public class Issue {
             Long assigneeId,
             long reporterId) {
         return of(projectId, issueNumber, key, title, description, type, status, priority,
-                assigneeId, reporterId, null, null, null, List.of(), 1L);
+                assigneeId, reporterId, null, null, null, null, List.of(), 1L);
     }
 
     public static Issue of(
@@ -111,6 +114,7 @@ public class Issue {
             Long assigneeId,
             long reporterId,
             Long parentId,
+            Long sprintId,
             LocalDate dueDate,
             BigDecimal estimateHours,
             List<String> labels,
@@ -127,6 +131,7 @@ public class Issue {
         issue.assigneeId = assigneeId;
         issue.reporterId = reporterId;
         issue.parentId = parentId;
+        issue.sprintId = sprintId;
         issue.dueDate = dueDate;
         issue.estimateHours = estimateHours;
         issue.labels = new ArrayList<>(labels);
@@ -143,6 +148,7 @@ public class Issue {
             IssuePriority priority,
             Long assigneeId,
             Long parentId,
+            Long sprintId,
             LocalDate dueDate,
             BigDecimal estimateHours,
             List<String> labels,
@@ -154,11 +160,38 @@ public class Issue {
         if (priority != null) this.priority = priority;
         this.assigneeId = assigneeId;
         this.parentId = parentId;
+        this.sprintId = sprintId;
         this.dueDate = dueDate;
         this.estimateHours = estimateHours;
         this.labels.clear();
         this.labels.addAll(labels);
         this.sortOrder = sortOrder;
         this.version += 1;
+    }
+
+    /**
+     * 보드 이동 — 상태와 그룹 내 순서만 바꾼다. 정렬은 사용자가 편집 폼에서 보고 있던 값이
+     * 아니므로 `version`을 올리지 않는다. 올리면 드래그 한 번이 남의 편집 저장을 409로 만든다.
+     */
+    public void moveTo(String status, long sortOrder) {
+        this.status = status;
+        this.sortOrder = sortOrder;
+    }
+
+    /** 백로그/스프린트 랭크 이동 — 스프린트 소속과 그룹 내 순서만 바꾼다. */
+    public void rankTo(Long sprintId, long sortOrder) {
+        this.sprintId = sprintId;
+        this.sortOrder = sortOrder;
+    }
+
+    /** 같은 그룹의 다른 이슈들을 1..n으로 다시 매길 때 쓴다. */
+    public void resequence(long sortOrder) {
+        this.sortOrder = sortOrder;
+    }
+
+    /** 스프린트 완료 시 미완료 이슈를 백로그로 되돌린다. */
+    public void moveToBacklog(long sortOrder) {
+        this.sprintId = null;
+        this.sortOrder = sortOrder;
     }
 }

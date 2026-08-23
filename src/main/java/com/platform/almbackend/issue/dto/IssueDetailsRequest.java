@@ -17,6 +17,8 @@ import java.util.List;
 public record IssueDetailsRequest(
         @Positive(message = "parentId는 양수여야 합니다")
         Long parentId,
+        @Positive(message = "sprintId는 양수여야 합니다")
+        Long sprintId,
         LocalDate dueDate,
         @DecimalMin(value = "0.01", message = "예상 시간은 0보다 커야 합니다")
         @Digits(integer = 8, fraction = 2, message = "예상 시간은 소수 둘째 자리까지 입력하세요")

@@ -24,6 +24,38 @@ public interface IssueRepository extends JpaRepository<Issue, Long> {
     @Query("select coalesce(max(i.sortOrder), 0) from Issue i where i.projectId = :projectId")
     long findMaxSortOrderByProjectId(@Param("projectId") long projectId);
 
+    /**
+     * 백로그 랭크 그룹 = 프로젝트 + 스프린트(상태 무관). 백로그는 sprintId가 null이라
+     * 파생 쿼리로는 표현할 수 없어 명시적으로 null 비교를 쓴다.
+     */
+    @EntityGraph(attributePaths = "labels")
+    @Query("""
+            select i from Issue i
+             where i.projectId = :projectId
+               and ((:sprintId is null and i.sprintId is null) or i.sprintId = :sprintId)
+             order by i.sortOrder asc, i.key asc
+            """)
+    List<Issue> findRankGroup(@Param("projectId") long projectId, @Param("sprintId") Long sprintId);
+
+    /** 보드 컬럼 그룹 = 프로젝트 + 스프린트 + 상태. */
+    @EntityGraph(attributePaths = "labels")
+    @Query("""
+            select i from Issue i
+             where i.projectId = :projectId
+               and ((:sprintId is null and i.sprintId is null) or i.sprintId = :sprintId)
+               and i.status = :status
+             order by i.sortOrder asc, i.key asc
+            """)
+    List<Issue> findBoardColumn(@Param("projectId") long projectId, @Param("sprintId") Long sprintId,
+                                @Param("status") String status);
+
+    @Query("""
+            select coalesce(max(i.sortOrder), 0) from Issue i
+             where i.projectId = :projectId
+               and ((:sprintId is null and i.sprintId is null) or i.sprintId = :sprintId)
+            """)
+    long findMaxSortOrderInRankGroup(@Param("projectId") long projectId, @Param("sprintId") Long sprintId);
+
     @Modifying(flushAutomatically = true)
     @Query("update Issue i set i.parentId = null where i.parentId = :parentId")
     int clearParentByParentId(@Param("parentId") long parentId);
