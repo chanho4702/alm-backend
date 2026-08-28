@@ -13,6 +13,10 @@ search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱�
 전체 플랫폼 구성은 [infra-settings](https://github.com/chanho4702/infra-settings), 컨테이너
 배포는 [infra README](https://github.com/chanho4702/infra-settings/blob/main/infra/README.md)를 참고한다.
 
+지라 코어 대비 기능 갭 분석과 이 서비스에 필요한 계약 확장(스프린트 목표·기간, 완료 시 이관
+대상, 상태 변경 이력·리포트 집계)은 alm-front `docs/roadmap/2026-08-28-jira-parity-requirements.md`에
+정리돼 있다.
+
 ## 한눈에 보기
 
 | 항목 | 내용 |
@@ -78,6 +82,8 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |
+| `GET` | `/api/alm/sprints/{sprintId}` | VIEW | 스프린트 단건 |
+| `PUT` | `/api/alm/sprints/{sprintId}` | EDIT | 계획 메타 수정(이름·목표·예정 기간, `expectedVersion`) |
 | `POST` | `/api/alm/sprints/{sprintId}/start` | EDIT | 스프린트 시작(프로젝트당 1개) |
 | `POST` | `/api/alm/sprints/{sprintId}/complete` | EDIT | 스프린트 완료, 미완료 이슈는 백로그로 |
 

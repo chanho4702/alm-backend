@@ -13,6 +13,7 @@ import com.platform.almbackend.repository.ProjectRepository;
 import com.platform.almbackend.repository.SprintRepository;
 import com.platform.almbackend.sprint.dto.SprintCompleteRequest;
 import com.platform.almbackend.sprint.dto.SprintCreateRequest;
+import com.platform.almbackend.sprint.dto.SprintUpdateRequest;
 import com.platform.almbackend.sprint.dto.SprintResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -46,6 +47,13 @@ public class SprintService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public SprintResponse get(long userId, long sprintId) {
+        Sprint sprint = requireSprint(sprintId);
+        projectService.require(userId, sprint.getProjectId(), AlmAction.VIEW);
+        return SprintResponse.from(sprint);
+    }
+
     public SprintResponse create(long userId, long projectId, SprintCreateRequest request) {
         projectService.require(userId, projectId, AlmAction.EDIT);
         lockProject(projectId);
@@ -54,6 +62,26 @@ public class SprintService {
                 ? "Sprint " + number
                 : request.name().trim();
         return SprintResponse.from(sprints.save(Sprint.of(projectId, number, name)));
+    }
+
+    /**
+     * 계획 메타(이름·목표·예정 기간) 수정. 상태와 무관하게 허용한다 — 진행 중에도 목표를
+     * 다시 쓰는 일이 실제로 일어난다. 동시 수정은 프로젝트·이슈와 같은 expectedVersion 규칙으로 막는다.
+     */
+    public SprintResponse update(long userId, long sprintId, SprintUpdateRequest request) {
+        // 엔티티를 먼저 로드하면 잠금 조회가 1차 캐시의 낡은 인스턴스를 돌려줘 version 비교가
+        // 무력화된다. 권한 확인에 필요한 projectId만 스칼라로 읽고, 판정은 잠근 행으로만 한다.
+        long projectId = sprints.findProjectIdById(sprintId)
+                .orElseThrow(() -> new NotFoundException("스프린트를 찾을 수 없습니다: " + sprintId));
+        projectService.require(userId, projectId, AlmAction.EDIT);
+        Sprint locked = lockSprint(sprintId);
+        if (!locked.getVersion().equals(request.expectedVersion())) {
+            throw new ConflictException("다른 사용자가 먼저 스프린트를 수정했습니다. 현재 "
+                    + locked.getVersion() + ", 요청 " + request.expectedVersion());
+        }
+        locked.editPlan(request.name().trim(), blankToNull(request.goal()),
+                request.plannedStart(), request.plannedEnd());
+        return SprintResponse.from(locked);
     }
 
     /**
@@ -126,6 +154,14 @@ public class SprintService {
             throw new IllegalArgumentException("다른 프로젝트의 스프린트입니다: " + sprintId);
         }
         return sprint;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private Sprint lockSprint(long sprintId) {

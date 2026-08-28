@@ -3,6 +3,7 @@ package com.platform.almbackend.sprint;
 import com.platform.almbackend.sprint.dto.SprintCompleteRequest;
 import com.platform.almbackend.sprint.dto.SprintCreateRequest;
 import com.platform.almbackend.sprint.dto.SprintResponse;
+import com.platform.almbackend.sprint.dto.SprintUpdateRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,19 @@ public class SprintController {
             @Valid @RequestBody(required = false) SprintCreateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return sprints.create(userId(jwt), projectId, request);
+    }
+
+    @GetMapping("/api/alm/sprints/{sprintId}")
+    public SprintResponse get(@PathVariable long sprintId, @AuthenticationPrincipal Jwt jwt) {
+        return sprints.get(userId(jwt), sprintId);
+    }
+
+    @PutMapping("/api/alm/sprints/{sprintId}")
+    public SprintResponse update(
+            @PathVariable long sprintId,
+            @Valid @RequestBody SprintUpdateRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return sprints.update(userId(jwt), sprintId, request);
     }
 
     @PostMapping("/api/alm/sprints/{sprintId}/start")

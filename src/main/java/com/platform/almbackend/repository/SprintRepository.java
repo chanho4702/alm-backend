@@ -21,6 +21,13 @@ public interface SprintRepository extends JpaRepository<Sprint, Long> {
     @Query("select coalesce(max(s.sprintNumber), 0) from Sprint s where s.projectId = :projectId")
     long findMaxSprintNumberByProjectId(@Param("projectId") long projectId);
 
+    /**
+     * 권한 확인에 필요한 projectId만 읽는다 — 엔티티를 영속성 컨텍스트에 올리지 않아서
+     * 뒤이은 `findByIdForUpdate`가 1차 캐시의 낡은 인스턴스를 되돌려주지 않는다.
+     */
+    @Query("select s.projectId from Sprint s where s.id = :id")
+    Optional<Long> findProjectIdById(@Param("id") long id);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Sprint s where s.id = :id")
     Optional<Sprint> findByIdForUpdate(@Param("id") long id);
