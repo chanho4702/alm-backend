@@ -109,8 +109,9 @@ public class SprintService {
     }
 
     /**
-     * 완료하면 미완료 이슈는 백로그 맨 뒤로 되돌린다. 완료 판정 기준은 요청이 알려준 상태 목록이며,
-     * 목록이 비어 있으면 스프린트의 모든 이슈가 백로그로 돌아간다.
+     * 완료하면 미완료 이슈는 요청이 지정한 스프린트로, 지정이 없으면 백로그 맨 뒤로 옮긴다.
+     * 완료 판정 기준은 요청이 알려준 상태 목록이며, 목록이 비어 있으면 스프린트의 모든 이슈가
+     * 옮겨진다. 이관 대상 검증이 실패하면 완료 자체가 일어나지 않는다(한 트랜잭션).
      */
     public SprintResponse complete(long userId, long sprintId, SprintCompleteRequest request) {
         Sprint sprint = requireSprint(sprintId);
@@ -123,13 +124,25 @@ public class SprintService {
         Set<String> doneStatuses = request == null || request.doneStatuses() == null
                 ? Set.of()
                 : Set.copyOf(request.doneStatuses());
-        long backlogOrder = issues.findMaxSortOrderInRankGroup(locked.getProjectId(), null);
+        Long targetSprintId = request == null ? null : request.moveUnfinishedToSprintId();
+        if (targetSprintId != null) {
+            if (targetSprintId == sprintId) {
+                throw new IllegalArgumentException("완료하는 스프린트로는 이관할 수 없습니다");
+            }
+            Sprint target = requireSprintInProject(targetSprintId, locked.getProjectId());
+            if (target.getState() == SprintState.DONE) {
+                throw new IllegalArgumentException("완료된 스프린트로는 이관할 수 없습니다");
+            }
+        }
+        long targetOrder = issues.findMaxSortOrderInRankGroup(locked.getProjectId(), targetSprintId);
         List<Issue> retained = new ArrayList<>();
         for (Issue issue : issues.findRankGroup(locked.getProjectId(), sprintId)) {
             if (doneStatuses.contains(issue.getStatus())) {
                 retained.add(issue);
+            } else if (targetSprintId == null) {
+                issue.moveToBacklog(++targetOrder);
             } else {
-                issue.moveToBacklog(++backlogOrder);
+                issue.moveToSprint(targetSprintId, ++targetOrder);
             }
         }
         // 남은 이슈 사이에 구멍이 생기므로 스프린트 그룹도 다시 조밀하게 만든다.

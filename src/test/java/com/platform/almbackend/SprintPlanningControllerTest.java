@@ -25,8 +25,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 스프린트 계획 메타(목표·시작/종료 예정일) 계약. 스프린트가 "무엇을 위해 언제까지"인지를
- * 서버가 보존해야 번다운의 시간축과 스프린트 리포트가 성립한다.
+ * 스프린트 계획 계약 — 계획 메타(목표·시작/종료 예정일)와 완료 시 미완료 이슈 이관 대상.
+ * 스프린트가 "무엇을 위해 언제까지"인지를 서버가 보존해야 번다운의 시간축과 스프린트 리포트가
+ * 성립하고, 완료 처리가 다음 스프린트로 이어져야 계획이 끊기지 않는다.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -147,6 +148,98 @@ class SprintPlanningControllerTest {
 
         mvc.perform(get("/api/alm/sprints/{id}", sprintId + 9999).with(asUser(1, "Alice")))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void 완료할_때_미완료_이슈를_지정한_스프린트로_옮긴다() throws Exception {
+        long next = createSprint();
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        long finished = createIssue("끝난 것", "done", sprintId);
+        long unfinished = createIssue("남은 것", "inprogress", sprintId);
+
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"doneStatuses\":[\"done\"],\"moveUnfinishedToSprintId\":" + next + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("DONE"));
+
+        mvc.perform(get("/api/alm/issues/{id}", unfinished).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.sprintId").value(next))
+                .andExpect(jsonPath("$.order").value(1));
+        mvc.perform(get("/api/alm/issues/{id}", finished).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.sprintId").value(sprintId));
+    }
+
+    @Test
+    void 이관_대상은_같은_프로젝트의_끝나지_않은_다른_스프린트여야_한다() throws Exception {
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        createIssue("남은 것", "inprogress", sprintId);
+
+        // 자기 자신으로는 옮길 수 없다
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"doneStatuses\":[\"done\"],\"moveUnfinishedToSprintId\":" + sprintId + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("완료하는 스프린트로는 이관할 수 없습니다"));
+
+        // 다른 프로젝트의 스프린트도 안 된다
+        long otherProject = createProject("oth", "다른 제품");
+        long otherSprint = createSprintIn(otherProject);
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"doneStatuses\":[\"done\"],\"moveUnfinishedToSprintId\":" + otherSprint + "}"))
+                .andExpect(status().isBadRequest());
+
+        // 스프린트는 여전히 진행 중이다 — 거부된 완료가 상태를 바꾸지 않았다
+        mvc.perform(get("/api/alm/sprints/{id}", sprintId).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.state").value("ACTIVE"));
+    }
+
+    @Test
+    void 이관_대상이_이미_완료된_스프린트면_거부한다() throws Exception {
+        long done = createSprint();
+        mvc.perform(post("/api/alm/sprints/{id}/start", done).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/alm/sprints/{id}/complete", done).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        createIssue("남은 것", "inprogress", sprintId);
+
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"doneStatuses\":[\"done\"],\"moveUnfinishedToSprintId\":" + done + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("완료된 스프린트로는 이관할 수 없습니다"));
+    }
+
+    private long createIssue(String title, String status, Long sprintId) throws Exception {
+        String details = sprintId == null ? "{}" : "{\"sprintId\":" + sprintId + "}";
+        String body = mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"" + title + "\",\"description\":\"\",\"type\":\"TASK\","
+                                + "\"status\":\"" + status + "\",\"priority\":\"MEDIUM\",\"details\":" + details + "}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return read(body).get("id").asLong();
+    }
+
+    private long createProject(String key, String name) throws Exception {
+        String body = mvc.perform(post("/api/alm/projects").with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"key\":\"" + key + "\",\"name\":\"" + name + "\",\"description\":\"\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return read(body).get("id").asLong();
+    }
+
+    private long createSprintIn(long targetProjectId) throws Exception {
+        String body = mvc.perform(post("/api/alm/projects/{id}/sprints", targetProjectId).with(asUser(1, "Alice")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return read(body).get("id").asLong();
     }
 
     private long createProject() throws Exception {

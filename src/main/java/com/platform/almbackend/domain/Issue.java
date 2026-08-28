@@ -194,4 +194,10 @@ public class Issue {
         this.sprintId = null;
         this.sortOrder = sortOrder;
     }
+
+    /** 스프린트 완료 시 미완료 이슈를 다음 스프린트로 넘긴다. */
+    public void moveToSprint(long sprintId, long sortOrder) {
+        this.sprintId = sprintId;
+        this.sortOrder = sortOrder;
+    }
 }

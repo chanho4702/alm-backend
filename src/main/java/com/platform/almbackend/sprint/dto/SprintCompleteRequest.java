@@ -13,5 +13,10 @@ import java.util.List;
 public record SprintCompleteRequest(
         @Size(max = 100, message = "완료 상태는 최대 100개까지 지정할 수 있습니다")
         List<@NotBlank(message = "빈 상태 ID는 사용할 수 없습니다")
-                @Size(max = 80, message = "상태 ID는 80자 이하여야 합니다") String> doneStatuses
+                @Size(max = 80, message = "상태 ID는 80자 이하여야 합니다") String> doneStatuses,
+        /**
+         * 미완료 이슈를 옮길 스프린트. 생략하면 백로그로 되돌린다 — 지라와 같은 선택지다.
+         * 같은 프로젝트의 끝나지 않은 다른 스프린트만 지정할 수 있다.
+         */
+        Long moveUnfinishedToSprintId
 ) {}
