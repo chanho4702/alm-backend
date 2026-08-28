@@ -80,6 +80,7 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 |
 | `POST` | `/api/alm/issues/{issueId}/rank` | EDIT | 백로그/스프린트 랭크 이동 |
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |
+| `GET` | `/api/alm/projects/{projectId}/changes` | VIEW | 변경 이력(리포트 원천) — `field`·`sprintId`·`since` 필터 |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |
 | `GET` | `/api/alm/sprints/{sprintId}` | VIEW | 스프린트 단건 |

@@ -8,6 +8,7 @@ import com.platform.almbackend.domain.IssueType;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
+import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueDetailsRequest;
 import com.platform.almbackend.issue.dto.IssueMoveRequest;
@@ -39,6 +40,7 @@ public class IssueService {
     private final ProjectService projectService;
     private final SprintService sprintService;
     private final EventRelay events;
+    private final IssueChangeLogService changeLog;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -85,6 +87,7 @@ public class IssueService {
                 details == null ? null : details.estimateHours(),
                 normalizeLabels(details == null ? null : details.labels()),
                 order));
+        changeLog.recordCreated(userId, issue);
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -115,6 +118,7 @@ public class IssueService {
         String status = normalizeStatus(request.status());
         // 상태나 스프린트가 바뀌면 대상 컬럼 맨 뒤로 보낸다. 정밀 배치는 move/rank가 한다.
         Long previousSprintId = issue.getSprintId();
+        String previousStatus = issue.getStatus();
         boolean regrouped = !Objects.equals(status, issue.getStatus())
                 || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
@@ -140,6 +144,7 @@ public class IssueService {
             resequence(group);
             resequence(source);
         }
+        changeLog.recordChanges(userId, issue, previousStatus, previousSprintId);
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -167,12 +172,14 @@ public class IssueService {
         Issue issue = issues.findByIdForUpdate(issueId)
                 .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
         String status = normalizeStatus(request.status());
+        String previousStatus = issue.getStatus();
         issue.moveTo(status, issue.getSortOrder());
         List<Issue> group = rankGroupWithout(issue, issue.getSprintId());
         int insertAt = indexOfInColumn(group, request.beforeId(), status);
         if (insertAt < 0) insertAt = afterLastOfStatus(group, status);
         group.add(insertAt, issue);
         resequence(group);
+        changeLog.recordChanges(userId, issue, previousStatus, issue.getSprintId());
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -201,6 +208,7 @@ public class IssueService {
         resequence(group);
         // 떠난 그룹도 다시 조밀하게 만든다 — 그룹이 항상 1..n이면 이후 삽입 위치 계산이 단순하다.
         resequence(source);
+        changeLog.recordChanges(userId, issue, issue.getStatus(), previousSprintId);
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }

@@ -6,6 +6,7 @@ import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.domain.Sprint;
 import com.platform.almbackend.domain.SprintState;
+import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.repository.IssueRepository;
@@ -37,6 +38,7 @@ public class SprintService {
     private final IssueRepository issues;
     private final ProjectRepository projects;
     private final ProjectService projectService;
+    private final IssueChangeLogService changeLog;
 
     @Transactional(readOnly = true)
     public List<SprintResponse> list(long userId, long projectId) {
@@ -141,8 +143,10 @@ public class SprintService {
                 retained.add(issue);
             } else if (targetSprintId == null) {
                 issue.moveToBacklog(++targetOrder);
+                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId);
             } else {
                 issue.moveToSprint(targetSprintId, ++targetOrder);
+                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId);
             }
         }
         // 남은 이슈 사이에 구멍이 생기므로 스프린트 그룹도 다시 조밀하게 만든다.
