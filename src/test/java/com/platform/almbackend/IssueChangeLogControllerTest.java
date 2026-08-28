@@ -139,6 +139,28 @@ class IssueChangeLogControllerTest {
     }
 
     @Test
+    void 완료_이관_이력의_시각은_스프린트_완료시각과_같다() throws Exception {
+        long sprintId = createSprint();
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        createIssue("남은 것", "inprogress", sprintId);
+
+        String sprintBody = mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId)
+                        .with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String completedAt = read(sprintBody).get("completedAt").asText();
+
+        // 리포트는 "완료 처리로 한꺼번에 옮긴 것"을 이 동일성으로 식별한다 — 깨지면 미완료 목록이 빈다
+        String changes = mvc.perform(get("/api/alm/projects/{id}/changes", projectId)
+                        .with(asUser(1, "Alice")).param("field", "SPRINT"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode transfer = read(changes).get(1);
+        org.junit.jupiter.api.Assertions.assertEquals(completedAt, transfer.get("changedAt").asText());
+    }
+
+    @Test
     void 스프린트로_이력을_걸러_볼_수_있다() throws Exception {
         long sprintId = createSprint();
         long inSprint = createIssue("스프린트 안", "todo", sprintId);

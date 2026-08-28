@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -136,6 +137,11 @@ public class SprintService {
                 throw new IllegalArgumentException("완료된 스프린트로는 이관할 수 없습니다");
             }
         }
+        // 완료 처리 전체가 한 시각을 공유한다 — 이관 이력과 completedAt이 같아야 리포트가
+        // "완료로 옮긴 것"을 식별한다(IssueChangeLogService.recordChanges 주석 참고).
+        // 마이크로초로 잘라 저장한다 — DB(timestamptz)는 마이크로초까지만 담아서, 자르지 않으면
+        // 메모리 값(나노초)과 조회 값이 달라지고 위 동일성 규칙이 깨진다.
+        Instant completedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         long targetOrder = issues.findMaxSortOrderInRankGroup(locked.getProjectId(), targetSprintId);
         List<Issue> retained = new ArrayList<>();
         for (Issue issue : issues.findRankGroup(locked.getProjectId(), sprintId)) {
@@ -143,17 +149,17 @@ public class SprintService {
                 retained.add(issue);
             } else if (targetSprintId == null) {
                 issue.moveToBacklog(++targetOrder);
-                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId);
+                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId, completedAt);
             } else {
                 issue.moveToSprint(targetSprintId, ++targetOrder);
-                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId);
+                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId, completedAt);
             }
         }
         // 남은 이슈 사이에 구멍이 생기므로 스프린트 그룹도 다시 조밀하게 만든다.
         for (int i = 0; i < retained.size(); i++) {
             retained.get(i).resequence(i + 1L);
         }
-        locked.complete(Instant.now());
+        locked.complete(completedAt);
         return SprintResponse.from(locked);
     }
 

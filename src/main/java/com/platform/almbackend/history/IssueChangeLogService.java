@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 
@@ -28,7 +29,7 @@ public class IssueChangeLogService {
 
     /** 이슈 생성 — 최초 상태와(있으면) 최초 스프린트 편입을 남긴다. */
     public void recordCreated(long actorId, Issue issue) {
-        Instant now = Instant.now();
+        Instant now = now();
         logs.save(IssueChangeLog.of(issue, issue.getSprintId(), ChangeField.STATUS,
                 null, issue.getStatus(), actorId, now));
         if (issue.getSprintId() != null) {
@@ -40,7 +41,16 @@ public class IssueChangeLogService {
     /** 상태·스프린트 변경 — 바뀐 것만 남긴다. */
     public void recordChanges(
             long actorId, Issue issue, String previousStatus, Long previousSprintId) {
-        Instant now = Instant.now();
+        recordChanges(actorId, issue, previousStatus, previousSprintId, now());
+    }
+
+    /**
+     * 시각을 호출자가 정하는 형태. 스프린트 완료처럼 **한 트랜잭션이 여러 이슈를 한꺼번에 옮기는**
+     * 경우에 쓴다 — 이력의 시각이 스프린트 `completedAt`과 같아야 리포트가 "완료 처리로 옮긴 것"과
+     * "사람이 도중에 뺀 것"을 구분할 수 있다(프론트 reportMetrics의 식별 규칙).
+     */
+    public void recordChanges(
+            long actorId, Issue issue, String previousStatus, Long previousSprintId, Instant now) {
         if (!Objects.equals(previousStatus, issue.getStatus())) {
             logs.save(IssueChangeLog.of(issue, issue.getSprintId(), ChangeField.STATUS,
                     previousStatus, issue.getStatus(), actorId, now));
@@ -59,6 +69,11 @@ public class IssueChangeLogService {
         return logs.findHistory(projectId, field, sprintId, text(sprintId), since).stream()
                 .map(IssueChangeResponse::from)
                 .toList();
+    }
+
+    /** DB(timestamptz)가 담는 마이크로초까지만 — 메모리 값과 조회 값이 같아야 리포트 식별이 성립한다 */
+    private static Instant now() {
+        return Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     private static String text(Long value) {
