@@ -1,6 +1,7 @@
 package com.platform.almbackend.sprint.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -18,5 +19,6 @@ public record SprintCompleteRequest(
          * 미완료 이슈를 옮길 스프린트. 생략하면 백로그로 되돌린다 — 지라와 같은 선택지다.
          * 같은 프로젝트의 끝나지 않은 다른 스프린트만 지정할 수 있다.
          */
+        @Positive(message = "moveUnfinishedToSprintId는 양수여야 합니다")
         Long moveUnfinishedToSprintId
 ) {}

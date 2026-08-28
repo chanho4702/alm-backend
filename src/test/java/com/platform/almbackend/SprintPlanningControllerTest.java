@@ -215,6 +215,18 @@ class SprintPlanningControllerTest {
                 .andExpect(jsonPath("$.error").value("완료된 스프린트로는 이관할 수 없습니다"));
     }
 
+    @Test
+    void 이관_대상_id가_양수가_아니면_400이다() throws Exception {
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"doneStatuses\":[\"done\"],\"moveUnfinishedToSprintId\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("moveUnfinishedToSprintId는 양수여야 합니다"));
+    }
+
     private long createIssue(String title, String status, Long sprintId) throws Exception {
         String details = sprintId == null ? "{}" : "{\"sprintId\":" + sprintId + "}";
         String body = mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
