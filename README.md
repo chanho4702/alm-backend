@@ -24,7 +24,7 @@ search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱�
 | 런타임 | Java 24 · Spring Boot 4.0.6 · Gradle |
 | REST | `:9120` / dev `:19120` · `/api/alm/**` |
 | 내부 gRPC | `:9121` / dev `:19121` · `AlmContentService` |
-| 데이터 | PostgreSQL `almdb` · Flyway |
+| 데이터 | PostgreSQL `almdb` · Flyway · 첨부 바이트는 MinIO(S3 호환, `ALM_S3_*`) — 끄면 로컬 파일 |
 | 인증·인가 | auth-server RS256 JWT 검증 + org-service `PROJECT` grant |
 | 이벤트 | Redis Streams `platform:events:v1` |
 
@@ -86,6 +86,11 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/versions/{versionId}/release` | EDIT | 릴리스 — `doneStatuses`·`moveUnresolvedToVersionId`로 미완료 이관(선택) |
 | `POST` | `/api/alm/versions/{versionId}/archive` | EDIT | 보관 |
 | `DELETE` | `/api/alm/versions/{versionId}` | EDIT | 삭제(달린 이슈의 `fixVersionId`를 비운다) |
+| `POST` | `/api/alm/issues/{issueId}/attachments` | EDIT | 첨부 올리기(multipart `file`, 최대 `ALM_MAX_ATTACHMENT_MB`=20) |
+| `GET` | `/api/alm/issues/{issueId}/attachments` | VIEW | 첨부 목록 |
+| `GET` | `/api/alm/attachments/{id}` | VIEW | 내려받기(attachment 처분, nosniff) |
+| `GET` | `/api/alm/attachments/{id}/inline` | VIEW | 인라인(래스터 이미지만) |
+| `DELETE` | `/api/alm/attachments/{id}` | EDIT | 삭제(오브젝트는 커밋 뒤 정리) |
 | `GET` | `/api/alm/projects/{projectId}/changes` | VIEW | 변경 이력(리포트 원천) — `field`·`sprintId`·`since` 필터 |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |

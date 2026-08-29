@@ -1,0 +1,75 @@
+package com.platform.almbackend.attachment;
+
+import com.platform.almbackend.attachment.dto.AttachmentResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+import static com.platform.almbackend.issue.IssueController.userId;
+
+@RestController
+@RequiredArgsConstructor
+public class AttachmentController {
+    private final AttachmentService service;
+
+    @PostMapping("/api/alm/issues/{issueId}/attachments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AttachmentResponse upload(
+            @PathVariable long issueId,
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal Jwt jwt) {
+        return service.upload(userId(jwt), issueId, file);
+    }
+
+    @GetMapping("/api/alm/issues/{issueId}/attachments")
+    public List<AttachmentResponse> list(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+        return service.list(userId(jwt), issueId);
+    }
+
+    /** Content-Disposition attachment 고정 — 브라우저 인라인 실행(XSS) 차단 */
+    @GetMapping("/api/alm/attachments/{id}")
+    public ResponseEntity<Resource> download(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+        AttachmentService.DownloadItem item = service.download(userId(jwt), id);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encode(item.meta().getFilename()))
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.parseMediaType(item.meta().getContentType()))
+                .contentLength(item.meta().getSizeBytes())
+                .body(item.resource());
+    }
+
+    /** 안전한 래스터 이미지만 인라인으로 — 썸네일용 */
+    @GetMapping("/api/alm/attachments/{id}/inline")
+    public ResponseEntity<Resource> inline(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+        AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encode(item.meta().getFilename()))
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=60, no-transform")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Cross-Origin-Resource-Policy", "same-origin")
+                .contentType(MediaType.parseMediaType(item.meta().getContentType()))
+                .contentLength(item.meta().getSizeBytes())
+                .body(item.resource());
+    }
+
+    @DeleteMapping("/api/alm/attachments/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+        service.delete(userId(jwt), id);
+    }
+
+    private static String encode(String filename) {
+        return URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+}

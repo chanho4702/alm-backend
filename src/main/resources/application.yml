@@ -18,6 +18,10 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       database: ${REDIS_DB:0}
+  servlet:
+    multipart:
+      max-file-size: ${ALM_MAX_ATTACHMENT_MB:20}MB
+      max-request-size: ${ALM_MAX_ATTACHMENT_MB:20}MB
   security:
     oauth2:
       resourceserver:
@@ -44,6 +48,18 @@ platform:
   events:
     enabled: ${EVENTS_ENABLED:true}
     stream: ${EVENTS_STREAM:platform:events:v1}
+  alm:
+    storage:
+      # 첨부 바이트 저장소. S3를 끄면 로컬 파일(개발·테스트) — 운영 compose는 MinIO를 켠다.
+      files-dir: ${ALM_FILES_DIR:./data/attachments}
+      s3:
+        enabled: ${ALM_S3_ENABLED:false}
+        bucket: ${ALM_S3_BUCKET:alm-attachments}
+        region: ${ALM_S3_REGION:us-east-1}
+        endpoint: ${ALM_S3_ENDPOINT:}
+        path-style-access: ${ALM_S3_PATH_STYLE_ACCESS:true}
+        access-key: ${ALM_S3_ACCESS_KEY:}
+        secret-key: ${ALM_S3_SECRET_KEY:}
 
 ---
 spring:

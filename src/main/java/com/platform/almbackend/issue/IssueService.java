@@ -20,6 +20,7 @@ import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.sprint.SprintService;
 import com.platform.almbackend.version.VersionService;
+import com.platform.almbackend.attachment.AttachmentService;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +43,7 @@ public class IssueService {
     private final ProjectService projectService;
     private final SprintService sprintService;
     private final VersionService versionService;
+    private final AttachmentService attachmentService;
     private final EventRelay events;
     private final IssueChangeLogService changeLog;
 
@@ -167,6 +169,7 @@ public class IssueService {
                 .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
         events.afterCommit(AlmEvents.issueDeleted(userId, issue));
         issues.clearParentByParentId(issueId);
+        attachmentService.deleteAllForIssue(issueId);
         issues.delete(issue);
     }
 

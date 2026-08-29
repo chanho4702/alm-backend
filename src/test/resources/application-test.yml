@@ -16,4 +16,8 @@ platform:
     enabled: false
   events:
     enabled: false
-
+  alm:
+    storage:
+      files-dir: build/test-attachments
+      s3:
+        enabled: false
