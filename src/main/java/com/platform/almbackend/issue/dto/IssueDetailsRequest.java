@@ -27,6 +27,9 @@ public record IssueDetailsRequest(
         BigDecimal estimateHours,
         /** 완료 사유. 정의된 값만 받고(그 외 400), null이면 해제 */
         IssueResolution resolution,
+        /** 수정 버전. null이면 해제. 같은 프로젝트의 보관되지 않은 버전만 */
+        @Positive(message = "fixVersionId는 양수여야 합니다")
+        Long fixVersionId,
         @Size(max = 50, message = "라벨은 최대 50개까지 지정할 수 있습니다")
         List<@NotBlank(message = "빈 라벨은 사용할 수 없습니다")
                 @Size(max = 80, message = "라벨은 80자 이하여야 합니다") String> labels

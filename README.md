@@ -76,10 +76,16 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/projects/{projectId}/issues` | VIEW | 이슈 목록 |
 | `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성 |
 | `GET` | `/api/alm/issues/{issueId}` | VIEW | 이슈 조회 |
-| `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(DONE/WONT_DO/DUPLICATE/CANNOT_REPRODUCE, null=해제; V6) |
+| `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(V6), `details.fixVersionId`(같은 프로젝트·보관 아님; V7) |
 | `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 |
 | `POST` | `/api/alm/issues/{issueId}/rank` | EDIT | 백로그/스프린트 랭크 이동 |
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |
+| `GET` | `/api/alm/projects/{projectId}/versions` | VIEW | 버전 목록 |
+| `POST` | `/api/alm/projects/{projectId}/versions` | EDIT | 버전 생성(이름은 프로젝트 안에서 유일, 중복 409) |
+| `PUT` | `/api/alm/versions/{versionId}` | EDIT | 버전 수정(`expectedVersion`, 날짜 역전 400) |
+| `POST` | `/api/alm/versions/{versionId}/release` | EDIT | 릴리스 — `doneStatuses`·`moveUnresolvedToVersionId`로 미완료 이관(선택) |
+| `POST` | `/api/alm/versions/{versionId}/archive` | EDIT | 보관 |
+| `DELETE` | `/api/alm/versions/{versionId}` | EDIT | 삭제(달린 이슈의 `fixVersionId`를 비운다) |
 | `GET` | `/api/alm/projects/{projectId}/changes` | VIEW | 변경 이력(리포트 원천) — `field`·`sprintId`·`since` 필터 |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |

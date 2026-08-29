@@ -19,6 +19,7 @@ import com.platform.almbackend.issue.dto.IssueUpdateRequest;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.sprint.SprintService;
+import com.platform.almbackend.version.VersionService;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,7 @@ public class IssueService {
     private final ProjectRepository projects;
     private final ProjectService projectService;
     private final SprintService sprintService;
+    private final VersionService versionService;
     private final EventRelay events;
     private final IssueChangeLogService changeLog;
 
@@ -114,6 +116,10 @@ public class IssueService {
         LocalDate dueDate = details == null ? issue.getDueDate() : details.dueDate();
         BigDecimal estimateHours = details == null ? issue.getEstimateHours() : details.estimateHours();
         IssueResolution resolution = details == null ? issue.getResolution() : details.resolution();
+        Long fixVersionId = details == null ? issue.getFixVersionId() : details.fixVersionId();
+        if (fixVersionId != null && !Objects.equals(fixVersionId, issue.getFixVersionId())) {
+            versionService.requireAssignable(fixVersionId, issue.getProjectId());
+        }
         List<String> labels = details == null
                 ? List.copyOf(issue.getLabels())
                 : normalizeLabels(details.labels());
@@ -136,6 +142,7 @@ public class IssueService {
                 dueDate,
                 estimateHours,
                 resolution,
+                fixVersionId,
                 labels,
                 order);
         if (regrouped) {

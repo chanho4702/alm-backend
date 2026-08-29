@@ -14,6 +14,13 @@ import java.util.List;
 import java.util.Optional;
 
 public interface IssueRepository extends JpaRepository<Issue, Long> {
+    List<Issue> findByFixVersionId(long fixVersionId);
+
+    /** 버전 삭제 시 — 벌크 UPDATE라 영속성 컨텍스트를 비운다 */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update Issue i set i.fixVersionId = null where i.fixVersionId = :versionId")
+    int clearFixVersion(@Param("versionId") long versionId);
+
     @EntityGraph(attributePaths = "labels")
     List<Issue> findByProjectIdOrderBySortOrderAscKeyAsc(long projectId);
     List<Issue> findByParentId(long parentId);

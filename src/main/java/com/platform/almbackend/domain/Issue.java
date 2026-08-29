@@ -68,6 +68,10 @@ public class Issue {
     @Column(length = 24)
     private IssueResolution resolution;
 
+    /** 수정 버전(fix version). null = 미지정 */
+    @Column(name = "fix_version_id")
+    private Long fixVersionId;
+
     @Column(name = "estimate_hours", precision = 10, scale = 2)
     private BigDecimal estimateHours;
 
@@ -156,6 +160,7 @@ public class Issue {
             LocalDate dueDate,
             BigDecimal estimateHours,
             IssueResolution resolution,
+            Long fixVersionId,
             List<String> labels,
             long sortOrder) {
         if (title != null) this.title = title;
@@ -169,6 +174,7 @@ public class Issue {
         this.dueDate = dueDate;
         this.estimateHours = estimateHours;
         this.resolution = resolution;
+        this.fixVersionId = fixVersionId;
         this.labels.clear();
         this.labels.addAll(labels);
         this.sortOrder = sortOrder;
@@ -199,6 +205,11 @@ public class Issue {
     public void moveToBacklog(long sortOrder) {
         this.sprintId = null;
         this.sortOrder = sortOrder;
+    }
+
+    /** 릴리스 시 미완료 이슈를 다음 버전으로 넘긴다 — 사용자가 편집 폼에서 보던 값이 아니라 version은 올리지 않는다. */
+    public void assignFixVersion(Long fixVersionId) {
+        this.fixVersionId = fixVersionId;
     }
 
     /** 스프린트 완료 시 미완료 이슈를 다음 스프린트로 넘긴다. */
