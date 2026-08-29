@@ -76,7 +76,7 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/projects/{projectId}/issues` | VIEW | 이슈 목록 |
 | `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성 |
 | `GET` | `/api/alm/issues/{issueId}` | VIEW | 이슈 조회 |
-| `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 |
+| `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(DONE/WONT_DO/DUPLICATE/CANNOT_REPRODUCE, null=해제; V6) |
 | `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 |
 | `POST` | `/api/alm/issues/{issueId}/rank` | EDIT | 백로그/스프린트 랭크 이동 |
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |

@@ -6,6 +6,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import com.platform.almbackend.domain.IssueResolution;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -23,6 +25,8 @@ public record IssueDetailsRequest(
         @DecimalMin(value = "0.01", message = "예상 시간은 0보다 커야 합니다")
         @Digits(integer = 8, fraction = 2, message = "예상 시간은 소수 둘째 자리까지 입력하세요")
         BigDecimal estimateHours,
+        /** 완료 사유. 정의된 값만 받고(그 외 400), null이면 해제 */
+        IssueResolution resolution,
         @Size(max = 50, message = "라벨은 최대 50개까지 지정할 수 있습니다")
         List<@NotBlank(message = "빈 라벨은 사용할 수 없습니다")
                 @Size(max = 80, message = "라벨은 80자 이하여야 합니다") String> labels

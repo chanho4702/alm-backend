@@ -2,6 +2,7 @@ package com.platform.almbackend.issue.dto;
 
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssuePriority;
+import com.platform.almbackend.domain.IssueResolution;
 import com.platform.almbackend.domain.IssueType;
 
 import java.math.BigDecimal;
@@ -24,6 +25,7 @@ public record IssueResponse(
         Long sprintId,
         LocalDate dueDate,
         BigDecimal estimateHours,
+        IssueResolution resolution,
         List<String> labels,
         long order,
         int version,
@@ -35,7 +37,7 @@ public record IssueResponse(
                 issue.getDescription(), issue.getType(), issue.getStatus(), issue.getPriority(),
                 issue.getAssigneeId(), issue.getReporterId(), issue.getParentId(), issue.getSprintId(),
                 issue.getDueDate(),
-                issue.getEstimateHours(), List.copyOf(issue.getLabels()), issue.getSortOrder(),
+                issue.getEstimateHours(), issue.getResolution(), List.copyOf(issue.getLabels()), issue.getSortOrder(),
                 issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt());
     }
 }

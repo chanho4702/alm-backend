@@ -4,6 +4,7 @@ import com.platform.almbackend.common.ConflictException;
 import com.platform.almbackend.common.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssuePriority;
+import com.platform.almbackend.domain.IssueResolution;
 import com.platform.almbackend.domain.IssueType;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.event.AlmEvents;
@@ -112,6 +113,7 @@ public class IssueService {
         }
         LocalDate dueDate = details == null ? issue.getDueDate() : details.dueDate();
         BigDecimal estimateHours = details == null ? issue.getEstimateHours() : details.estimateHours();
+        IssueResolution resolution = details == null ? issue.getResolution() : details.resolution();
         List<String> labels = details == null
                 ? List.copyOf(issue.getLabels())
                 : normalizeLabels(details.labels());
@@ -133,6 +135,7 @@ public class IssueService {
                 sprintId,
                 dueDate,
                 estimateHours,
+                resolution,
                 labels,
                 order);
         if (regrouped) {

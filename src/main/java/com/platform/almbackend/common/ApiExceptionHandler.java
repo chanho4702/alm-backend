@@ -2,6 +2,7 @@ package com.platform.almbackend.common;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -31,12 +32,16 @@ public class ApiExceptionHandler {
         return error(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class})
+    @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class,
+            HttpMessageNotReadableException.class})
     ResponseEntity<Map<String, String>> badRequest(Exception e) {
         String message = e instanceof MethodArgumentNotValidException validation
                 ? validation.getBindingResult().getFieldErrors().stream()
                     .findFirst().map(error -> error.getDefaultMessage()).orElse("요청 값이 올바르지 않습니다")
-                : e.getMessage();
+                : e instanceof HttpMessageNotReadableException
+                    // 정의되지 않은 enum 값 등 — 원문은 클래스명이 섞여 사용자에게 보여줄 수 없다
+                    ? "요청 값이 올바르지 않습니다"
+                    : e.getMessage();
         return error(HttpStatus.BAD_REQUEST, message);
     }
 

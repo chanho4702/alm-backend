@@ -64,6 +64,10 @@ public class Issue {
     @Column(name = "due_date")
     private LocalDate dueDate;
 
+    @Enumerated(EnumType.STRING)
+    @Column(length = 24)
+    private IssueResolution resolution;
+
     @Column(name = "estimate_hours", precision = 10, scale = 2)
     private BigDecimal estimateHours;
 
@@ -151,6 +155,7 @@ public class Issue {
             Long sprintId,
             LocalDate dueDate,
             BigDecimal estimateHours,
+            IssueResolution resolution,
             List<String> labels,
             long sortOrder) {
         if (title != null) this.title = title;
@@ -163,6 +168,7 @@ public class Issue {
         this.sprintId = sprintId;
         this.dueDate = dueDate;
         this.estimateHours = estimateHours;
+        this.resolution = resolution;
         this.labels.clear();
         this.labels.addAll(labels);
         this.sortOrder = sortOrder;
