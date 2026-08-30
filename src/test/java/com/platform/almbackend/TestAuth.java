@@ -10,6 +10,14 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 public final class TestAuth {
     private TestAuth() {}
 
+    public static RequestPostProcessor asAdmin(long id, String name) {
+        return jwt().jwt(jwt -> jwt.subject(String.valueOf(id))
+                        .claim("name", name)
+                        .claim("email", name.toLowerCase() + "@test.com")
+                        .claim("roles", List.of("USER", "ADMIN")))
+                .authorities(new SimpleGrantedAuthority("ROLE_USER"), new SimpleGrantedAuthority("ROLE_ADMIN"));
+    }
+
     public static RequestPostProcessor asUser(long id, String name) {
         return jwt().jwt(jwt -> jwt.subject(String.valueOf(id))
                         .claim("name", name)
