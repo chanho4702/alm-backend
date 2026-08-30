@@ -20,7 +20,7 @@ public record IssueImportRequest(@NotEmpty(message = "가져올 이슈가 없습
             @Valid IssueDetailsRequest details) {
 
         public IssueCreateRequest toCreate() {
-            return new IssueCreateRequest(title, description, type, status, priority, assigneeId, details);
+            return new IssueCreateRequest(title, description, type, status, priority, assigneeId, details, null);
         }
     }
 }

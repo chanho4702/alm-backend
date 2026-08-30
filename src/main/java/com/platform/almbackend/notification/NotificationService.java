@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -103,6 +104,16 @@ public class NotificationService {
         for (long recipient : recipients(issue, actorId)) {
             if (!preferences.get(recipient).notifications().commentedOn()) continue;
             notifications.save(Notification.of(recipient, issue, actorId, Notification.Type.COMMENTED, null, now));
+        }
+    }
+
+    /** 본문에서 @멘션된 사용자에게 — 워처 여부와 무관하게, 본인은 제외, 개인 설정(mentioned)을 존중한다 */
+    public void notifyMentioned(long actorId, Issue issue, Collection<Long> userIds, Instant now) {
+        if (userIds == null || userIds.isEmpty()) return;
+        for (Long userId : new LinkedHashSet<>(userIds)) {
+            if (userId == null || userId == actorId) continue;
+            if (!preferences.get(userId).notifications().mentionedOn()) continue;
+            notifications.save(Notification.of(userId, issue, actorId, Notification.Type.MENTIONED, null, now));
         }
     }
 

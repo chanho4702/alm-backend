@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -160,6 +161,7 @@ public class IssueService {
         changeLog.recordCreated(userId, issue);
         collaboration.recordCreated(userId, issue);
         notifications.onIssueCreated(userId, issue);
+        notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -234,6 +236,7 @@ public class IssueService {
         changeLog.recordChanges(userId, issue, previousStatus, previousSprintId);
         collaboration.recordUpdate(userId, snapshotBefore, issue);
         notifications.onIssueUpdated(userId, issue, previousStatus, previousAssigneeId);
+        notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }

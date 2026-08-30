@@ -1,5 +1,7 @@
 package com.platform.almbackend.issue.dto;
 
+import java.util.List;
+
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -21,5 +23,7 @@ public record IssueUpdateRequest(
         Long assigneeId,
         @Valid IssueDetailsRequest details,
         @NotNull(message = "expectedVersion이 필요합니다")
-        Integer expectedVersion
+        Integer expectedVersion,
+        /** 설명에서 새로 @멘션된 사용자 — 알림 대상(선택) */
+        List<Long> mentionedUserIds
 ) {}

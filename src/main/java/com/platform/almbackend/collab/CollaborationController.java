@@ -29,7 +29,7 @@ import static com.platform.almbackend.issue.IssueController.userId;
 public class CollaborationController {
     private final CollaborationService service;
 
-    public record CommentRequest(String body) {}
+    public record CommentRequest(String body, List<Long> mentionedUserIds) {}
     public record WorklogRequest(BigDecimal hours, String comment, LocalDate workedOn) {}
     public record LinkRequest(long targetId, String type) {}
 
@@ -41,12 +41,12 @@ public class CollaborationController {
     @PostMapping("/api/alm/issues/{issueId}/comments")
     @ResponseStatus(HttpStatus.CREATED)
     public CommentResponse addComment(@PathVariable long issueId, @RequestBody CommentRequest request, @AuthenticationPrincipal Jwt jwt) {
-        return service.addComment(userId(jwt), issueId, request.body());
+        return service.addComment(userId(jwt), issueId, request.body(), request.mentionedUserIds());
     }
 
     @PutMapping("/api/alm/comments/{id}")
     public CommentResponse updateComment(@PathVariable long id, @RequestBody CommentRequest request, @AuthenticationPrincipal Jwt jwt) {
-        return service.updateComment(userId(jwt), id, request.body());
+        return service.updateComment(userId(jwt), id, request.body(), request.mentionedUserIds());
     }
 
     @DeleteMapping("/api/alm/comments/{id}")

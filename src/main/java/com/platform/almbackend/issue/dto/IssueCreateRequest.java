@@ -1,5 +1,7 @@
 package com.platform.almbackend.issue.dto;
 
+import java.util.List;
+
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -15,5 +17,7 @@ public record IssueCreateRequest(
         String status,
         String priority,
         Long assigneeId,
-        @Valid IssueDetailsRequest details
+        @Valid IssueDetailsRequest details,
+        /** 설명에서 @멘션된 사용자 — 알림 대상(선택) */
+        List<Long> mentionedUserIds
 ) {}

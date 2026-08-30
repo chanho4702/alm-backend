@@ -26,13 +26,15 @@ public class PreferenceService {
     private final ObjectMapper json;
 
     /** 알림 종류별 제품 내 알림 수신 여부 */
-    public record NotificationPrefs(Boolean assigned, Boolean statusChanged, Boolean commented) {
+    public record NotificationPrefs(Boolean assigned, Boolean statusChanged, Boolean commented, Boolean mentioned) {
         public boolean assignedOn() { return assigned == null || assigned; }
         public boolean statusChangedOn() { return statusChanged == null || statusChanged; }
         public boolean commentedOn() { return commented == null || commented; }
-        static NotificationPrefs defaults() { return new NotificationPrefs(true, true, true); }
+        /** 코멘트·설명에서 @멘션됐을 때 — 워처가 아니어도 받는다 */
+        public boolean mentionedOn() { return mentioned == null || mentioned; }
+        static NotificationPrefs defaults() { return new NotificationPrefs(true, true, true, true); }
         NotificationPrefs filled() {
-            return new NotificationPrefs(assignedOn(), statusChangedOn(), commentedOn());
+            return new NotificationPrefs(assignedOn(), statusChangedOn(), commentedOn(), mentionedOn());
         }
     }
 

@@ -109,6 +109,20 @@ class CollaborationControllerTest {
     }
 
     @Test
+    void 멘션된_사용자는_워처가_아니어도_알림을_받고_본인은_제외된다() throws Exception {
+        mvc.perform(post("/api/alm/issues/{id}/comments", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":\"<p><span data-type=\\\"mention\\\" data-id=\\\"3\\\">@Carol</span> 확인 부탁</p>\",\"mentionedUserIds\":[3,1]}"))
+                .andExpect(status().isCreated());
+
+        mvc.perform(get("/api/alm/notifications").with(asUser(3, "Carol")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].type").value("MENTIONED"));
+        mvc.perform(get("/api/alm/notifications").with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
     void 워크로그와_링크는_활동으로_남고_링크는_중복과_자기연결을_막는다() throws Exception {
         mvc.perform(post("/api/alm/issues/{id}/worklogs", issueA).with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)

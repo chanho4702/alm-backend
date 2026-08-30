@@ -80,20 +80,26 @@ public class CollaborationService {
         return comments.findByIssueIdOrderByCreatedAtAscIdAsc(issueId).stream().map(CommentResponse::from).toList();
     }
 
-    public CommentResponse addComment(long userId, long issueId, String body) {
+    public CommentResponse addComment(long userId, long issueId, String body, List<Long> mentionedUserIds) {
         Issue issue = require(userId, issueId, AlmAction.VIEW);
         String trimmed = requireText(body, "코멘트 내용을 입력하세요");
         Instant now = now();
         IssueComment comment = comments.save(IssueComment.of(issueId, userId, trimmed, now));
         notifications.notifyCommented(userId, issue, now);
+        notifications.notifyMentioned(userId, issue, mentionedUserIds, now);
         return CommentResponse.from(comment);
     }
 
-    public CommentResponse updateComment(long userId, long commentId, String body) {
+    public CommentResponse updateComment(long userId, long commentId, String body, List<Long> mentionedUserIds) {
         IssueComment comment = comments.findById(commentId)
                 .orElseThrow(() -> new NotFoundException("코멘트를 찾을 수 없습니다"));
         if (!comment.getAuthorId().equals(userId)) throw new ForbiddenException("본인 댓글만 수정할 수 있습니다");
-        comment.edit(requireText(body, "코멘트 내용을 입력하세요"), now());
+        Instant now = now();
+        comment.edit(requireText(body, "코멘트 내용을 입력하세요"), now);
+        if (mentionedUserIds != null && !mentionedUserIds.isEmpty()) {
+            // 수정으로 새로 멘션된 사람만 — 클라이언트가 이전 본문과 비교해 보낸다
+            notifications.notifyMentioned(userId, require(userId, comment.getIssueId(), AlmAction.VIEW), mentionedUserIds, now);
+        }
         return CommentResponse.from(comment);
     }
 

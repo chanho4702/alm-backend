@@ -23,7 +23,7 @@ import java.time.Instant;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Notification {
-    public enum Type { ASSIGNED, STATUS_CHANGED, COMMENTED }
+    public enum Type { ASSIGNED, STATUS_CHANGED, COMMENTED, MENTIONED }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
