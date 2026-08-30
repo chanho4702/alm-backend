@@ -8,6 +8,8 @@ import com.platform.almbackend.domain.StatusCategory;
 import com.platform.almbackend.domain.StatusDef;
 import com.platform.almbackend.repository.IssueTypeDefRepository;
 import com.platform.almbackend.repository.PriorityDefRepository;
+import com.platform.almbackend.repository.LinkTypeDefRepository;
+import com.platform.almbackend.domain.LinkTypeDef;
 import com.platform.almbackend.domain.PriorityDef;
 import com.platform.almbackend.repository.ProjectRepository;
 import com.platform.almbackend.repository.ProjectSettingsRepository;
@@ -33,6 +35,7 @@ public class SettingsBootstrap implements ApplicationRunner {
     private final StatusDefRepository statuses;
     private final IssueTypeDefRepository types;
     private final PriorityDefRepository priorities;
+    private final LinkTypeDefRepository linkTypes;
     private final SettingsSchemeRepository schemes;
     private final ProjectSettingsRepository projectSettings;
     private final ProjectRepository projects;
@@ -41,6 +44,13 @@ public class SettingsBootstrap implements ApplicationRunner {
     private record Cat(String id, String name, String kind, String color, int order) {}
     private record Type(String id, String name, String icon, String color, String level, int order) {}
     private record Prio(String id, String name, String icon, String color, String description, int order) {}
+    private record Link(String id, String name, String outward, String inward, int order) {}
+    static final List<Link> LINK_TYPES = List.of(
+            new Link("blocks", "차단", "차단함", "차단됨", 1),
+            new Link("relates", "관련", "관련됨", "관련됨", 2),
+            new Link("duplicates", "중복", "중복함", "중복됨", 3),
+            new Link("causes", "원인", "원인임", "결과임", 4),
+            new Link("clones", "복제", "복제함", "복제됨", 5));
     static final List<Prio> PRIORITIES = List.of(
             new Prio("highest", "최상", "chevrons-up", "danger", "지금 당장 처리해야 한다", 1),
             new Prio("high", "높음", "chevron-up", "danger", "다른 일보다 먼저 처리한다", 2),
@@ -66,6 +76,13 @@ public class SettingsBootstrap implements ApplicationRunner {
 
     @Transactional
     public void ensureDefaults() {
+        for (Link l : LINK_TYPES) {
+            if (linkTypes.findById(l.id()).isEmpty()) {
+                LinkTypeDef def = LinkTypeDef.of(l.id(), l.name(), l.outward(), l.inward(), l.order());
+                def.markBuiltIn();
+                linkTypes.save(def);
+            }
+        }
         for (Prio p : PRIORITIES) {
             if (priorities.findById(p.id()).isEmpty()) {
                 PriorityDef def = PriorityDef.of(p.id(), p.name(), p.icon(), p.color(), p.description(), p.order());

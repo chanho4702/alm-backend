@@ -7,6 +7,10 @@ import com.platform.almbackend.domain.StatusDef;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.IssueTypeDefRepository;
 import com.platform.almbackend.repository.PriorityDefRepository;
+import com.platform.almbackend.repository.LinkTypeDefRepository;
+import com.platform.almbackend.repository.IssueLinkRepository;
+import com.platform.almbackend.domain.LinkTypeDef;
+import com.platform.almbackend.settings.dto.RegistryRequests.LinkTypeRequest;
 import com.platform.almbackend.domain.PriorityDef;
 import com.platform.almbackend.settings.dto.RegistryRequests.PriorityRequest;
 import com.platform.almbackend.repository.StatusCategoryRepository;
@@ -39,6 +43,8 @@ public class RegistryService {
     private final StatusDefRepository statuses;
     private final IssueTypeDefRepository types;
     private final PriorityDefRepository priorities;
+    private final LinkTypeDefRepository linkTypes;
+    private final IssueLinkRepository issueLinks;
     private final IssueRepository issues;
     private final SchemeQueries schemes;
 
@@ -271,6 +277,74 @@ public class RegistryService {
     public PriorityDef requirePriority(String id) {
         return priorities.findById(id == null ? "" : id)
                 .orElseThrow(() -> new NotFoundException("우선순위를 찾을 수 없습니다"));
+    }
+
+    // ── 링크 타입 ──
+
+    @Transactional(readOnly = true)
+    public List<LinkTypeDef> linkTypes() { return linkTypes.findAllByOrderBySortOrderAsc(); }
+
+    @Transactional(readOnly = true)
+    public Map<String, Long> linkTypeUsage() {
+        Map<String, Long> usage = new java.util.LinkedHashMap<>();
+        for (LinkTypeDef def : linkTypes.findAllByOrderBySortOrderAsc()) usage.put(def.getId(), issueLinks.countByType(def.getId()));
+        return usage;
+    }
+
+    public LinkTypeDef createLinkType(LinkTypeRequest request) {
+        String name = requireName(request.name(), "링크 타입 이름을 입력하세요");
+        if (linkTypes.existsByName(name)) throw new IllegalArgumentException("링크 타입 이름이 중복됩니다: " + name);
+        String outward = requireName(request.outward(), "나가는 문구(예: 차단함)를 입력하세요");
+        String inward = requireName(request.inward(), "들어오는 문구(예: 차단됨)를 입력하세요");
+        int order = linkTypes.findAllByOrderBySortOrderAsc().size() + 1;
+        return linkTypes.save(LinkTypeDef.of(newId("lt"), name, outward, inward, order));
+    }
+
+    public LinkTypeDef updateLinkType(String id, LinkTypeRequest request) {
+        LinkTypeDef def = requireLinkType(id);
+        if (request.name() != null) {
+            String name = requireName(request.name(), "링크 타입 이름을 입력하세요");
+            if (linkTypes.existsByNameAndIdNot(name, id)) throw new IllegalArgumentException("링크 타입 이름이 중복됩니다: " + name);
+            def.rename(name);
+        }
+        String outward = request.outward() == null ? null : requireName(request.outward(), "나가는 문구(예: 차단함)를 입력하세요");
+        String inward = request.inward() == null ? null : requireName(request.inward(), "들어오는 문구(예: 차단됨)를 입력하세요");
+        if ((outward != null || inward != null) && issueLinks.countByType(id) > 0) {
+            boolean wasSymmetric = def.isSymmetric();
+            String nextOut = outward == null ? def.getOutward() : outward;
+            String nextIn = inward == null ? def.getInward() : inward;
+            if (wasSymmetric != nextOut.equals(nextIn)) {
+                throw new IllegalArgumentException("이 타입을 쓰는 링크가 있어 방향성(대칭 여부)을 바꿀 수 없습니다");
+            }
+        }
+        def.relabel(outward, inward);
+        return def;
+    }
+
+    public void moveLinkType(String id, int delta) {
+        List<LinkTypeDef> sorted = linkTypes.findAllByOrderBySortOrderAsc();
+        int index = indexOf(sorted.stream().map(LinkTypeDef::getId).toList(), id, "링크 타입을 찾을 수 없습니다");
+        int target = index + delta;
+        if (target < 0 || target >= sorted.size()) return;
+        LinkTypeDef a = sorted.get(index);
+        LinkTypeDef b = sorted.get(target);
+        int tmp = a.getSortOrder();
+        a.reorder(b.getSortOrder());
+        b.reorder(tmp);
+    }
+
+    public void deleteLinkType(String id) {
+        LinkTypeDef def = requireLinkType(id);
+        if (def.isBuiltIn()) throw new IllegalArgumentException("기본 링크 타입은 삭제할 수 없습니다");
+        if (issueLinks.countByType(id) > 0) throw new IllegalArgumentException("이 타입을 쓰는 링크가 있습니다");
+        linkTypes.delete(def);
+        List<LinkTypeDef> rest = linkTypes.findAllByOrderBySortOrderAsc();
+        for (int i = 0; i < rest.size(); i++) rest.get(i).reorder(i + 1);
+    }
+
+    public LinkTypeDef requireLinkType(String id) {
+        return linkTypes.findById(id == null ? "" : id)
+                .orElseThrow(() -> new NotFoundException("링크 타입을 찾을 수 없습니다"));
     }
 
     // ── 조회 헬퍼 ──

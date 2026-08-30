@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface IssueLinkRepository extends JpaRepository<IssueLink, Long> {
     List<IssueLink> findBySourceIdOrTargetId(long sourceId, long targetId);
+    long countByType(String type);
 }

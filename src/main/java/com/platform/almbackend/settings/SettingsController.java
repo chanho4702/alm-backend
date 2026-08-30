@@ -3,6 +3,8 @@ package com.platform.almbackend.settings;
 import com.platform.almbackend.settings.dto.RegistryRequests.CategoryRequest;
 import com.platform.almbackend.settings.dto.RegistryRequests.IssueTypeRequest;
 import com.platform.almbackend.settings.dto.RegistryRequests.PriorityRequest;
+import com.platform.almbackend.settings.dto.RegistryRequests.LinkTypeRequest;
+import com.platform.almbackend.settings.dto.SettingsResponses.LinkTypeResponse;
 import com.platform.almbackend.settings.dto.SettingsResponses.PriorityResponse;
 import com.platform.almbackend.settings.dto.RegistryRequests.MoveRequest;
 import com.platform.almbackend.settings.dto.RegistryRequests.StatusRequest;
@@ -85,6 +87,31 @@ public class SettingsController {
     public void deleteStatus(@PathVariable String id) { registry.deleteStatus(id); }
 
     // ── 이슈 타입 ──
+    @GetMapping("/api/alm/settings/link-types")
+    public List<LinkTypeResponse> linkTypes() { return registry.linkTypes().stream().map(LinkTypeResponse::from).toList(); }
+
+    @GetMapping("/api/alm/settings/link-types/usage")
+    public Map<String, Long> linkTypeUsage() { return registry.linkTypeUsage(); }
+
+    @PostMapping("/api/alm/settings/link-types")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LinkTypeResponse createLinkType(@RequestBody LinkTypeRequest request) { return LinkTypeResponse.from(registry.createLinkType(request)); }
+
+    @PutMapping("/api/alm/settings/link-types/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public LinkTypeResponse updateLinkType(@PathVariable String id, @RequestBody LinkTypeRequest request) { return LinkTypeResponse.from(registry.updateLinkType(id, request)); }
+
+    @PostMapping("/api/alm/settings/link-types/{id}/move")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void moveLinkType(@PathVariable String id, @RequestBody MoveRequest request) { registry.moveLinkType(id, request.delta()); }
+
+    @DeleteMapping("/api/alm/settings/link-types/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteLinkType(@PathVariable String id) { registry.deleteLinkType(id); }
+
     @GetMapping("/api/alm/settings/priorities")
     public List<PriorityResponse> priorities() { return registry.priorities().stream().map(PriorityResponse::from).toList(); }
 

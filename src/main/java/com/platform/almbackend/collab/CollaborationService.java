@@ -18,6 +18,8 @@ import com.platform.almbackend.repository.IssueLinkRepository;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.WorklogRepository;
 import com.platform.almbackend.settings.SchemeService;
+import com.platform.almbackend.domain.LinkTypeDef;
+import com.platform.almbackend.repository.LinkTypeDefRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +31,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * 코멘트·워크로그·이슈 링크·활동 기록 — 프론트 목업과 같은 규칙(본인 것만 수정·삭제, 링크 중복 금지,
@@ -39,7 +40,6 @@ import java.util.Set;
 @RequiredArgsConstructor
 @Transactional
 public class CollaborationService {
-    private static final Set<String> LINK_TYPES = Set.of("blocks", "relates");
 
     private final IssueRepository issues;
     private final IssueCommentRepository comments;
@@ -49,6 +49,7 @@ public class CollaborationService {
     private final ProjectService projectService;
     private final NotificationService notifications;
     private final SchemeService settings;
+    private final LinkTypeDefRepository linkTypes;
 
     public record CommentResponse(long id, long issueId, long authorId, String body, Instant createdAt, Instant updatedAt) {
         static CommentResponse from(IssueComment c) {
@@ -138,7 +139,8 @@ public class CollaborationService {
             long otherId = link.getSourceId() == issueId ? link.getTargetId() : link.getSourceId();
             Issue other = issues.findById(otherId).orElse(null);
             if (other == null) continue;
-            String direction = "relates".equals(link.getType()) || link.getSourceId() == issueId ? "outward" : "inward";
+            boolean symmetric = linkTypes.findById(link.getType()).map(LinkTypeDef::isSymmetric).orElse(false);
+            String direction = symmetric || link.getSourceId() == issueId ? "outward" : "inward";
             views.add(new LinkView(LinkResponse.from(link), IssueResponse.from(other), direction));
         }
         return views;
@@ -148,16 +150,18 @@ public class CollaborationService {
         Issue source = require(userId, sourceId, AlmAction.EDIT);
         Issue target = issues.findById(targetId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));
         if (sourceId == targetId) throw new IllegalArgumentException("자기 자신과는 연결할 수 없습니다");
-        if (type == null || !LINK_TYPES.contains(type)) throw new IllegalArgumentException("링크 종류는 blocks/relates 중 하나입니다");
+        LinkTypeDef def = linkTypes.findById(type == null ? "" : type)
+                .orElseThrow(() -> new IllegalArgumentException("없는 링크 타입입니다: " + type));
+        boolean symmetric = def.isSymmetric();
         boolean duplicate = links.findBySourceIdOrTargetId(sourceId, sourceId).stream().anyMatch(l -> {
             if (!l.getType().equals(type)) return false;
             if (l.getSourceId() == sourceId && l.getTargetId() == targetId) return true;
-            return "relates".equals(type) && l.getSourceId() == targetId && l.getTargetId() == sourceId;
+            return symmetric && l.getSourceId() == targetId && l.getTargetId() == sourceId;
         });
         if (duplicate) throw new IllegalArgumentException("이미 연결돼 있습니다");
         IssueLink link = links.save(IssueLink.of(sourceId, targetId, type));
         Instant now = now();
-        String label = "blocks".equals(type) ? "차단" : "관련";
+        String label = def.getName();
         record(source.getId(), userId, "link", label + " 링크: " + target.getKey(), now);
         record(target.getId(), userId, "link", label + " 링크: " + source.getKey(), now);
         return LinkResponse.from(link);

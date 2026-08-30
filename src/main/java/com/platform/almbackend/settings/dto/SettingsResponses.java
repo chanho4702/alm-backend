@@ -21,6 +21,12 @@ public final class SettingsResponses {
         }
     }
 
+    public record LinkTypeResponse(String id, String name, String outward, String inward, int order, boolean builtIn) {
+        public static LinkTypeResponse from(com.platform.almbackend.domain.LinkTypeDef t) {
+            return new LinkTypeResponse(t.getId(), t.getName(), t.getOutward(), t.getInward(), t.getSortOrder(), t.isBuiltIn());
+        }
+    }
+
     public record PriorityResponse(String id, String name, String icon, String color, String description, int order, boolean builtIn) {
         public static PriorityResponse from(com.platform.almbackend.domain.PriorityDef p) {
             return new PriorityResponse(p.getId(), p.getName(), p.getIcon(), p.getColor(), p.getDescription(), p.getSortOrder(), p.isBuiltIn());

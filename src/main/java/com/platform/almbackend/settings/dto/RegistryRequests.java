@@ -12,5 +12,7 @@ public final class RegistryRequests {
 
     public record PriorityRequest(String name, String icon, String color, String description) {}
 
+    public record LinkTypeRequest(String name, String outward, String inward) {}
+
     public record MoveRequest(int delta) {}
 }
