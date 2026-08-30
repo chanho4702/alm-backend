@@ -176,7 +176,6 @@ public class IssueService {
         }
         String nextType = normalizeType(request.type() == null ? issue.getType() : request.type());
         if (!nextType.equals(issue.getType())) settings.assertTypeEnabled(issue.getProjectId(), nextType);
-        validateChildren(issue.getId(), nextType);
         IssueDetailsRequest details = request.details();
         Long requestedParentId = details == null ? issue.getParentId() : details.parentId();
         Long parentId = resolveParent(issue, nextType, requestedParentId);
@@ -377,22 +376,22 @@ public class IssueService {
 
     private Long resolveParent(Issue issue, String newType, Long requestedParentId) {
         if (requestedParentId == null) return null;
-        Issue parent = requireParent(requestedParentId);
-        boolean allowed = isParentAllowed(issue.getProjectId(), issue.getId(), newType, parent);
-        if (allowed) return requestedParentId;
-        if (!Objects.equals(issue.getType(), newType)
-                && Objects.equals(issue.getParentId(), requestedParentId)) {
-            // 기존 부모를 그대로 보낸 상태에서 타입만 바뀌어 관계가 깨지면 프론트 목업과 같이 자동 해제한다.
-            return null;
-        }
-        throw new IllegalArgumentException("이슈 타입에 맞지 않는 부모입니다");
+        validateParent(issue.getProjectId(), issue.getId(), newType, requestedParentId);
+        return requestedParentId;
     }
 
+    /**
+     * 계층 깊이 제한 없음 — 같은 프로젝트의 어떤 이슈든 상위 항목이 될 수 있다(하위의 하위 허용).
+     * 막는 것은 다른 프로젝트·자기 자신·순환(자신의 자손을 상위로 지정)뿐이다.
+     */
     private void validateParent(long projectId, Long issueId, String type, Long parentId) {
         if (parentId == null) return;
         Issue parent = requireParent(parentId);
-        if (!isParentAllowed(projectId, issueId, type, parent)) {
-            throw new IllegalArgumentException("이슈 타입에 맞지 않는 부모입니다");
+        if (!Objects.equals(parent.getProjectId(), projectId)) {
+            throw new IllegalArgumentException("같은 프로젝트의 이슈만 상위 항목으로 지정할 수 있습니다");
+        }
+        if (issueId != null && (Objects.equals(parent.getId(), issueId) || isDescendant(issueId, parent))) {
+            throw new IllegalArgumentException("상위 항목이 순환합니다");
         }
     }
 
@@ -401,29 +400,15 @@ public class IssueService {
                 .orElseThrow(() -> new NotFoundException("부모 이슈를 찾을 수 없습니다: " + parentId));
     }
 
-    private boolean isParentAllowed(long projectId, Long issueId, String childType, Issue parent) {
-        if (!Objects.equals(parent.getProjectId(), projectId)) return false;
-        if (issueId != null && Objects.equals(parent.getId(), issueId)) return false;
-        return hierarchyAllows(childType, parent.getType());
-    }
-
-    /** 계층은 타입 id가 아니라 레지스트리 level에서 — 상위(epic)는 부모 없음, 일반의 부모는 상위, 하위 작업의 부모는 일반 */
-    private boolean hierarchyAllows(String childType, String parentType) {
-        String child = settings.typeLevel(childType);
-        String parent = settings.typeLevel(parentType);
-        return switch (child) {
-            case "epic" -> false;
-            case "subtask" -> "standard".equals(parent);
-            default -> "epic".equals(parent);
-        };
-    }
-
-    private void validateChildren(long issueId, String newType) {
-        for (Issue child : issues.findByParentId(issueId)) {
-            if (!hierarchyAllows(child.getType(), newType)) {
-                throw new IllegalArgumentException("하위 이슈가 있어 타입을 변경할 수 없습니다");
-            }
+    /** candidate가 ancestorId의 자손인지 — 부모 체인을 따라 올라가며 확인한다 */
+    private boolean isDescendant(long ancestorId, Issue candidate) {
+        Set<Long> seen = new HashSet<>();
+        Issue cursor = candidate;
+        while (cursor != null && cursor.getParentId() != null && seen.add(cursor.getId())) {
+            if (Objects.equals(cursor.getParentId(), ancestorId)) return true;
+            cursor = issues.findById(cursor.getParentId()).orElse(null);
         }
+        return false;
     }
 
     private static List<String> normalizeLabels(List<String> values) {

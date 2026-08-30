@@ -138,7 +138,7 @@ class ProjectIssueControllerTest {
     }
 
     @Test
-    void 에픽_일반이슈_하위작업의_2단계_계층만_허용한다() throws Exception {
+    void 계층_깊이_제한_없이_하위의_하위를_허용하고_순환과_다른_프로젝트만_막는다() throws Exception {
         long projectId = createProject();
         long epicId = createIssue(projectId, "{\"title\":\"에픽\",\"type\":\"EPIC\"}");
         long storyId = createIssue(projectId, """
@@ -152,14 +152,23 @@ class ProjectIssueControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.parentId").value(storyId));
 
-        mvc.perform(post("/api/alm/projects/{id}/issues", projectId)
+        // 하위의 하위 — 하위 작업 아래에도 이슈를 만들 수 있다
+        long grandChildId = createIssue(projectId, """
+                {"title":"하위의 하위","type":"TASK","details":{"parentId":%d}}
+                """.formatted(subtaskId));
+        mvc.perform(get("/api/alm/issues/{id}", grandChildId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parentId").value(subtaskId));
+
+        // 순환 — 에픽의 상위를 그 자손으로 지정할 수 없다
+        mvc.perform(put("/api/alm/issues/{id}", epicId)
                         .with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"잘못된 하위 작업","type":"SUBTASK","details":{"parentId":%d}}
-                                """.formatted(epicId)))
+                                {"title":"에픽","type":"EPIC","status":"todo","priority":"medium","expectedVersion":1,"details":{"parentId":%d}}
+                                """.formatted(grandChildId)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("이슈 타입에 맞지 않는 부모입니다"));
+                .andExpect(jsonPath("$.error").value("상위 항목이 순환합니다"));
 
         long otherProjectId = createProject("OTH");
         mvc.perform(post("/api/alm/projects/{id}/issues", otherProjectId)
@@ -169,7 +178,7 @@ class ProjectIssueControllerTest {
                                 {"title":"다른 프로젝트 자식","type":"STORY","details":{"parentId":%d}}
                                 """.formatted(epicId)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("이슈 타입에 맞지 않는 부모입니다"));
+                .andExpect(jsonPath("$.error").value("같은 프로젝트의 이슈만 상위 항목으로 지정할 수 있습니다"));
     }
 
     @Test
@@ -202,10 +211,10 @@ class ProjectIssueControllerTest {
     }
 
     @Test
-    void 자식이_있으면_계층을_깨는_타입_변경을_거부한다() throws Exception {
+    void 자식이_있어도_타입_변경은_허용되고_계층은_유지된다() throws Exception {
         long projectId = createProject();
         long epicId = createIssue(projectId, "{\"title\":\"에픽\",\"type\":\"EPIC\"}");
-        createIssue(projectId, """
+        long storyId = createIssue(projectId, """
                 {"title":"스토리","type":"STORY","details":{"parentId":%d}}
                 """.formatted(epicId));
 
@@ -215,12 +224,14 @@ class ProjectIssueControllerTest {
                         .content("""
                                 {"title":"일반 작업으로 변경","description":"","type":"TASK","status":"todo","priority":"MEDIUM","expectedVersion":1}
                                 """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("하위 이슈가 있어 타입을 변경할 수 없습니다"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("task"));
+        mvc.perform(get("/api/alm/issues/{id}", storyId).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.parentId").value(epicId));
     }
 
     @Test
-    void 타입_변경으로_기존_부모가_부적합해지면_자동_해제한다() throws Exception {
+    void 타입을_바꿔도_기존_상위_항목은_그대로다() throws Exception {
         long projectId = createProject();
         long epicId = createIssue(projectId, "{\"title\":\"에픽\",\"type\":\"EPIC\"}");
         long storyId = createIssue(projectId, """
@@ -231,11 +242,11 @@ class ProjectIssueControllerTest {
                         .with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"title":"하위 작업으로 변경","description":"","type":"SUBTASK","status":"todo","priority":"MEDIUM","expectedVersion":1}
-                                """))
+                                {"title":"하위 작업으로 변경","description":"","type":"SUBTASK","status":"todo","priority":"MEDIUM","expectedVersion":1,"details":{"parentId":%d}}
+                                """.formatted(epicId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.type").value("subtask"))
-                .andExpect(jsonPath("$.parentId").doesNotExist());
+                .andExpect(jsonPath("$.parentId").value(epicId));
     }
 
     @Test
