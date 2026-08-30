@@ -129,6 +129,24 @@ public class CollaborationService {
         worklogs.delete(worklog);
     }
 
+    /** 프로젝트 워크로그(가젯·리포트) — 활성 이슈의 기록만, 이슈 키를 붙여 준다 */
+    public record ProjectWorklogRow(long id, long issueId, String issueKey, long authorId, BigDecimal hours, String comment, LocalDate workedOn) {}
+
+    @Transactional(readOnly = true)
+    public List<ProjectWorklogRow> projectWorklogs(long userId, long projectId, LocalDate since, LocalDate until) {
+        projectService.require(userId, projectId, AlmAction.VIEW);
+        List<Issue> projectIssues = issues.findByProjectIdOrderBySortOrderAscKeyAsc(projectId);
+        if (projectIssues.isEmpty()) return List.of();
+        java.util.Map<Long, String> keys = new java.util.HashMap<>();
+        for (Issue issue : projectIssues) keys.put(issue.getId(), issue.getKey());
+        LocalDate from = since == null ? LocalDate.of(1970, 1, 1) : since;
+        LocalDate to = until == null ? LocalDate.of(9999, 12, 31) : until;
+        return worklogs.findByIssueIdInAndWorkedOnBetweenOrderByWorkedOnAscIdAsc(keys.keySet(), from, to).stream()
+                .map(w -> new ProjectWorklogRow(w.getId(), w.getIssueId(), keys.get(w.getIssueId()), w.getAuthorId(),
+                        w.getHours(), w.getComment(), w.getWorkedOn()))
+                .toList();
+    }
+
     // ── 링크 ──
 
     @Transactional(readOnly = true)

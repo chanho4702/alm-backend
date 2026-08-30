@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface WorklogRepository extends JpaRepository<Worklog, Long> {
     List<Worklog> findByIssueIdOrderByWorkedOnAscIdAsc(long issueId);
+    List<Worklog> findByIssueIdInAndWorkedOnBetweenOrderByWorkedOnAscIdAsc(java.util.Collection<Long> issueIds, java.time.LocalDate since, java.time.LocalDate until);
 }

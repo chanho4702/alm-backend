@@ -55,6 +55,15 @@ public class CollaborationController {
         service.deleteComment(userId(jwt), id);
     }
 
+    @GetMapping("/api/alm/projects/{projectId}/worklogs")
+    public List<CollaborationService.ProjectWorklogRow> projectWorklogs(
+            @PathVariable long projectId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) LocalDate since,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) LocalDate until,
+            @AuthenticationPrincipal Jwt jwt) {
+        return service.projectWorklogs(userId(jwt), projectId, since, until);
+    }
+
     @GetMapping("/api/alm/issues/{issueId}/worklogs")
     public List<WorklogResponse> worklogs(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return service.worklogs(userId(jwt), issueId);
