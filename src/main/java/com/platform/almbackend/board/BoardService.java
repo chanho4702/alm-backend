@@ -86,6 +86,10 @@ public class BoardService {
         Board board = requireBoard(boardId);
         projectService.require(userId, board.getProjectId(), AlmAction.EDIT);
         if (request.name() != null) board.rename(requireName(request.name()));
+        if (request.type() != null) {
+            if (!TYPES.contains(request.type())) throw new IllegalArgumentException("보드 종류는 scrum/kanban 중 하나입니다");
+            board.changeType(request.type());
+        }
         if (request.columns() != null) {
             validateColumns(request.columns());
             board.replaceColumns(write(request.columns()));

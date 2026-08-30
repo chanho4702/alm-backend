@@ -61,6 +61,7 @@ public class Board {
     }
 
     public void rename(String name) { this.name = name; }
+    public void changeType(String type) { this.type = type; }
     public void replaceFilter(String filterJson) { this.filterJson = filterJson; }
     public void replaceColumns(String columnsJson) { this.columnsJson = columnsJson; }
     public void changeSwimlane(String swimlane) { this.swimlane = swimlane; }

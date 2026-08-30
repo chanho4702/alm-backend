@@ -192,8 +192,9 @@ class CollaborationControllerTest {
         // 칸반은 스프린트 무관 전체, 필터 저장
         mvc.perform(put("/api/alm/boards/{id}", kanbanId).with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"filter\":{\"assigneeIds\":[\"unassigned\"],\"types\":[],\"labels\":[]},\"columns\":[{\"status\":\"todo\",\"name\":\"대기\",\"wipLimit\":3}],\"swimlane\":\"assignee\",\"isDefault\":true}"))
+                        .content("{\"type\":\"kanban\",\"filter\":{\"assigneeIds\":[\"unassigned\"],\"types\":[],\"labels\":[]},\"columns\":[{\"status\":\"todo\",\"name\":\"대기\",\"wipLimit\":3}],\"swimlane\":\"assignee\",\"isDefault\":true}"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("kanban"))
                 .andExpect(jsonPath("$.columns[0].wipLimit").value(3))
                 .andExpect(jsonPath("$.isDefault").value(true));
         mvc.perform(get("/api/alm/boards/{id}/issues", kanbanId).with(asUser(1, "Alice")))
