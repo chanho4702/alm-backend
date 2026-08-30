@@ -11,6 +11,7 @@ import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.settings.SchemeService;
 import com.platform.almbackend.collab.CollaborationService;
+import com.platform.almbackend.component.ComponentService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueImportRequest;
 import com.platform.almbackend.issue.dto.IssueImportResponse;
@@ -57,6 +58,7 @@ public class IssueService {
     private final NotificationService notifications;
     private final SchemeService settings;
     private final CollaborationService collaboration;
+    private final ComponentService componentService;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -135,7 +137,8 @@ public class IssueService {
         Long sprintId = details == null ? null : details.sprintId();
         if (sprintId != null) sprintService.requireSprintInProject(sprintId, projectId);
         long order = issues.findMaxSortOrderInRankGroup(projectId, sprintId) + 1;
-        Issue issue = issues.save(Issue.of(
+        List<Long> componentIds = componentService.validateForIssue(projectId, details == null ? null : details.componentIds());
+        Issue fresh = Issue.of(
                 projectId,
                 number,
                 project.getKey() + "-" + number,
@@ -144,14 +147,16 @@ public class IssueService {
                 type,
                 requireStatus(projectId, request.status()),
                 settings.resolvePriority(projectId, request.priority()),
-                request.assigneeId() == null ? project.resolveDefaultAssignee() : request.assigneeId(),
+                request.assigneeId() == null ? componentService.resolveDefaultAssignee(project, componentIds) : request.assigneeId(),
                 userId,
                 parentId,
                 sprintId,
                 details == null ? null : details.dueDate(),
                 details == null ? null : details.estimateHours(),
                 normalizeLabels(details == null ? null : details.labels()),
-                order));
+                order);
+        fresh.replaceComponents(componentIds);
+        Issue issue = issues.save(fresh);
         changeLog.recordCreated(userId, issue);
         collaboration.recordCreated(userId, issue);
         notifications.onIssueCreated(userId, issue);
@@ -189,6 +194,9 @@ public class IssueService {
         List<String> labels = details == null
                 ? List.copyOf(issue.getLabels())
                 : normalizeLabels(details.labels());
+        List<Long> componentIds = details == null || details.componentIds() == null
+                ? List.copyOf(issue.getComponentIds())
+                : componentService.validateForIssue(issue.getProjectId(), details.componentIds());
         String status = request.status() == null ? issue.getStatus() : requireStatus(issue.getProjectId(), request.status());
         settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
         // 상태나 스프린트가 바뀌면 대상 컬럼 맨 뒤로 보낸다. 정밀 배치는 move/rank가 한다.
@@ -214,6 +222,7 @@ public class IssueService {
                 fixVersionId,
                 labels,
                 order);
+        issue.replaceComponents(componentIds);
         if (regrouped) {
             List<Issue> source = Objects.equals(previousSprintId, sprintId)
                     ? List.of()

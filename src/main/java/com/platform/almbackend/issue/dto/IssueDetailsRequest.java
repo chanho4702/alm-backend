@@ -32,5 +32,7 @@ public record IssueDetailsRequest(
         Long fixVersionId,
         @Size(max = 50, message = "라벨은 최대 50개까지 지정할 수 있습니다")
         List<@NotBlank(message = "빈 라벨은 사용할 수 없습니다")
-                @Size(max = 80, message = "라벨은 80자 이하여야 합니다") String> labels
+                @Size(max = 80, message = "라벨은 80자 이하여야 합니다") String> labels,
+        /** 컴포넌트 id 목록. 수정 시 null이면 그대로, 빈 배열이면 전부 해제 */
+        List<@Positive(message = "componentId는 양수여야 합니다") Long> componentIds
 ) {}

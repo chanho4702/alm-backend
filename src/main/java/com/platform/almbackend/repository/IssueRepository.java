@@ -106,12 +106,23 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @org.springframework.transaction.annotation.Transactional
     default void deleteAllInBatch() {
         purgeAllLabels();
+        purgeAllIssueComponents();
         purgeAllIssues();
     }
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query(value = "delete from issue_component", nativeQuery = true)
+    void purgeAllIssueComponents();
 
     /** 영구 삭제 전 라벨 테이블(ElementCollection) 정리 — 네이티브 삭제는 컬렉션을 모른다 */
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
     @org.springframework.data.jpa.repository.Query(value = "delete from issue_label where issue_id in (select id from issue where project_id = :projectId)", nativeQuery = true)
     int purgeLabelsByProjectId(@Param("projectId") long projectId);
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query(value = "delete from issue_component where issue_id in (select id from issue where project_id = :projectId)", nativeQuery = true)
+    int purgeComponentsByProjectId(@Param("projectId") long projectId);
 }

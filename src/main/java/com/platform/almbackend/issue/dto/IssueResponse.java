@@ -26,6 +26,7 @@ public record IssueResponse(
         IssueResolution resolution,
         Long fixVersionId,
         List<String> labels,
+        List<Long> componentIds,
         long order,
         int version,
         Instant createdAt,
@@ -37,7 +38,7 @@ public record IssueResponse(
                 issue.getDescription(), issue.getType(), issue.getStatus(), issue.getPriority(),
                 issue.getAssigneeId(), issue.getReporterId(), issue.getParentId(), issue.getSprintId(),
                 issue.getDueDate(),
-                issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(), List.copyOf(issue.getLabels()), issue.getSortOrder(),
+                issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(), List.copyOf(issue.getLabels()), List.copyOf(issue.getComponentIds()), issue.getSortOrder(),
                 issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt(), issue.getArchivedAt());
     }
 }

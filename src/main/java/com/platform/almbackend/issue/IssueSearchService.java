@@ -52,6 +52,7 @@ public class IssueSearchService {
             /** 사용자 id 문자열 목록. "unassigned"는 미지정 */
             List<String> assignees,
             List<String> labels,
+            List<Long> componentIds,
             Long sprintId,
             Long parentId,
             Long fixVersionId,
@@ -109,6 +110,11 @@ public class IssueSearchService {
             if (notEmpty(c.labels())) {
                 Join<Issue, String> labels = root.join("labels");
                 where.add(labels.in(c.labels()));
+                query.distinct(true);
+            }
+            if (notEmpty(c.componentIds())) {
+                Join<Issue, Long> components = root.join("componentIds");
+                where.add(components.in(c.componentIds()));
                 query.distinct(true);
             }
             if (c.sprintId() != null) where.add(cb.equal(root.get("sprintId"), c.sprintId()));

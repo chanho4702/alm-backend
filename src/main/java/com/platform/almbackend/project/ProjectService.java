@@ -177,6 +177,7 @@ public class ProjectService {
         requireAdminIgnoringArchive(userId, projectId);
         attachmentService.getObject().deleteAllForProject(projectId);
         issues.purgeLabelsByProjectId(projectId);
+        issues.purgeComponentsByProjectId(projectId);
         issues.purgeByProjectId(projectId);
         versions.deleteByProjectId(projectId);
         sprints.deleteByProjectId(projectId);

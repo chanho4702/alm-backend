@@ -89,6 +89,13 @@ public class Issue {
     @Column(name = "label", nullable = false, length = 80)
     private List<String> labels = new ArrayList<>();
 
+    /** 컴포넌트 id 목록(순서 유지) — 검증은 ComponentService가 한다 */
+    @ElementCollection
+    @CollectionTable(name = "issue_component", joinColumns = @JoinColumn(name = "issue_id"))
+    @OrderColumn(name = "component_order")
+    @Column(name = "component_id", nullable = false)
+    private List<Long> componentIds = new ArrayList<>();
+
     @Column(name = "sort_order", nullable = false)
     private Long sortOrder;
 
@@ -157,6 +164,11 @@ public class Issue {
     }
 
     /** 설정 변경 이관 — 상태만 바꾸고 버전은 올리지 않는다(사용자 편집이 아니다) */
+    public void replaceComponents(List<Long> ids) {
+        this.componentIds.clear();
+        this.componentIds.addAll(ids);
+    }
+
     public void archive(long actorId, Instant at) {
         this.archivedAt = at;
         this.archivedBy = actorId;
