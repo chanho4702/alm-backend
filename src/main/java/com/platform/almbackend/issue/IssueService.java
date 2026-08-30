@@ -12,6 +12,8 @@ import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
+import com.platform.almbackend.issue.dto.IssueImportRequest;
+import com.platform.almbackend.issue.dto.IssueImportResponse;
 import com.platform.almbackend.issue.dto.IssueDetailsRequest;
 import com.platform.almbackend.issue.dto.IssueMoveRequest;
 import com.platform.almbackend.issue.dto.IssueRankRequest;
@@ -33,6 +35,11 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+import java.util.Set;
+import java.util.Locale;
+import java.util.HashSet;
 import java.util.Objects;
 
 @Service
@@ -69,7 +76,55 @@ public class IssueService {
         projectService.require(userId, projectId, AlmAction.EDIT);
         Project project = projects.findByIdForUpdate(projectId)
                 .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
-        long number = project.nextIssueNumber();
+        return createNumbered(userId, project, project.nextIssueNumber(), request);
+    }
+
+    /**
+     * 이관·CSV 가져오기 — 항목마다 만들고 실패는 사유와 함께 분리한다(전부 롤백 없음). 키가 있으면
+     * 보존하고 카운터를 그 번호 이상으로 앞당긴다. 검증(형식·중복·제목)은 저장 전에 끝나므로 실패한
+     * 항목이 트랜잭션을 더럽히지 않는다.
+     */
+    public IssueImportResponse importIssues(long userId, long projectId, IssueImportRequest request) {
+        projectService.require(userId, projectId, AlmAction.EDIT);
+        Project project = projects.findByIdForUpdate(projectId)
+                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
+        Pattern keyPattern = Pattern.compile("^" + Pattern.quote(project.getKey()) + "-(\\d+)$");
+        int created = 0;
+        List<IssueImportResponse.Failure> failed = new ArrayList<>();
+        Set<String> seenKeys = new HashSet<>();
+        for (int i = 0; i < request.items().size(); i++) {
+            IssueImportRequest.Item item = request.items().get(i);
+            String label = item.key() != null && !item.key().isBlank() ? item.key() : String.valueOf(item.title());
+            try {
+                if (item.title() == null || item.title().isBlank()) {
+                    throw new IllegalArgumentException("이슈 제목을 입력하세요");
+                }
+                long number;
+                if (item.key() != null && !item.key().isBlank()) {
+                    String key = item.key().trim().toUpperCase(Locale.ROOT);
+                    Matcher matcher = keyPattern.matcher(key);
+                    if (!matcher.matches()) {
+                        throw new IllegalArgumentException("키는 " + project.getKey() + "-번호 형식이어야 합니다: " + item.key());
+                    }
+                    if (!seenKeys.add(key) || issues.findByKey(key).isPresent()) {
+                        throw new IllegalArgumentException("이미 있는 키입니다: " + key);
+                    }
+                    number = Long.parseLong(matcher.group(1));
+                    project.reserveIssueNumber(number);
+                } else {
+                    number = project.nextIssueNumber();
+                }
+                createNumbered(userId, project, number, item.toCreate());
+                created++;
+            } catch (RuntimeException e) {
+                failed.add(new IssueImportResponse.Failure(i + 1, label, e.getMessage()));
+            }
+        }
+        return new IssueImportResponse(created, failed);
+    }
+
+    private IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request) {
+        long projectId = project.getId();
         IssueType type = request.type() == null ? IssueType.TASK : request.type();
         IssueDetailsRequest details = request.details();
         Long parentId = details == null ? null : details.parentId();

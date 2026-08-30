@@ -1,6 +1,8 @@
 package com.platform.almbackend.issue;
 
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
+import com.platform.almbackend.issue.dto.IssueImportRequest;
+import com.platform.almbackend.issue.dto.IssueImportResponse;
 import com.platform.almbackend.issue.dto.IssueMoveRequest;
 import com.platform.almbackend.issue.dto.IssueRankRequest;
 import com.platform.almbackend.issue.dto.IssueResponse;
@@ -31,6 +33,15 @@ public class IssueController {
             @Valid @RequestBody IssueCreateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.create(userId(jwt), projectId, request);
+    }
+
+    /** 이관·CSV 가져오기 — 200 + 항목별 결과 */
+    @PostMapping("/api/alm/projects/{projectId}/issues/import")
+    public IssueImportResponse importIssues(
+            @PathVariable long projectId,
+            @Valid @RequestBody IssueImportRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return issues.importIssues(userId(jwt), projectId, request);
     }
 
     @GetMapping("/api/alm/issues/{issueId}")

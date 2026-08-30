@@ -63,5 +63,10 @@ public class Project {
         this.lastIssueNumber += 1;
         return this.lastIssueNumber;
     }
+
+    /** 보존 키(이관)가 쓴 번호 이상으로 카운터를 앞당긴다 — 이후 발급 키가 겹치지 않게 */
+    public void reserveIssueNumber(long number) {
+        if (number > this.lastIssueNumber) this.lastIssueNumber = number;
+    }
 }
 
