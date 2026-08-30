@@ -17,11 +17,14 @@ public record ProjectResponse(
         String url,
         int version,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        Instant archivedAt,
+        Instant deletedAt
 ) {
     public static ProjectResponse from(Project project) {
         return new ProjectResponse(project.getId(), project.getKey(), project.getName(), project.getDescription(),
                 project.getCategory(), project.getLeadId(), project.getDefaultAssignee(), project.getIcon(),
-                project.getColor(), project.getUrl(), project.getVersion(), project.getCreatedAt(), project.getUpdatedAt());
+                project.getColor(), project.getUrl(), project.getVersion(), project.getCreatedAt(), project.getUpdatedAt(),
+                project.getArchivedAt(), project.getDeletedAt());
     }
 }

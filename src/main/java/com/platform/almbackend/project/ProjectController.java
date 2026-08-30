@@ -44,6 +44,32 @@ public class ProjectController {
         return projects.update(userId(jwt), projectId, request);
     }
 
+    @GetMapping("/trash")
+    public List<ProjectResponse> trash(@AuthenticationPrincipal Jwt jwt) {
+        return projects.listTrash(userId(jwt));
+    }
+
+    @PostMapping("/{projectId}/archive")
+    public ProjectResponse archive(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+        return projects.archive(userId(jwt), projectId);
+    }
+
+    @PostMapping("/{projectId}/unarchive")
+    public ProjectResponse unarchive(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+        return projects.unarchive(userId(jwt), projectId);
+    }
+
+    @PostMapping("/{projectId}/restore")
+    public ProjectResponse restore(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+        return projects.restoreFromTrash(userId(jwt), projectId);
+    }
+
+    @DeleteMapping("/{projectId}/permanent")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void purge(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+        projects.purge(userId(jwt), projectId);
+    }
+
     @DeleteMapping("/{projectId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {

@@ -29,7 +29,8 @@ public record IssueResponse(
         long order,
         int version,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        Instant archivedAt
 ) {
     public static IssueResponse from(Issue issue) {
         return new IssueResponse(issue.getId(), issue.getKey(), issue.getProjectId(), issue.getTitle(),
@@ -37,6 +38,6 @@ public record IssueResponse(
                 issue.getAssigneeId(), issue.getReporterId(), issue.getParentId(), issue.getSprintId(),
                 issue.getDueDate(),
                 issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(), List.copyOf(issue.getLabels()), issue.getSortOrder(),
-                issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt());
+                issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt(), issue.getArchivedAt());
     }
 }

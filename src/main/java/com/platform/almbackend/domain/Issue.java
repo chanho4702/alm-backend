@@ -5,6 +5,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ import java.util.List;
 
 @Entity
 @Table(name = "issue")
+@SQLRestriction("archived_at is null") // 보관된 이슈는 모든 일반 조회에서 빠진다 — 보관함은 네이티브 쿼리로 읽는다
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Issue {
@@ -47,6 +49,13 @@ public class Issue {
 
     @Column(nullable = false, length = 40)
     private String priority;
+
+    /** 보관 시각 — null이면 활성. 보관은 되돌릴 수 있다(휴지통과 다르다) */
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
+    @Column(name = "archived_by")
+    private Long archivedBy;
 
     @Column(name = "assignee_id")
     private Long assigneeId;
@@ -148,6 +157,16 @@ public class Issue {
     }
 
     /** 설정 변경 이관 — 상태만 바꾸고 버전은 올리지 않는다(사용자 편집이 아니다) */
+    public void archive(long actorId, Instant at) {
+        this.archivedAt = at;
+        this.archivedBy = actorId;
+    }
+
+    public void restore() {
+        this.archivedAt = null;
+        this.archivedBy = null;
+    }
+
     public void moveToStatus(String status) {
         this.status = status;
         this.updatedAt = Instant.now();

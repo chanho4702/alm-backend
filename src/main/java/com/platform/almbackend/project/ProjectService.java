@@ -104,14 +104,9 @@ public class ProjectService {
     public void delete(long userId, long projectId) {
         Project project = projects.findByIdForUpdate(projectId)
                 .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
-        require(userId, projectId, AlmAction.ADMIN);
-        // 이슈가 스프린트를 참조하므로 순서가 있다. DB cascade에 기대지 않고 여기서 명시한다.
-        attachmentService.getObject().deleteAllForProject(projectId);
-        issues.deleteByProjectId(projectId);
-        versions.deleteByProjectId(projectId);
-        sprints.deleteByProjectId(projectId);
-        projects.delete(project);
-        permissions.revokeProjectGrants(projectId);
+        requireAdminIgnoringArchive(userId, projectId);
+        // 삭제 = 휴지통 이동(지라). 복원·영구 삭제는 휴지통에서 한다. 검색 색인에서는 빠지도록 삭제 이벤트를 낸다
+        project.trash(java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
         events.afterCommit(AlmEvents.projectDeleted(userId, projectId));
     }
 
@@ -125,6 +120,69 @@ public class ProjectService {
         if (!permissions.isAllowed(userId, projectId, action)) {
             throw new ForbiddenException(action + " 권한이 필요합니다 (project " + projectId + ")");
         }
+        if (action != AlmAction.VIEW && projects.findById(projectId).map(Project::isArchived).orElse(false)) {
+            throw new ForbiddenException("보관된 프로젝트는 읽기만 할 수 있습니다");
+        }
+    }
+
+    /** 보관 가드를 우회하는 관리자 확인 — 보관 해제·휴지통 이동에 쓴다 */
+    private void requireAdminIgnoringArchive(long userId, long projectId) {
+        if (!permissions.isAllowed(userId, projectId, AlmAction.ADMIN)) {
+            throw new ForbiddenException("ADMIN 권한이 필요합니다 (project " + projectId + ")");
+        }
+    }
+
+    // ── 보관 · 휴지통 ──
+
+    public ProjectResponse archive(long userId, long projectId) {
+        Project project = projects.findByIdForUpdate(projectId)
+                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
+        requireAdminIgnoringArchive(userId, projectId);
+        project.archive(java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+        events.afterCommit(AlmEvents.projectUpdated(userId, project));
+        return ProjectResponse.from(project);
+    }
+
+    public ProjectResponse unarchive(long userId, long projectId) {
+        Project project = projects.findByIdForUpdate(projectId)
+                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
+        requireAdminIgnoringArchive(userId, projectId);
+        project.unarchive();
+        events.afterCommit(AlmEvents.projectUpdated(userId, project));
+        return ProjectResponse.from(project);
+    }
+
+    /** 휴지통 목록 — 접근 가능한 것만 */
+    @Transactional(readOnly = true)
+    public List<ProjectResponse> listTrash(long userId) {
+        AccessScope scope = permissions.accessibleProjects(userId);
+        return projects.findTrashed().stream()
+                .filter(p -> scope.all() || scope.projectIds().contains(p.getId()))
+                .map(ProjectResponse::from).toList();
+    }
+
+    public ProjectResponse restoreFromTrash(long userId, long projectId) {
+        Project project = projects.findTrashedById(projectId)
+                .orElseThrow(() -> new NotFoundException("휴지통에 없는 프로젝트입니다: " + projectId));
+        requireAdminIgnoringArchive(userId, projectId);
+        project.restoreFromTrash();
+        events.afterCommit(AlmEvents.projectCreated(userId, project));
+        return ProjectResponse.from(project);
+    }
+
+    /** 영구 삭제 — 휴지통에 있는 프로젝트만. 보관된 이슈까지 함께 지운다 */
+    public void purge(long userId, long projectId) {
+        Project project = projects.findTrashedById(projectId)
+                .orElseThrow(() -> new NotFoundException("휴지통에 없는 프로젝트입니다: " + projectId));
+        requireAdminIgnoringArchive(userId, projectId);
+        attachmentService.getObject().deleteAllForProject(projectId);
+        issues.purgeLabelsByProjectId(projectId);
+        issues.purgeByProjectId(projectId);
+        versions.deleteByProjectId(projectId);
+        sprints.deleteByProjectId(projectId);
+        projects.purgeTrashedById(project.getId());
+        permissions.revokeProjectGrants(projectId);
+        events.afterCommit(AlmEvents.projectDeleted(userId, projectId));
     }
 
     private static String normalizeDescription(String value) {
