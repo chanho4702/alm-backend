@@ -51,6 +51,8 @@ public class IssueSearchService {
             List<String> assignees,
             List<String> labels,
             Long sprintId,
+            Long parentId,
+            Long fixVersionId,
             String sort,
             String dir) {}
 
@@ -108,6 +110,8 @@ public class IssueSearchService {
                 query.distinct(true);
             }
             if (c.sprintId() != null) where.add(cb.equal(root.get("sprintId"), c.sprintId()));
+            if (c.parentId() != null) where.add(cb.equal(root.get("parentId"), c.parentId()));
+            if (c.fixVersionId() != null) where.add(cb.equal(root.get("fixVersionId"), c.fixVersionId()));
 
             boolean asc = "asc".equalsIgnoreCase(c.dir());
             Expression<?> sortKey = switch (c.sort() == null ? "updated" : c.sort()) {

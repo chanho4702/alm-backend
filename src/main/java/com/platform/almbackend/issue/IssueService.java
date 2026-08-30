@@ -11,6 +11,7 @@ import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.settings.SchemeService;
+import com.platform.almbackend.collab.CollaborationService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueImportRequest;
 import com.platform.almbackend.issue.dto.IssueImportResponse;
@@ -56,6 +57,7 @@ public class IssueService {
     private final IssueChangeLogService changeLog;
     private final NotificationService notifications;
     private final SchemeService settings;
+    private final CollaborationService collaboration;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -152,6 +154,7 @@ public class IssueService {
                 normalizeLabels(details == null ? null : details.labels()),
                 order));
         changeLog.recordCreated(userId, issue);
+        collaboration.recordCreated(userId, issue);
         notifications.onIssueCreated(userId, issue);
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
         return IssueResponse.from(issue);
@@ -193,6 +196,7 @@ public class IssueService {
         Long previousSprintId = issue.getSprintId();
         String previousStatus = issue.getStatus();
         Long previousAssigneeId = issue.getAssigneeId();
+        CollaborationService.Snapshot snapshotBefore = CollaborationService.Snapshot.of(issue);
         boolean regrouped = !Objects.equals(status, issue.getStatus())
                 || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
@@ -221,6 +225,7 @@ public class IssueService {
             resequence(source);
         }
         changeLog.recordChanges(userId, issue, previousStatus, previousSprintId);
+        collaboration.recordUpdate(userId, snapshotBefore, issue);
         notifications.onIssueUpdated(userId, issue, previousStatus, previousAssigneeId);
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
@@ -252,6 +257,7 @@ public class IssueService {
         String status = requireStatus(issue.getProjectId(), request.status());
         settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
         String previousStatus = issue.getStatus();
+        CollaborationService.Snapshot moveSnapshot = CollaborationService.Snapshot.of(issue);
         issue.moveTo(status, issue.getSortOrder());
         List<Issue> group = rankGroupWithout(issue, issue.getSprintId());
         int insertAt = indexOfInColumn(group, request.beforeId(), status);
@@ -259,6 +265,7 @@ public class IssueService {
         group.add(insertAt, issue);
         resequence(group);
         changeLog.recordChanges(userId, issue, previousStatus, issue.getSprintId());
+        collaboration.recordUpdate(userId, moveSnapshot, issue);
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }

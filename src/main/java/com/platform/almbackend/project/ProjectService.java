@@ -10,6 +10,7 @@ import com.platform.almbackend.permission.AccessScope;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.permission.PermissionClient;
 import com.platform.almbackend.settings.SchemeService;
+import com.platform.almbackend.board.BoardService;
 import com.platform.almbackend.project.dto.ProjectCreateRequest;
 import com.platform.almbackend.project.dto.ProjectResponse;
 import com.platform.almbackend.project.dto.ProjectUpdateRequest;
@@ -39,6 +40,7 @@ public class ProjectService {
     private final PermissionClient permissions;
     /** 설정 서비스는 이 서비스를 쓴다(권한) — 순환을 끊으려고 지연 주입 */
     private final ObjectProvider<SchemeService> schemeService;
+    private final ObjectProvider<BoardService> boardService;
     private final EventRelay events;
 
     @Transactional(readOnly = true)
@@ -67,6 +69,7 @@ public class ProjectService {
         // wiki와 같은 계약: grant 실패가 정본 생성을 롤백시키지는 않는다. 운영자는 grants REST로 복구한다.
         permissions.grantProjectAdmin(userId, saved.getId());
         schemeService.getObject().initProject(saved.getId());
+        boardService.getObject().createDefault(saved.getId());
         events.afterCommit(AlmEvents.projectCreated(userId, saved));
         return ProjectResponse.from(saved);
     }

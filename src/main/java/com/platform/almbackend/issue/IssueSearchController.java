@@ -34,13 +34,15 @@ public class IssueSearchController {
             @RequestParam(required = false) List<String> assignees,
             @RequestParam(required = false) List<String> labels,
             @RequestParam(required = false) Long sprintId,
+            @RequestParam(required = false) Long parentId,
+            @RequestParam(required = false) Long fixVersionId,
             @RequestParam(required = false) String sort,
             @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size,
             @AuthenticationPrincipal Jwt jwt) {
         return search.search(userId(jwt), new IssueSearchService.Criteria(
-                projectIds, text, statuses, priorities, types, assignees, labels, sprintId, sort, dir), page, size);
+                projectIds, text, statuses, priorities, types, assignees, labels, sprintId, parentId, fixVersionId, sort, dir), page, size);
     }
 
     /** 키 단건 조회 — 프로젝트를 순회하지 않는다 */

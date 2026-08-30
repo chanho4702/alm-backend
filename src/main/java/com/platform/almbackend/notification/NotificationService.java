@@ -93,6 +93,13 @@ public class NotificationService {
         }
     }
 
+    /** 코멘트 — 워처 ∪ 담당자 − 행위자 */
+    public void notifyCommented(long actorId, Issue issue, Instant now) {
+        for (long recipient : recipients(issue, actorId)) {
+            notifications.save(Notification.of(recipient, issue, actorId, Notification.Type.COMMENTED, null, now));
+        }
+    }
+
     // ── 알림 ──
 
     @Transactional(readOnly = true)
