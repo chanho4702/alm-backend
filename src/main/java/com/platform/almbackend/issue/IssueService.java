@@ -3,7 +3,6 @@ package com.platform.almbackend.issue;
 import com.platform.almbackend.common.ConflictException;
 import com.platform.almbackend.common.NotFoundException;
 import com.platform.almbackend.domain.Issue;
-import com.platform.almbackend.domain.IssuePriority;
 import com.platform.almbackend.domain.IssueResolution;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.event.AlmEvents;
@@ -144,7 +143,7 @@ public class IssueService {
                 normalizeDescription(request.description()),
                 type,
                 requireStatus(projectId, request.status()),
-                request.priority() == null ? IssuePriority.MEDIUM : request.priority(),
+                settings.resolvePriority(projectId, request.priority()),
                 request.assigneeId() == null ? project.resolveDefaultAssignee() : request.assigneeId(),
                 userId,
                 parentId,
@@ -205,7 +204,7 @@ public class IssueService {
                 normalizeDescription(request.description()),
                 nextType,
                 status,
-                request.priority(),
+                request.priority() == null ? null : settings.resolvePriority(snapshot.getProjectId(), request.priority()),
                 request.assigneeId(),
                 parentId,
                 sprintId,

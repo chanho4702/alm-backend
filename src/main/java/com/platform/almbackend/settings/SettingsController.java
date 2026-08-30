@@ -2,6 +2,8 @@ package com.platform.almbackend.settings;
 
 import com.platform.almbackend.settings.dto.RegistryRequests.CategoryRequest;
 import com.platform.almbackend.settings.dto.RegistryRequests.IssueTypeRequest;
+import com.platform.almbackend.settings.dto.RegistryRequests.PriorityRequest;
+import com.platform.almbackend.settings.dto.SettingsResponses.PriorityResponse;
 import com.platform.almbackend.settings.dto.RegistryRequests.MoveRequest;
 import com.platform.almbackend.settings.dto.RegistryRequests.StatusRequest;
 import com.platform.almbackend.settings.dto.SettingsResponses.CategoryResponse;
@@ -83,6 +85,31 @@ public class SettingsController {
     public void deleteStatus(@PathVariable String id) { registry.deleteStatus(id); }
 
     // ── 이슈 타입 ──
+    @GetMapping("/api/alm/settings/priorities")
+    public List<PriorityResponse> priorities() { return registry.priorities().stream().map(PriorityResponse::from).toList(); }
+
+    @GetMapping("/api/alm/settings/priorities/usage")
+    public Map<String, Long> priorityUsage() { return registry.priorityUsage(); }
+
+    @PostMapping("/api/alm/settings/priorities")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public PriorityResponse createPriority(@RequestBody PriorityRequest request) { return PriorityResponse.from(registry.createPriority(request)); }
+
+    @PutMapping("/api/alm/settings/priorities/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public PriorityResponse updatePriority(@PathVariable String id, @RequestBody PriorityRequest request) { return PriorityResponse.from(registry.updatePriority(id, request)); }
+
+    @PostMapping("/api/alm/settings/priorities/{id}/move")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void movePriority(@PathVariable String id, @RequestBody MoveRequest request) { registry.movePriority(id, request.delta()); }
+
+    @DeleteMapping("/api/alm/settings/priorities/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deletePriority(@PathVariable String id) { registry.deletePriority(id); }
+
     @GetMapping("/api/alm/settings/issue-types")
     public List<IssueTypeResponse> issueTypes() { return registry.issueTypes().stream().map(IssueTypeResponse::from).toList(); }
 

@@ -17,6 +17,7 @@ import java.util.Optional;
 public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecificationExecutor<Issue> {
     Optional<Issue> findByKey(String key);
     long countByType(String type);
+    long countByPriority(String priority);
 
     List<Issue> findByFixVersionId(long fixVersionId);
 

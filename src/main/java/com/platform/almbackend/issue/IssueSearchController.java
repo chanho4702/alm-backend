@@ -1,6 +1,5 @@
 package com.platform.almbackend.issue;
 
-import com.platform.almbackend.domain.IssuePriority;
 import com.platform.almbackend.issue.dto.IssuePageResponse;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +28,7 @@ public class IssueSearchController {
             @RequestParam(required = false) List<Long> projectIds,
             @RequestParam(required = false) String text,
             @RequestParam(required = false) List<String> statuses,
-            @RequestParam(required = false) List<IssuePriority> priorities,
+            @RequestParam(required = false) List<String> priorities,
             @RequestParam(required = false) List<String> types,
             @RequestParam(required = false) List<String> assignees,
             @RequestParam(required = false) List<String> labels,

@@ -1,7 +1,6 @@
 package com.platform.almbackend.grpc;
 
 import com.platform.almbackend.domain.Issue;
-import com.platform.almbackend.domain.IssuePriority;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
@@ -61,7 +60,7 @@ class AlmContentGrpcServiceTest {
     void 이슈와_프로젝트_표시값을_함께_돌려준다() {
         Project project = projects.save(Project.of("ALM", "ALM 제품", "설명"));
         Issue issue = issues.save(Issue.of(project.getId(), 1, "ALM-1", "로그인 오류",
-                "OIDC callback 실패", "bug", "todo", IssuePriority.HIGH, 2L, 1L));
+                "OIDC callback 실패", "bug", "todo", "high", 2L, 1L));
         issues.flush();
 
         IssueContent result = stub.getIssueContent(
@@ -89,9 +88,9 @@ class AlmContentGrpcServiceTest {
         Project a = projects.save(Project.of("AAA", "A", ""));
         Project b = projects.save(Project.of("BBB", "B", ""));
         issues.save(Issue.of(a.getId(), 1, "AAA-1", "A 이슈", "", "task",
-                "todo", IssuePriority.MEDIUM, null, 1L));
+                "todo", "medium", null, 1L));
         issues.save(Issue.of(b.getId(), 1, "BBB-1", "B 이슈", "", "task",
-                "todo", IssuePriority.MEDIUM, null, 1L));
+                "todo", "medium", null, 1L));
         issues.flush();
 
         List<IssueContent> result = drain(stub.listIssueContents(

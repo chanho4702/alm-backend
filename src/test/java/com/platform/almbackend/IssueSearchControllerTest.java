@@ -94,13 +94,13 @@ class IssueSearchControllerTest {
                         .param("size", "2").with(asUser(1, "Alice")))
                 .andExpect(jsonPath("$.total").value(4))
                 .andExpect(jsonPath("$.items.length()").value(2))
-                .andExpect(jsonPath("$.items[0].priority").value("HIGH"))
-                .andExpect(jsonPath("$.items[1].priority").value("MEDIUM"));
+                .andExpect(jsonPath("$.items[0].priority").value("high"))
+                .andExpect(jsonPath("$.items[1].priority").value("medium"));
         mvc.perform(get("/api/alm/issues/search").param("sort", "priority").param("dir", "asc")
                         .param("size", "2").param("page", "1").with(asUser(1, "Alice")))
                 .andExpect(jsonPath("$.page").value(1))
                 .andExpect(jsonPath("$.items.length()").value(2))
-                .andExpect(jsonPath("$.items[0].priority").value("LOW"));
+                .andExpect(jsonPath("$.items[0].priority").value("low"));
     }
 
     @Test

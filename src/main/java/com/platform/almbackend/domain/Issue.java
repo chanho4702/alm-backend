@@ -45,9 +45,8 @@ public class Issue {
     @Column(nullable = false, length = 80)
     private String status;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private IssuePriority priority;
+    @Column(nullable = false, length = 40)
+    private String priority;
 
     @Column(name = "assignee_id")
     private Long assigneeId;
@@ -103,7 +102,7 @@ public class Issue {
             String description,
             String type,
             String status,
-            IssuePriority priority,
+            String priority,
             Long assigneeId,
             long reporterId) {
         return of(projectId, issueNumber, key, title, description, type, status, priority,
@@ -118,7 +117,7 @@ public class Issue {
             String description,
             String type,
             String status,
-            IssuePriority priority,
+            String priority,
             Long assigneeId,
             long reporterId,
             Long parentId,
@@ -159,7 +158,7 @@ public class Issue {
             String description,
             String type,
             String status,
-            IssuePriority priority,
+            String priority,
             Long assigneeId,
             Long parentId,
             Long sprintId,

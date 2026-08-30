@@ -87,7 +87,7 @@ public class AlmContentGrpcService extends AlmContentServiceGrpc.AlmContentServi
                 .setDescription(issue.getDescription())
                 .setType(issue.getType())
                 .setStatus(issue.getStatus())
-                .setPriority(issue.getPriority().name())
+                .setPriority(issue.getPriority())
                 .setReporterId(issue.getReporterId())
                 .setVersion(issue.getVersion())
                 .setUpdatedAt(issue.getUpdatedAt().toEpochMilli());

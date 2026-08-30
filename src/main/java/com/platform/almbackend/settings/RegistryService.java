@@ -6,6 +6,9 @@ import com.platform.almbackend.domain.StatusCategory;
 import com.platform.almbackend.domain.StatusDef;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.IssueTypeDefRepository;
+import com.platform.almbackend.repository.PriorityDefRepository;
+import com.platform.almbackend.domain.PriorityDef;
+import com.platform.almbackend.settings.dto.RegistryRequests.PriorityRequest;
 import com.platform.almbackend.repository.StatusCategoryRepository;
 import com.platform.almbackend.repository.StatusDefRepository;
 import com.platform.almbackend.settings.dto.RegistryRequests.CategoryRequest;
@@ -35,6 +38,7 @@ public class RegistryService {
     private final StatusCategoryRepository categories;
     private final StatusDefRepository statuses;
     private final IssueTypeDefRepository types;
+    private final PriorityDefRepository priorities;
     private final IssueRepository issues;
     private final SchemeQueries schemes;
 
@@ -206,6 +210,67 @@ public class RegistryService {
         schemes.removeTypeEverywhere(id);
         List<IssueTypeDef> rest = types.findAllByOrderBySortOrderAsc();
         for (int i = 0; i < rest.size(); i++) rest.get(i).reorder(i + 1);
+    }
+
+    // ── 우선순위 ──
+
+    @Transactional(readOnly = true)
+    public List<PriorityDef> priorities() { return priorities.findAllByOrderBySortOrderAsc(); }
+
+    @Transactional(readOnly = true)
+    public Map<String, Long> priorityUsage() {
+        Map<String, Long> usage = new java.util.LinkedHashMap<>();
+        for (PriorityDef def : priorities.findAllByOrderBySortOrderAsc()) usage.put(def.getId(), issues.countByPriority(def.getId()));
+        return usage;
+    }
+
+    public PriorityDef createPriority(PriorityRequest request) {
+        String name = requireName(request.name(), "우선순위 이름을 입력하세요");
+        if (priorities.existsByName(name)) throw new IllegalArgumentException("우선순위 이름이 중복됩니다: " + name);
+        requireColor(request.color());
+        if (request.icon() == null || request.icon().isBlank()) throw new IllegalArgumentException("아이콘을 고르세요");
+        int order = priorities.findAllByOrderBySortOrderAsc().size() + 1;
+        return priorities.save(PriorityDef.of(newId("pr"), name, request.icon(), request.color(), request.description(), order));
+    }
+
+    public PriorityDef updatePriority(String id, PriorityRequest request) {
+        PriorityDef def = requirePriority(id);
+        if (request.name() != null) {
+            String name = requireName(request.name(), "우선순위 이름을 입력하세요");
+            if (priorities.existsByNameAndIdNot(name, id)) throw new IllegalArgumentException("우선순위 이름이 중복됩니다: " + name);
+            def.rename(name);
+        }
+        if (request.color() != null) requireColor(request.color());
+        def.restyle(request.icon(), request.color());
+        if (request.description() != null) def.describe(request.description());
+        return def;
+    }
+
+    public void movePriority(String id, int delta) {
+        List<PriorityDef> sorted = priorities.findAllByOrderBySortOrderAsc();
+        int index = indexOf(sorted.stream().map(PriorityDef::getId).toList(), id, "우선순위를 찾을 수 없습니다");
+        int target = index + delta;
+        if (target < 0 || target >= sorted.size()) return;
+        PriorityDef a = sorted.get(index);
+        PriorityDef b = sorted.get(target);
+        int tmp = a.getSortOrder();
+        a.reorder(b.getSortOrder());
+        b.reorder(tmp);
+    }
+
+    public void deletePriority(String id) {
+        PriorityDef def = requirePriority(id);
+        if (def.isBuiltIn()) throw new IllegalArgumentException("기본 우선순위는 삭제할 수 없습니다");
+        if (issues.countByPriority(id) > 0) throw new IllegalArgumentException("이 우선순위를 쓰는 이슈가 있습니다");
+        priorities.delete(def);
+        schemes.removePriorityEverywhere(id);
+        List<PriorityDef> rest = priorities.findAllByOrderBySortOrderAsc();
+        for (int i = 0; i < rest.size(); i++) rest.get(i).reorder(i + 1);
+    }
+
+    public PriorityDef requirePriority(String id) {
+        return priorities.findById(id == null ? "" : id)
+                .orElseThrow(() -> new NotFoundException("우선순위를 찾을 수 없습니다"));
     }
 
     // ── 조회 헬퍼 ──

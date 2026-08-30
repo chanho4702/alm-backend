@@ -15,7 +15,9 @@ public record SettingsBody(
         List<WorkflowStatus> statuses,
         List<Transition> transitions,
         Map<String, Point> layout,
-        List<String> enabledTypes) {
+        List<String> enabledTypes,
+        List<String> enabledPriorities,
+        String defaultPriority) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record WorkflowStatus(String id, String name, String category, int order, String kind, String color) {
@@ -31,19 +33,30 @@ public record SettingsBody(
     public List<Transition> transitions() { return transitions == null ? List.of() : transitions; }
     public Map<String, Point> layout() { return layout == null ? Map.of() : layout; }
     public List<String> enabledTypes() { return enabledTypes == null ? List.of() : enabledTypes; }
+    /** 구버전 본문(우선순위 필드 없음)은 기본 5종 전부 활성 */
+    public List<String> enabledPriorities() {
+        return enabledPriorities == null ? BUILTIN_PRIORITIES : enabledPriorities;
+    }
+    public String defaultPriority() { return defaultPriority == null || defaultPriority.isBlank() ? "medium" : defaultPriority; }
+    public static final List<String> BUILTIN_PRIORITIES = List.of("highest", "high", "medium", "low", "lowest");
+    /** 본문을 우선순위만 바꿔 복사 */
+    public SettingsBody withPriorities(List<String> enabled, String fallback) {
+        return new SettingsBody(statuses(), transitions(), layout(), enabledTypes(), enabled, fallback);
+    }
 
     public static SettingsBody defaults() {
         return new SettingsBody(
                 List.of(new WorkflowStatus("todo", "할 일", "todo", 1, null, null),
                         new WorkflowStatus("inprogress", "진행 중", "inprogress", 2, null, null),
                         new WorkflowStatus("done", "완료", "done", 3, null, null)),
-                List.of(), Map.of(), List.of("task", "story", "bug", "epic", "subtask"));
+                List.of(), Map.of(), List.of("task", "story", "bug", "epic", "subtask"),
+                BUILTIN_PRIORITIES, "medium");
     }
 
     /** 저장용 — 파생 필드(kind/color)를 뺀다 */
     public SettingsBody stored() {
         List<WorkflowStatus> plain = new ArrayList<>();
         for (WorkflowStatus status : statuses()) plain.add(status.stored());
-        return new SettingsBody(plain, transitions(), layout(), enabledTypes());
+        return new SettingsBody(plain, transitions(), layout(), enabledTypes(), enabledPriorities(), defaultPriority());
     }
 }

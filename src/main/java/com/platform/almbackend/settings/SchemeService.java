@@ -11,6 +11,8 @@ import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.IssueTypeDefRepository;
+import com.platform.almbackend.repository.PriorityDefRepository;
+import com.platform.almbackend.domain.PriorityDef;
 import com.platform.almbackend.repository.ProjectSettingsRepository;
 import com.platform.almbackend.repository.SettingsSchemeRepository;
 import com.platform.almbackend.repository.StatusDefRepository;
@@ -47,6 +49,7 @@ public class SchemeService {
     private final ProjectSettingsRepository projectSettings;
     private final StatusDefRepository statuses;
     private final IssueTypeDefRepository types;
+    private final PriorityDefRepository priorities;
     private final IssueRepository issues;
     private final IssueChangeLogService changeLog;
     private final ProjectService projectService;
@@ -252,6 +255,31 @@ public class SchemeService {
         if (body.enabledTypes().stream().noneMatch(t -> !"subtask".equals(typeLevel(t)))) {
             throw new IllegalArgumentException("이슈 타입은 최소 1개 활성화해야 합니다");
         }
+        for (String priority : body.enabledPriorities()) {
+            if (priorities.findById(priority).isEmpty()) throw new IllegalArgumentException("없는 우선순위입니다: " + priority);
+        }
+        if (body.enabledPriorities().isEmpty()) throw new IllegalArgumentException("우선순위는 최소 1개 활성화해야 합니다");
+        if (!body.enabledPriorities().contains(body.defaultPriority())) {
+            throw new IllegalArgumentException("기본 우선순위는 활성화된 우선순위 중에서 골라야 합니다");
+        }
+    }
+
+    /** 요청 값(대소문자 무관) → 레지스트리 id. null이면 프로젝트 기본 우선순위. 비활성이면 거부 */
+    public String resolvePriority(long projectId, String requested) {
+        SettingsBody body = body(projectId);
+        if (requested == null || requested.isBlank()) return body.defaultPriority();
+        String id = requested.trim().toLowerCase(java.util.Locale.ROOT);
+        PriorityDef def = priorities.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("없는 우선순위입니다: " + requested));
+        if (!body.enabledPriorities().contains(id)) {
+            throw new IllegalArgumentException("이 프로젝트에서 사용할 수 없는 우선순위입니다: " + def.getName());
+        }
+        return id;
+    }
+
+    @Transactional(readOnly = true)
+    public String priorityName(String id) {
+        return priorities.findById(id == null ? "" : id).map(PriorityDef::getName).orElse(id);
     }
 
     /** 본문의 이름·카테고리는 레지스트리로 관통 저장(프론트 목업과 같은 계약) */
@@ -282,7 +310,7 @@ public class SchemeService {
         for (Map.Entry<String, SettingsBody.Point> e : body.layout().entrySet()) {
             if (valid.contains(e.getKey()) || "__any__".equals(e.getKey())) layout.put(e.getKey(), e.getValue());
         }
-        return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes());
+        return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes(), body.enabledPriorities(), body.defaultPriority());
     }
 
     /** 새 구성에 없는 상태의 이슈를 옮긴다 — 반드시 구성을 바꾸기 전에(옛 구성으로 의미를 읽는다) */

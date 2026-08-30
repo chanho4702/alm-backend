@@ -66,7 +66,7 @@ public class SchemeQueries {
                     category == null ? "new" : category.getKind(),
                     category == null ? "neutral" : category.getColor()));
         }
-        return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes());
+        return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes(), body.enabledPriorities(), body.defaultPriority());
     }
 
     public String kindOf(String categoryId) {
@@ -132,7 +132,7 @@ public class SchemeQueries {
                     ? new SettingsBody.WorkflowStatus(s.id(), def.getName(), def.getCategoryId(), s.order(), null, null)
                     : s);
         }
-        return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes());
+        return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes(), body.enabledPriorities(), body.defaultPriority());
     }
 
     /** 타입을 지우면 모든 본문의 활성 목록에서도 뺀다 */
@@ -150,7 +150,33 @@ public class SchemeQueries {
 
     private static SettingsBody withoutType(SettingsBody body, String typeId) {
         return new SettingsBody(body.statuses(), body.transitions(), body.layout(),
-                body.enabledTypes().stream().filter(t -> !t.equals(typeId)).toList());
+                body.enabledTypes().stream().filter(t -> !t.equals(typeId)).toList(),
+                body.enabledPriorities(), body.defaultPriority());
+    }
+
+    /** 우선순위를 지우면 모든 본문의 활성 목록에서 빼고, 기본이었다면 남은 첫 항목으로 */
+    public void removePriorityEverywhere(String priorityId) {
+        for (SettingsScheme scheme : schemes.findAll()) {
+            SettingsBody body = parse(scheme.getBody());
+            if (body.enabledPriorities().contains(priorityId) || priorityId.equals(body.defaultPriority())) {
+                scheme.replaceBody(serialize(withoutPriority(body, priorityId)));
+            }
+        }
+        for (ProjectSettings ps : projectSettings.findAll()) {
+            if (!ps.isCustom()) continue;
+            SettingsBody body = parse(ps.getCustomBody());
+            if (body.enabledPriorities().contains(priorityId) || priorityId.equals(body.defaultPriority())) {
+                ps.customize(serialize(withoutPriority(body, priorityId)));
+            }
+        }
+    }
+
+    private static SettingsBody withoutPriority(SettingsBody body, String priorityId) {
+        List<String> enabled = body.enabledPriorities().stream().filter(p -> !p.equals(priorityId)).toList();
+        String fallback = priorityId.equals(body.defaultPriority())
+                ? (enabled.contains("medium") ? "medium" : enabled.isEmpty() ? "medium" : enabled.get(0))
+                : body.defaultPriority();
+        return body.withPriorities(enabled, fallback);
     }
 
     public Optional<SettingsScheme> defaultScheme() { return schemes.findFirstByIsDefaultTrue(); }

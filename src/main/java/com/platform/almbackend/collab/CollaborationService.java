@@ -199,8 +199,8 @@ public class CollaborationService {
         if (!Objects.equals(before.assigneeId(), after.getAssigneeId())) {
             record(issueId, actorId, "assignee", userLabel(before.assigneeId()) + " → " + userLabel(after.getAssigneeId()), now);
         }
-        if (!Objects.equals(before.priority(), after.getPriority() == null ? null : after.getPriority().name())) {
-            record(issueId, actorId, "priority", before.priority() + " → " + after.getPriority(), now);
+        if (!Objects.equals(before.priority(), after.getPriority())) {
+            record(issueId, actorId, "priority", settings.priorityName(before.priority()) + " → " + settings.priorityName(after.getPriority()), now);
         }
         if (!Objects.equals(before.sprintId(), after.getSprintId())) {
             record(issueId, actorId, "sprint", idLabel(before.sprintId(), "백로그") + " → " + idLabel(after.getSprintId(), "백로그"), now);
@@ -232,7 +232,7 @@ public class CollaborationService {
                            List<String> labels, String type, Long parentId, String resolution, Long fixVersionId) {
         public static Snapshot of(Issue issue) {
             return new Snapshot(issue.getStatus(), issue.getAssigneeId(),
-                    issue.getPriority() == null ? null : issue.getPriority().name(), issue.getSprintId(),
+                    issue.getPriority(), issue.getSprintId(),
                     issue.getDueDate(), List.copyOf(issue.getLabels()), issue.getType(), issue.getParentId(),
                     issue.getResolution() == null ? null : issue.getResolution().name(), issue.getFixVersionId());
         }

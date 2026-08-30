@@ -2,7 +2,8 @@ package com.platform.almbackend.issue;
 
 import com.platform.almbackend.common.NotFoundException;
 import com.platform.almbackend.domain.Issue;
-import com.platform.almbackend.domain.IssuePriority;
+import com.platform.almbackend.domain.PriorityDef;
+import com.platform.almbackend.repository.PriorityDefRepository;
 import com.platform.almbackend.issue.dto.IssuePageResponse;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.permission.AccessScope;
@@ -38,6 +39,7 @@ public class IssueSearchService {
     private static final int MAX_SIZE = 200;
 
     private final IssueRepository issues;
+    private final PriorityDefRepository priorityDefs;
     private final ProjectService projectService;
     private final PermissionClient permissions;
 
@@ -45,7 +47,7 @@ public class IssueSearchService {
             List<Long> projectIds,
             String text,
             List<String> statuses,
-            List<IssuePriority> priorities,
+            List<String> priorities,
             List<String> types,
             /** 사용자 id 문자열 목록. "unassigned"는 미지정 */
             List<String> assignees,
@@ -90,7 +92,7 @@ public class IssueSearchService {
                         cb.like(cb.lower(root.get("key")), like)));
             }
             if (notEmpty(c.statuses())) where.add(root.get("status").in(c.statuses()));
-            if (notEmpty(c.priorities())) where.add(root.get("priority").in(c.priorities()));
+            if (notEmpty(c.priorities())) where.add(root.get("priority").in(c.priorities().stream().map(v -> v.toLowerCase(java.util.Locale.ROOT)).toList()));
             // 타입 id는 소문자 레지스트리 id — 옛 클라이언트의 enum 이름(BUG)도 받는다
             if (notEmpty(c.types())) where.add(root.get("type").in(c.types().stream().map(t -> t.toLowerCase(Locale.ROOT)).toList()));
             if (notEmpty(c.assignees())) {
@@ -118,10 +120,7 @@ public class IssueSearchService {
                 case "created" -> root.get("createdAt");
                 case "due" -> root.get("dueDate");
                 case "key" -> root.get("issueNumber");
-                case "priority" -> cb.<Integer>selectCase()
-                        .when(cb.equal(root.get("priority"), IssuePriority.HIGH), 0)
-                        .when(cb.equal(root.get("priority"), IssuePriority.MEDIUM), 1)
-                        .otherwise(2);
+                case "priority" -> priorityRank(cb, root);
                 default -> root.get("updatedAt");
             };
             Order primary = asc ? cb.asc(sortKey) : cb.desc(sortKey);
@@ -140,6 +139,15 @@ public class IssueSearchService {
         if (scope.all()) return null;
         Set<Long> ids = scope.projectIds();
         return List.copyOf(ids);
+    }
+
+    /** 레지스트리 sort_order(높음→낮음)로 정렬 — 모르는 값은 맨 뒤 */
+    private jakarta.persistence.criteria.Expression<Integer> priorityRank(
+            jakarta.persistence.criteria.CriteriaBuilder cb, jakarta.persistence.criteria.Root<Issue> root) {
+        List<PriorityDef> defs = priorityDefs.findAllByOrderBySortOrderAsc();
+        var cases = cb.<Integer>selectCase();
+        for (PriorityDef def : defs) cases = cases.when(cb.equal(root.get("priority"), def.getId()), def.getSortOrder());
+        return cases.otherwise(defs.size() + 1);
     }
 
     private static boolean notEmpty(List<?> list) {

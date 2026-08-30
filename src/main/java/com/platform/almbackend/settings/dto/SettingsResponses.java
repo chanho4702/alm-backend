@@ -21,6 +21,12 @@ public final class SettingsResponses {
         }
     }
 
+    public record PriorityResponse(String id, String name, String icon, String color, String description, int order, boolean builtIn) {
+        public static PriorityResponse from(com.platform.almbackend.domain.PriorityDef p) {
+            return new PriorityResponse(p.getId(), p.getName(), p.getIcon(), p.getColor(), p.getDescription(), p.getSortOrder(), p.isBuiltIn());
+        }
+    }
+
     public record IssueTypeResponse(String id, String name, String icon, String color, String level,
                                     String description, int order, boolean builtIn) {
         public static IssueTypeResponse from(IssueTypeDef t) {

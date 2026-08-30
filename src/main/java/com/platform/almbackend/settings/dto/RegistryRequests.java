@@ -10,5 +10,7 @@ public final class RegistryRequests {
 
     public record IssueTypeRequest(String name, String icon, String color, String level, String description) {}
 
+    public record PriorityRequest(String name, String icon, String color, String description) {}
+
     public record MoveRequest(int delta) {}
 }

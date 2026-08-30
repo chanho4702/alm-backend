@@ -1,6 +1,5 @@
 package com.platform.almbackend.issue.dto;
 
-import com.platform.almbackend.domain.IssuePriority;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -18,7 +17,7 @@ public record IssueUpdateRequest(
         @Size(max = 80, message = "상태 ID는 80자 이하여야 합니다")
         String status,
         @NotNull(message = "우선순위가 필요합니다")
-        IssuePriority priority,
+        String priority,
         Long assigneeId,
         @Valid IssueDetailsRequest details,
         @NotNull(message = "expectedVersion이 필요합니다")

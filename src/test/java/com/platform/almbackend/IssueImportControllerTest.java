@@ -82,7 +82,7 @@ class IssueImportControllerTest {
         mvc.perform(get("/api/alm/issues/by-key/{key}", "ALM-20").with(asUser(1, "Alice")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("done"))
-                .andExpect(jsonPath("$.priority").value("HIGH"))
+                .andExpect(jsonPath("$.priority").value("high"))
                 .andExpect(jsonPath("$.labels[0]").value("legacy"));
         // 카운터가 20을 넘어섰다 — 키 없는 이슈는 ALM-21
         mvc.perform(get("/api/alm/issues/by-key/{key}", "ALM-21").with(asUser(1, "Alice")))

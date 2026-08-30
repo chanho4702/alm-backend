@@ -1,6 +1,5 @@
 package com.platform.almbackend.issue.dto;
 
-import com.platform.almbackend.domain.IssuePriority;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -14,7 +13,7 @@ public record IssueCreateRequest(
         String type,
         @Size(max = 80, message = "상태 ID는 80자 이하여야 합니다")
         String status,
-        IssuePriority priority,
+        String priority,
         Long assigneeId,
         @Valid IssueDetailsRequest details
 ) {}
