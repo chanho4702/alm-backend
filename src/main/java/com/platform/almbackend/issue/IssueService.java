@@ -10,6 +10,7 @@ import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
+import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueDetailsRequest;
 import com.platform.almbackend.issue.dto.IssueMoveRequest;
@@ -46,6 +47,7 @@ public class IssueService {
     private final AttachmentService attachmentService;
     private final EventRelay events;
     private final IssueChangeLogService changeLog;
+    private final NotificationService notifications;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -93,6 +95,7 @@ public class IssueService {
                 normalizeLabels(details == null ? null : details.labels()),
                 order));
         changeLog.recordCreated(userId, issue);
+        notifications.onIssueCreated(userId, issue);
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -129,6 +132,7 @@ public class IssueService {
         // 상태나 스프린트가 바뀌면 대상 컬럼 맨 뒤로 보낸다. 정밀 배치는 move/rank가 한다.
         Long previousSprintId = issue.getSprintId();
         String previousStatus = issue.getStatus();
+        Long previousAssigneeId = issue.getAssigneeId();
         boolean regrouped = !Objects.equals(status, issue.getStatus())
                 || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
@@ -157,6 +161,7 @@ public class IssueService {
             resequence(source);
         }
         changeLog.recordChanges(userId, issue, previousStatus, previousSprintId);
+        notifications.onIssueUpdated(userId, issue, previousStatus, previousAssigneeId);
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }
