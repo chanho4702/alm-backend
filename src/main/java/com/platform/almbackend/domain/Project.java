@@ -1,6 +1,11 @@
 package com.platform.almbackend.domain;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -14,6 +19,9 @@ import java.time.Instant;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Project {
+    public static final String ASSIGNEE_UNASSIGNED = "unassigned";
+    public static final String ASSIGNEE_LEAD = "lead";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -26,6 +34,26 @@ public class Project {
 
     @Column(nullable = false, columnDefinition = "text")
     private String description;
+
+    @Column(nullable = false, length = 60)
+    private String category = "";
+
+    /** 프로젝트 리더 — 기본 담당자 후보. 생성자가 기본값 */
+    @Column(name = "lead_id")
+    private Long leadId;
+
+    /** unassigned | lead — 담당자 없이 만든 이슈에 적용 */
+    @Column(name = "default_assignee", nullable = false, length = 16)
+    private String defaultAssignee = ASSIGNEE_UNASSIGNED;
+
+    @Column(nullable = false, length = 40)
+    private String icon = "";
+
+    @Column(nullable = false, length = 20)
+    private String color = "";
+
+    @Column(nullable = false, length = 500)
+    private String url = "";
 
     @Column(name = "last_issue_number", nullable = false)
     private Long lastIssueNumber;
@@ -58,6 +86,27 @@ public class Project {
         this.version += 1;
     }
 
+    /** 세부 사항(지라 프로젝트 설정 > 세부) — null은 "그대로" */
+    public void editDetails(String category, Long leadId, boolean clearLead, String defaultAssignee,
+                            String icon, String color, String url) {
+        if (category != null) this.category = category;
+        if (clearLead) this.leadId = null;
+        else if (leadId != null) this.leadId = leadId;
+        if (defaultAssignee != null) this.defaultAssignee = defaultAssignee;
+        if (icon != null) this.icon = icon;
+        if (color != null) this.color = color;
+        if (url != null) this.url = url;
+    }
+
+    public void assignLead(Long leadId) {
+        this.leadId = leadId;
+    }
+
+    /** 담당자 없이 만든 이슈의 담당자 — 기본 담당자 규칙 적용 */
+    public Long resolveDefaultAssignee() {
+        return ASSIGNEE_LEAD.equals(defaultAssignee) ? leadId : null;
+    }
+
     /** 프로젝트 row를 비관적으로 잠근 서비스 안에서만 호출한다. */
     public long nextIssueNumber() {
         this.lastIssueNumber += 1;
@@ -69,4 +118,3 @@ public class Project {
         if (number > this.lastIssueNumber) this.lastIssueNumber = number;
     }
 }
-

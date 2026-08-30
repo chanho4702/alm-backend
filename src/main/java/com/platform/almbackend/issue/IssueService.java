@@ -145,7 +145,7 @@ public class IssueService {
                 type,
                 requireStatus(projectId, request.status()),
                 request.priority() == null ? IssuePriority.MEDIUM : request.priority(),
-                request.assigneeId(),
+                request.assigneeId() == null ? project.resolveDefaultAssignee() : request.assigneeId(),
                 userId,
                 parentId,
                 sprintId,

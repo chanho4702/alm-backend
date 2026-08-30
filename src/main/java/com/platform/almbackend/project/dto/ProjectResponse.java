@@ -9,13 +9,19 @@ public record ProjectResponse(
         String key,
         String name,
         String description,
+        String category,
+        Long leadId,
+        String defaultAssignee,
+        String icon,
+        String color,
+        String url,
         int version,
         Instant createdAt,
         Instant updatedAt
 ) {
     public static ProjectResponse from(Project project) {
         return new ProjectResponse(project.getId(), project.getKey(), project.getName(), project.getDescription(),
-                project.getVersion(), project.getCreatedAt(), project.getUpdatedAt());
+                project.getCategory(), project.getLeadId(), project.getDefaultAssignee(), project.getIcon(),
+                project.getColor(), project.getUrl(), project.getVersion(), project.getCreatedAt(), project.getUpdatedAt());
     }
 }
-

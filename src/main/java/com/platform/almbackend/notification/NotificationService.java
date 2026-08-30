@@ -9,6 +9,7 @@ import com.platform.almbackend.notification.dto.NotificationResponse;
 import com.platform.almbackend.notification.dto.WatchersResponse;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
+import com.platform.almbackend.personal.PreferenceService;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.IssueWatcherRepository;
 import com.platform.almbackend.repository.NotificationRepository;
@@ -38,6 +39,7 @@ public class NotificationService {
     private final NotificationRepository notifications;
     private final IssueRepository issues;
     private final ProjectService projectService;
+    private final PreferenceService preferences;
 
     // ── 워처 ──
 
@@ -65,10 +67,10 @@ public class NotificationService {
     /** 이슈 생성 — 보고자(=생성자)와 담당자가 자동 워처 */
     public void onIssueCreated(long actorId, Issue issue) {
         Instant now = now();
-        addWatcher(issue.getId(), actorId, now);
+        if (preferences.get(actorId).autoWatch().createdOn()) addWatcher(issue.getId(), actorId, now);
         if (issue.getAssigneeId() != null) {
             addWatcher(issue.getId(), issue.getAssigneeId(), now);
-            if (!issue.getAssigneeId().equals(actorId)) {
+            if (!issue.getAssigneeId().equals(actorId) && preferences.get(issue.getAssigneeId()).notifications().assignedOn()) {
                 notifications.save(Notification.of(
                         issue.getAssigneeId(), issue, actorId, Notification.Type.ASSIGNED, null, now));
             }
@@ -78,15 +80,17 @@ public class NotificationService {
     /** 이슈 수정 — 담당자 변경은 새 담당자에게, 상태 변경은 워처에게 */
     public void onIssueUpdated(long actorId, Issue issue, String previousStatus, Long previousAssigneeId) {
         Instant now = now();
+        if (preferences.get(actorId).autoWatch().editedOn()) addWatcher(issue.getId(), actorId, now);
         Long assignee = issue.getAssigneeId();
         if (assignee != null && !assignee.equals(previousAssigneeId)) {
             addWatcher(issue.getId(), assignee, now);
-            if (!assignee.equals(actorId)) {
+            if (!assignee.equals(actorId) && preferences.get(assignee).notifications().assignedOn()) {
                 notifications.save(Notification.of(assignee, issue, actorId, Notification.Type.ASSIGNED, null, now));
             }
         }
         if (!Objects.equals(previousStatus, issue.getStatus())) {
             for (long recipient : recipients(issue, actorId)) {
+                if (!preferences.get(recipient).notifications().statusChangedOn()) continue;
                 notifications.save(Notification.of(
                         recipient, issue, actorId, Notification.Type.STATUS_CHANGED, issue.getStatus(), now));
             }
@@ -95,7 +99,9 @@ public class NotificationService {
 
     /** 코멘트 — 워처 ∪ 담당자 − 행위자 */
     public void notifyCommented(long actorId, Issue issue, Instant now) {
+        if (preferences.get(actorId).autoWatch().commentedOn()) addWatcher(issue.getId(), actorId, now);
         for (long recipient : recipients(issue, actorId)) {
+            if (!preferences.get(recipient).notifications().commentedOn()) continue;
             notifications.save(Notification.of(recipient, issue, actorId, Notification.Type.COMMENTED, null, now));
         }
     }

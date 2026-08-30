@@ -64,8 +64,9 @@ public class ProjectService {
         if (projects.existsByKey(key)) {
             throw new ConflictException("이미 존재하는 프로젝트 키입니다: " + key);
         }
-        Project saved = projects.save(Project.of(
-                key, request.name().trim(), normalizeDescription(request.description())));
+        Project fresh = Project.of(key, request.name().trim(), normalizeDescription(request.description()));
+        fresh.assignLead(userId);
+        Project saved = projects.save(fresh);
         // wiki와 같은 계약: grant 실패가 정본 생성을 롤백시키지는 않는다. 운영자는 grants REST로 복구한다.
         permissions.grantProjectAdmin(userId, saved.getId());
         schemeService.getObject().initProject(saved.getId());
@@ -83,6 +84,19 @@ public class ProjectService {
                     + project.getVersion() + ", 요청 " + request.expectedVersion());
         }
         project.edit(request.name().trim(), normalizeDescription(request.description()));
+        if (request.defaultAssignee() != null
+                && !Project.ASSIGNEE_UNASSIGNED.equals(request.defaultAssignee())
+                && !Project.ASSIGNEE_LEAD.equals(request.defaultAssignee())) {
+            throw new IllegalArgumentException("기본 담당자는 unassigned/lead 중 하나입니다");
+        }
+        project.editDetails(
+                request.category() == null ? null : request.category().trim(),
+                request.leadId(),
+                Boolean.TRUE.equals(request.clearLead()),
+                request.defaultAssignee(),
+                request.icon() == null ? null : request.icon().trim(),
+                request.color() == null ? null : request.color().trim(),
+                request.url() == null ? null : request.url().trim());
         events.afterCommit(AlmEvents.projectUpdated(userId, project));
         return ProjectResponse.from(project);
     }
