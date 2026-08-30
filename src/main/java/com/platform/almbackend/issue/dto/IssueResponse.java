@@ -3,7 +3,6 @@ package com.platform.almbackend.issue.dto;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssuePriority;
 import com.platform.almbackend.domain.IssueResolution;
-import com.platform.almbackend.domain.IssueType;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -16,7 +15,7 @@ public record IssueResponse(
         long projectId,
         String title,
         String description,
-        IssueType type,
+        String type,
         String status,
         IssuePriority priority,
         Long assigneeId,

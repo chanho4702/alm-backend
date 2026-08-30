@@ -9,6 +9,7 @@ import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.permission.AccessScope;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.permission.PermissionClient;
+import com.platform.almbackend.settings.SchemeService;
 import com.platform.almbackend.project.dto.ProjectCreateRequest;
 import com.platform.almbackend.project.dto.ProjectResponse;
 import com.platform.almbackend.project.dto.ProjectUpdateRequest;
@@ -36,6 +37,8 @@ public class ProjectService {
     // AttachmentService → ProjectService → AttachmentService 순환을 끊는다 — 삭제 연쇄 때만 늦게 받는다
     private final ObjectProvider<AttachmentService> attachmentService;
     private final PermissionClient permissions;
+    /** 설정 서비스는 이 서비스를 쓴다(권한) — 순환을 끊으려고 지연 주입 */
+    private final ObjectProvider<SchemeService> schemeService;
     private final EventRelay events;
 
     @Transactional(readOnly = true)
@@ -63,6 +66,7 @@ public class ProjectService {
                 key, request.name().trim(), normalizeDescription(request.description())));
         // wiki와 같은 계약: grant 실패가 정본 생성을 롤백시키지는 않는다. 운영자는 grants REST로 복구한다.
         permissions.grantProjectAdmin(userId, saved.getId());
+        schemeService.getObject().initProject(saved.getId());
         events.afterCommit(AlmEvents.projectCreated(userId, saved));
         return ProjectResponse.from(saved);
     }

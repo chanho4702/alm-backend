@@ -2,7 +2,6 @@ package com.platform.almbackend.schema;
 
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssuePriority;
-import com.platform.almbackend.domain.IssueType;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.domain.Sprint;
 import com.platform.almbackend.repository.IssueRepository;
@@ -51,7 +50,7 @@ class FlywaySchemaValidationTest {
         Project project = projects.save(Project.of("OPS", "운영", ""));
         Sprint sprint = sprints.save(Sprint.of(project.getId(), 1L, "Sprint 1"));
         Issue issue = issues.save(Issue.of(project.getId(), 1, "OPS-1", "런북", "본문",
-                IssueType.TASK, "todo", IssuePriority.MEDIUM, null, 1L,
+                "task", "todo", IssuePriority.MEDIUM, null, 1L,
                 null, sprint.getId(), LocalDate.of(2026, 8, 20), new BigDecimal("2.50"),
                 List.of("ops", "runbook"), 3L));
         issues.flush();
@@ -87,7 +86,7 @@ class FlywaySchemaValidationTest {
         Project project = projects.save(Project.of("DET", "해제", ""));
         Sprint sprint = sprints.save(Sprint.of(project.getId(), 1L, "Sprint 1"));
         Issue issue = issues.saveAndFlush(Issue.of(project.getId(), 1, "DET-1", "이슈", "",
-                IssueType.TASK, "todo", IssuePriority.LOW, null, 1L,
+                "task", "todo", IssuePriority.LOW, null, 1L,
                 null, sprint.getId(), null, null, List.of(), 1L));
 
         sprints.delete(sprint);
@@ -101,7 +100,7 @@ class FlywaySchemaValidationTest {
     void 프로젝트를_삭제하면_DB_cascade로_이슈도_사라진다() {
         Project project = projects.save(Project.of("CAS", "삭제", ""));
         Issue issue = issues.save(Issue.of(project.getId(), 1, "CAS-1", "삭제 대상", "",
-                IssueType.TASK, "todo", IssuePriority.LOW, null, 1L));
+                "task", "todo", IssuePriority.LOW, null, 1L));
         projects.delete(project);
         projects.flush();
 

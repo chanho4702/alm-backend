@@ -234,7 +234,7 @@ class ProjectIssueControllerTest {
                                 {"title":"하위 작업으로 변경","description":"","type":"SUBTASK","status":"todo","priority":"MEDIUM","expectedVersion":1}
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.type").value("SUBTASK"))
+                .andExpect(jsonPath("$.type").value("subtask"))
                 .andExpect(jsonPath("$.parentId").doesNotExist());
     }
 

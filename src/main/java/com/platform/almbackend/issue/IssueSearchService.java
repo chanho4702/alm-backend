@@ -3,7 +3,6 @@ package com.platform.almbackend.issue;
 import com.platform.almbackend.common.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssuePriority;
-import com.platform.almbackend.domain.IssueType;
 import com.platform.almbackend.issue.dto.IssuePageResponse;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.permission.AccessScope;
@@ -47,7 +46,7 @@ public class IssueSearchService {
             String text,
             List<String> statuses,
             List<IssuePriority> priorities,
-            List<IssueType> types,
+            List<String> types,
             /** 사용자 id 문자열 목록. "unassigned"는 미지정 */
             List<String> assignees,
             List<String> labels,
@@ -90,7 +89,8 @@ public class IssueSearchService {
             }
             if (notEmpty(c.statuses())) where.add(root.get("status").in(c.statuses()));
             if (notEmpty(c.priorities())) where.add(root.get("priority").in(c.priorities()));
-            if (notEmpty(c.types())) where.add(root.get("type").in(c.types()));
+            // 타입 id는 소문자 레지스트리 id — 옛 클라이언트의 enum 이름(BUG)도 받는다
+            if (notEmpty(c.types())) where.add(root.get("type").in(c.types().stream().map(t -> t.toLowerCase(Locale.ROOT)).toList()));
             if (notEmpty(c.assignees())) {
                 List<Long> ids = c.assignees().stream()
                         .filter(a -> !UNASSIGNED.equals(a))

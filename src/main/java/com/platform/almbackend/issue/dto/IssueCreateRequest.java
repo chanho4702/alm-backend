@@ -1,7 +1,6 @@
 package com.platform.almbackend.issue.dto;
 
 import com.platform.almbackend.domain.IssuePriority;
-import com.platform.almbackend.domain.IssueType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -12,7 +11,7 @@ public record IssueCreateRequest(
         String title,
         @Size(max = 50000, message = "이슈 설명은 50000자 이하여야 합니다")
         String description,
-        IssueType type,
+        String type,
         @Size(max = 80, message = "상태 ID는 80자 이하여야 합니다")
         String status,
         IssuePriority priority,

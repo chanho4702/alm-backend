@@ -5,12 +5,12 @@ import com.platform.almbackend.common.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssuePriority;
 import com.platform.almbackend.domain.IssueResolution;
-import com.platform.almbackend.domain.IssueType;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.notification.NotificationService;
+import com.platform.almbackend.settings.SchemeService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueImportRequest;
 import com.platform.almbackend.issue.dto.IssueImportResponse;
@@ -55,6 +55,7 @@ public class IssueService {
     private final EventRelay events;
     private final IssueChangeLogService changeLog;
     private final NotificationService notifications;
+    private final SchemeService settings;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -125,7 +126,8 @@ public class IssueService {
 
     private IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request) {
         long projectId = project.getId();
-        IssueType type = request.type() == null ? IssueType.TASK : request.type();
+        String type = normalizeType(request.type() == null ? settings.defaultType(projectId) : request.type());
+        settings.assertTypeEnabled(projectId, type);
         IssueDetailsRequest details = request.details();
         Long parentId = details == null ? null : details.parentId();
         validateParent(projectId, null, type, parentId);
@@ -139,7 +141,7 @@ public class IssueService {
                 request.title().trim(),
                 normalizeDescription(request.description()),
                 type,
-                normalizeStatus(request.status()),
+                requireStatus(projectId, request.status()),
                 request.priority() == null ? IssuePriority.MEDIUM : request.priority(),
                 request.assigneeId(),
                 userId,
@@ -165,10 +167,12 @@ public class IssueService {
             throw new ConflictException("다른 사용자가 먼저 이슈를 수정했습니다. 현재 "
                     + issue.getVersion() + ", 요청 " + request.expectedVersion());
         }
-        validateChildren(issue.getId(), request.type());
+        String nextType = normalizeType(request.type() == null ? issue.getType() : request.type());
+        if (!nextType.equals(issue.getType())) settings.assertTypeEnabled(issue.getProjectId(), nextType);
+        validateChildren(issue.getId(), nextType);
         IssueDetailsRequest details = request.details();
         Long requestedParentId = details == null ? issue.getParentId() : details.parentId();
-        Long parentId = resolveParent(issue, request.type(), requestedParentId);
+        Long parentId = resolveParent(issue, nextType, requestedParentId);
         Long sprintId = details == null ? issue.getSprintId() : details.sprintId();
         if (sprintId != null && !Objects.equals(sprintId, issue.getSprintId())) {
             sprintService.requireSprintInProject(sprintId, issue.getProjectId());
@@ -183,7 +187,8 @@ public class IssueService {
         List<String> labels = details == null
                 ? List.copyOf(issue.getLabels())
                 : normalizeLabels(details.labels());
-        String status = normalizeStatus(request.status());
+        String status = request.status() == null ? issue.getStatus() : requireStatus(issue.getProjectId(), request.status());
+        settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
         // 상태나 스프린트가 바뀌면 대상 컬럼 맨 뒤로 보낸다. 정밀 배치는 move/rank가 한다.
         Long previousSprintId = issue.getSprintId();
         String previousStatus = issue.getStatus();
@@ -194,7 +199,7 @@ public class IssueService {
         issue.edit(
                 request.title().trim(),
                 normalizeDescription(request.description()),
-                request.type(),
+                nextType,
                 status,
                 request.priority(),
                 request.assigneeId(),
@@ -244,7 +249,8 @@ public class IssueService {
         lockProject(snapshot.getProjectId());
         Issue issue = issues.findByIdForUpdate(issueId)
                 .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
-        String status = normalizeStatus(request.status());
+        String status = requireStatus(issue.getProjectId(), request.status());
+        settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
         String previousStatus = issue.getStatus();
         issue.moveTo(status, issue.getSortOrder());
         List<Issue> group = rankGroupWithout(issue, issue.getSprintId());
@@ -342,13 +348,19 @@ public class IssueService {
         return value == null ? "" : value.trim();
     }
 
-    private static String normalizeStatus(String value) {
-        String status = value == null ? "todo" : value.trim();
-        if (status.isEmpty()) throw new IllegalArgumentException("상태 ID가 필요합니다");
+    /** 상태 id는 프로젝트 워크플로에 있어야 한다. 비면 워크플로의 첫 '할 일' 상태 */
+    private String requireStatus(long projectId, String value) {
+        String status = value == null || value.isBlank() ? settings.defaultStatus(projectId) : value.trim();
+        settings.assertValidStatus(projectId, status);
         return status;
     }
 
-    private Long resolveParent(Issue issue, IssueType newType, Long requestedParentId) {
+    /** 옛 클라이언트의 대문자 enum 이름(TASK)도 레지스트리 id(task)로 받는다 */
+    private static String normalizeType(String value) {
+        return value == null ? "task" : value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private Long resolveParent(Issue issue, String newType, Long requestedParentId) {
         if (requestedParentId == null) return null;
         Issue parent = requireParent(requestedParentId);
         boolean allowed = isParentAllowed(issue.getProjectId(), issue.getId(), newType, parent);
@@ -361,7 +373,7 @@ public class IssueService {
         throw new IllegalArgumentException("이슈 타입에 맞지 않는 부모입니다");
     }
 
-    private void validateParent(long projectId, Long issueId, IssueType type, Long parentId) {
+    private void validateParent(long projectId, Long issueId, String type, Long parentId) {
         if (parentId == null) return;
         Issue parent = requireParent(parentId);
         if (!isParentAllowed(projectId, issueId, type, parent)) {
@@ -374,23 +386,24 @@ public class IssueService {
                 .orElseThrow(() -> new NotFoundException("부모 이슈를 찾을 수 없습니다: " + parentId));
     }
 
-    private static boolean isParentAllowed(long projectId, Long issueId, IssueType childType, Issue parent) {
+    private boolean isParentAllowed(long projectId, Long issueId, String childType, Issue parent) {
         if (!Objects.equals(parent.getProjectId(), projectId)) return false;
         if (issueId != null && Objects.equals(parent.getId(), issueId)) return false;
         return hierarchyAllows(childType, parent.getType());
     }
 
-    private static boolean hierarchyAllows(IssueType childType, IssueType parentType) {
-        return switch (childType) {
-            case EPIC -> false;
-            case SUBTASK -> parentType == IssueType.TASK
-                    || parentType == IssueType.STORY
-                    || parentType == IssueType.BUG;
-            case TASK, STORY, BUG -> parentType == IssueType.EPIC;
+    /** 계층은 타입 id가 아니라 레지스트리 level에서 — 상위(epic)는 부모 없음, 일반의 부모는 상위, 하위 작업의 부모는 일반 */
+    private boolean hierarchyAllows(String childType, String parentType) {
+        String child = settings.typeLevel(childType);
+        String parent = settings.typeLevel(parentType);
+        return switch (child) {
+            case "epic" -> false;
+            case "subtask" -> "standard".equals(parent);
+            default -> "epic".equals(parent);
         };
     }
 
-    private void validateChildren(long issueId, IssueType newType) {
+    private void validateChildren(long issueId, String newType) {
         for (Issue child : issues.findByParentId(issueId)) {
             if (!hierarchyAllows(child.getType(), newType)) {
                 throw new IllegalArgumentException("하위 이슈가 있어 타입을 변경할 수 없습니다");

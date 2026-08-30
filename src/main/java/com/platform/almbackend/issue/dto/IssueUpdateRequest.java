@@ -1,7 +1,6 @@
 package com.platform.almbackend.issue.dto;
 
 import com.platform.almbackend.domain.IssuePriority;
-import com.platform.almbackend.domain.IssueType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -14,7 +13,7 @@ public record IssueUpdateRequest(
         @Size(max = 50000, message = "이슈 설명은 50000자 이하여야 합니다")
         String description,
         @NotNull(message = "이슈 타입이 필요합니다")
-        IssueType type,
+        String type,
         @NotBlank(message = "상태 ID가 필요합니다")
         @Size(max = 80, message = "상태 ID는 80자 이하여야 합니다")
         String status,

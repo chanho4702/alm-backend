@@ -37,9 +37,9 @@ public class Issue {
     @Column(nullable = false, columnDefinition = "text")
     private String description;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "issue_type", nullable = false, length = 20)
-    private IssueType type;
+    /** 이슈 타입 레지스트리 id(기본 task/story/bug/epic/subtask + 사용자 정의 it-*). enum으로 고정하지 않는다 */
+    @Column(name = "issue_type", nullable = false, length = 40)
+    private String type;
 
     /** 커스텀 워크플로 상태 ID. 카테고리 enum으로 고정하지 않는다. */
     @Column(nullable = false, length = 80)
@@ -101,7 +101,7 @@ public class Issue {
             String key,
             String title,
             String description,
-            IssueType type,
+            String type,
             String status,
             IssuePriority priority,
             Long assigneeId,
@@ -116,7 +116,7 @@ public class Issue {
             String key,
             String title,
             String description,
-            IssueType type,
+            String type,
             String status,
             IssuePriority priority,
             Long assigneeId,
@@ -148,10 +148,16 @@ public class Issue {
         return issue;
     }
 
+    /** 설정 변경 이관 — 상태만 바꾸고 버전은 올리지 않는다(사용자 편집이 아니다) */
+    public void moveToStatus(String status) {
+        this.status = status;
+        this.updatedAt = Instant.now();
+    }
+
     public void edit(
             String title,
             String description,
-            IssueType type,
+            String type,
             String status,
             IssuePriority priority,
             Long assigneeId,
