@@ -4,6 +4,7 @@ import com.platform.almbackend.domain.Issue;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -13,7 +14,9 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 
-public interface IssueRepository extends JpaRepository<Issue, Long> {
+public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecificationExecutor<Issue> {
+    Optional<Issue> findByKey(String key);
+
     List<Issue> findByFixVersionId(long fixVersionId);
 
     /** 버전 삭제 시 — 벌크 UPDATE라 영속성 컨텍스트를 비운다 */
