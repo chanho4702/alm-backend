@@ -2,7 +2,7 @@ package com.platform.almbackend.permission;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.platform.almbackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import com.platform.proto.org.v1.*;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;

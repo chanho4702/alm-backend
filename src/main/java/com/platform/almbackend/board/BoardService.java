@@ -3,7 +3,7 @@ package com.platform.almbackend.board;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Board;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.Sprint;

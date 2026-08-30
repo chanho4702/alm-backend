@@ -1,8 +1,8 @@
 package com.platform.almbackend.project;
 
-import com.platform.almbackend.common.ConflictException;
-import com.platform.almbackend.common.ForbiddenException;
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.ConflictException;
+import com.platform.common.error.ForbiddenException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;

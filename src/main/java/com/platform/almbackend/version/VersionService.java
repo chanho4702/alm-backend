@@ -1,7 +1,7 @@
 package com.platform.almbackend.version;
 
-import com.platform.almbackend.common.ConflictException;
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.ConflictException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.ProjectVersion;
 import com.platform.almbackend.domain.VersionStatus;

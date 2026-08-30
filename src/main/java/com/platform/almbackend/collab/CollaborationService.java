@@ -1,7 +1,7 @@
 package com.platform.almbackend.collab;
 
-import com.platform.almbackend.common.ForbiddenException;
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.ForbiddenException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssueActivity;
 import com.platform.almbackend.domain.IssueComment;

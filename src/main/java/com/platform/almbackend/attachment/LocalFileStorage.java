@@ -1,6 +1,6 @@
 package com.platform.almbackend.attachment;
 
-import com.platform.almbackend.common.ServiceUnavailableException;
+import com.platform.common.error.ServiceUnavailableException;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 

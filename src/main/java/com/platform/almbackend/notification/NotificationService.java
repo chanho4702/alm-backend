@@ -1,7 +1,7 @@
 package com.platform.almbackend.notification;
 
-import com.platform.almbackend.common.ForbiddenException;
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.ForbiddenException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssueWatcher;
 import com.platform.almbackend.domain.Notification;

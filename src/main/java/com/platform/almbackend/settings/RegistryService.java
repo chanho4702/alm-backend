@@ -1,6 +1,6 @@
 package com.platform.almbackend.settings;
 
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.IssueTypeDef;
 import com.platform.almbackend.domain.StatusCategory;
 import com.platform.almbackend.domain.StatusDef;

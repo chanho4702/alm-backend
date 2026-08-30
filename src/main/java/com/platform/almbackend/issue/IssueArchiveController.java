@@ -1,6 +1,6 @@
 package com.platform.almbackend.issue;
 
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;

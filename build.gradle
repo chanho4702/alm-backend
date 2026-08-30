@@ -31,10 +31,13 @@ dependencyManagement {
 }
 
 def grpcVersion = '1.69.0'
-def commonProtoVersion = providers.gradleProperty('commonProtoVersion').getOrElse('0.6.0')
+// S-01: 세 갈래(HEAD/0.9.0/0.6.0)로 갈라져 있던 proto 버전을 발행본 최신으로 통일(2026-08-30)
+def commonProtoVersion = providers.gradleProperty('commonProtoVersion').getOrElse('0.14.0')
 
 dependencies {
     implementation "com.platform:common-proto:${commonProtoVersion}"
+    // 리소스 서버 공통(JWT 검증·오류 계약·공용 예외) — S-02 스타터, proto와 같은 태그 버전
+    implementation "com.platform:common-starter:${commonProtoVersion}"
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'

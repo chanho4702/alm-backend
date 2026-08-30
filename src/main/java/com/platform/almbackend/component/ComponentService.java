@@ -1,6 +1,6 @@
 package com.platform.almbackend.component;
 
-import com.platform.almbackend.common.NotFoundException;
+import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Component;
 import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.permission.AlmAction;
