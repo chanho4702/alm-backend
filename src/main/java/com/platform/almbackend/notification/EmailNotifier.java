@@ -106,7 +106,7 @@ public class EmailNotifier {
         body.append(subject).append("\n\n");
         body.append("이슈 열기: ").append(issueLink(issue)).append("\n\n");
         body.append("이 메일은 ALM 개인 설정의 이메일 알림에 따라 보내졌습니다. 받지 않으려면: ")
-                .append(publicUrl).append("/settings/personal\n");
+                .append(publicUrl).append("/settings/notifications\n");
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(from);
