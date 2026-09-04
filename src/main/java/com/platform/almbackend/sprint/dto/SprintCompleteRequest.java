@@ -7,9 +7,9 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
- * 완료 처리에서 "무엇을 완료로 볼지"는 클라이언트가 알려준다 — 상태 카테고리를 정하는 워크플로
- * 스킴이 아직 프론트 소유이기 때문이다. 여기 없는 상태의 이슈는 백로그로 되돌린다.
- * 스킴이 서버로 넘어오면 이 필드는 선택값이 되고 서버 판단이 우선한다.
+ * 완료 처리. {@code doneStatuses}는 선택값 — 비우면 서버가 프로젝트 워크플로의 complete 의미 상태로
+ * 판단한다(V11부터 서버가 상태 카테고리를 안다). 프론트 어댑터는 보내지 않는다. 여기 없는 상태의 이슈는
+ * 백로그(또는 {@code moveUnfinishedToSprintId})로 되돌린다.
  */
 public record SprintCompleteRequest(
         @Size(max = 100, message = "완료 상태는 최대 100개까지 지정할 수 있습니다")

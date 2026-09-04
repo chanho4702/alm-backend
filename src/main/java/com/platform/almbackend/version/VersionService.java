@@ -100,7 +100,7 @@ public class VersionService {
                         : "보관된 버전으로는 이관할 수 없습니다");
             }
             // 요청이 완료 목록을 안 주면 서버가 워크플로 의미(complete)로 판단한다
-            Set<String> done = request.doneStatuses() == null
+            Set<String> done = request == null || request.doneStatuses() == null
                     ? settings.completeStatusIds(projectId)
                     : Set.copyOf(request.doneStatuses());
             for (Issue issue : issues.findByFixVersionId(versionId)) {
