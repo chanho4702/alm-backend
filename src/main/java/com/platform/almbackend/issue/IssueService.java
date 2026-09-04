@@ -10,6 +10,7 @@ import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.settings.SchemeService;
+import com.platform.almbackend.settings.SettingsBody;
 import com.platform.almbackend.collab.CollaborationService;
 import com.platform.almbackend.component.ComponentService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
@@ -37,6 +38,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 import java.util.Set;
@@ -133,6 +135,7 @@ public class IssueService {
         String type = normalizeType(request.type() == null ? settings.defaultType(projectId) : request.type());
         settings.assertTypeEnabled(projectId, type);
         IssueDetailsRequest details = request.details();
+        assertRequiredFields(settings.body(projectId), request, details);
         Long parentId = details == null ? null : details.parentId();
         validateParent(projectId, null, type, parentId);
         Long sprintId = details == null ? null : details.sprintId();
@@ -157,6 +160,11 @@ public class IssueService {
                 normalizeLabels(details == null ? null : details.labels()),
                 order);
         fresh.replaceComponents(componentIds);
+        Long fixVersionId = details == null ? null : details.fixVersionId();
+        if (fixVersionId != null) {
+            versionService.requireAssignable(fixVersionId, projectId);
+            fresh.assignFixVersion(fixVersionId);
+        }
         Issue issue = issues.save(fresh);
         changeLog.recordCreated(userId, issue);
         collaboration.recordCreated(userId, issue);
@@ -164,6 +172,30 @@ public class IssueService {
         notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
         return IssueResponse.from(issue);
+    }
+
+    /**
+     * 프로젝트 필드 구성에서 필수로 지정된 필드는 생성 시 값이 있어야 한다. 수정(PUT)에서는 검사하지 않는다 —
+     * 구성이 바뀌었다고 기존 이슈 편집을 막지 않기 위해서다. 우선순위는 기본값이 항상 있어 여기서 막지 않고,
+     * 해결·상위 항목은 필수로 지정할 수 없다(스킴 저장에서 거부). 첨부·링크는 생성 이후에 붙는 값이라 검사 대상이 아니다.
+     */
+    private static void assertRequiredFields(SettingsBody config, IssueCreateRequest request, IssueDetailsRequest details) {
+        Map<String, SettingsBody.FieldConfig> fields = config.fieldsById();
+        requireField(fields, "description", request.description() != null && !request.description().isBlank());
+        requireField(fields, "assignee", request.assigneeId() != null);
+        requireField(fields, "labels", details != null && details.labels() != null && !details.labels().isEmpty());
+        requireField(fields, "components", details != null && details.componentIds() != null && !details.componentIds().isEmpty());
+        requireField(fields, "sprint", details != null && details.sprintId() != null);
+        requireField(fields, "dueDate", details != null && details.dueDate() != null);
+        requireField(fields, "fixVersion", details != null && details.fixVersionId() != null);
+        requireField(fields, "estimate", details != null && details.estimateHours() != null);
+    }
+
+    private static void requireField(Map<String, SettingsBody.FieldConfig> fields, String fieldId, boolean present) {
+        SettingsBody.FieldConfig field = fields.get(fieldId);
+        if (!present && field != null && field.required()) {
+            throw new IllegalArgumentException(SettingsBody.requiredMessage(fieldId));
+        }
     }
 
     public IssueResponse update(long userId, long issueId, IssueUpdateRequest request) {

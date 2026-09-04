@@ -262,6 +262,31 @@ public class SchemeService {
         if (!body.enabledPriorities().contains(body.defaultPriority())) {
             throw new IllegalArgumentException("기본 우선순위는 활성화된 우선순위 중에서 골라야 합니다");
         }
+        validateFields(body);
+    }
+
+    /** 필드 구성 — id는 13종 안에서 유일, 숨긴 필드·해결·상위 항목은 필수 불가 */
+    private static void validateFields(SettingsBody body) {
+        Set<String> seen = new HashSet<>();
+        for (SettingsBody.FieldConfig field : body.rawFields()) {
+            String id = field == null ? null : field.id();
+            if (id == null || id.isBlank()) throw new IllegalArgumentException("필드 id가 비어 있습니다");
+            if (!SettingsBody.FIELD_IDS.contains(id)) {
+                throw new IllegalArgumentException("없는 필드입니다: " + id);
+            }
+            if (!seen.add(id)) {
+                throw new IllegalArgumentException("같은 필드를 두 번 넣을 수 없습니다: " + SettingsBody.fieldName(id));
+            }
+            if (field.required() && !field.visible()) {
+                throw new IllegalArgumentException("숨긴 필드는 필수로 지정할 수 없습니다: " + SettingsBody.fieldName(id));
+            }
+            if (field.required() && SettingsBody.RESOLUTION.equals(id)) {
+                throw new IllegalArgumentException("해결은 완료 상태에서만 입력하므로 필수로 지정할 수 없습니다");
+            }
+            if (field.required() && SettingsBody.PARENT.equals(id)) {
+                throw new IllegalArgumentException("상위 항목은 최상위 이슈가 있어야 하므로 필수로 지정할 수 없습니다");
+            }
+        }
     }
 
     /** 요청 값(대소문자 무관) → 레지스트리 id. null이면 프로젝트 기본 우선순위. 비활성이면 거부 */
@@ -310,7 +335,8 @@ public class SchemeService {
         for (Map.Entry<String, SettingsBody.Point> e : body.layout().entrySet()) {
             if (valid.contains(e.getKey()) || "__any__".equals(e.getKey())) layout.put(e.getKey(), e.getValue());
         }
-        return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes(), body.enabledPriorities(), body.defaultPriority());
+        return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes(),
+                body.enabledPriorities(), body.defaultPriority(), body.fields());
     }
 
     /** 새 구성에 없는 상태의 이슈를 옮긴다 — 반드시 구성을 바꾸기 전에(옛 구성으로 의미를 읽는다) */

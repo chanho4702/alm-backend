@@ -9,6 +9,7 @@ import com.platform.almbackend.repository.SettingsSchemeRepository;
 import com.platform.almbackend.repository.SprintRepository;
 import com.platform.almbackend.repository.StatusCategoryRepository;
 import com.platform.almbackend.repository.StatusDefRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -83,11 +84,29 @@ class SettingsControllerTest {
         version = JSON.readTree(issue).get("version").asLong();
     }
 
+    /** 스킴/레지스트리는 컨텍스트를 공유하는 다른 테스트 클래스와 같은 DB에 있다 — 바꾼 구성을 되돌린다 */
+    @AfterEach
+    void restoreDefaults() {
+        seeder.resetToDefaults();
+    }
+
     private static String defaultBodyWith(String extraStatuses, String transitions, String enabledTypes) {
         return "{\"statuses\":[{\"id\":\"todo\",\"name\":\"할 일\",\"category\":\"todo\",\"order\":1},"
                 + "{\"id\":\"inprogress\",\"name\":\"진행 중\",\"category\":\"inprogress\",\"order\":2},"
                 + "{\"id\":\"done\",\"name\":\"완료\",\"category\":\"done\",\"order\":3}" + extraStatuses + "],"
                 + "\"transitions\":" + transitions + ",\"layout\":{},\"enabledTypes\":" + enabledTypes + "}";
+    }
+
+    private static final String ALL_TYPES = "[\"task\",\"story\",\"bug\",\"epic\",\"subtask\"]";
+
+    /** 기본 본문에 필드 구성만 얹는다 — 보내지 않은 필드는 서버가 기본값으로 채운다 */
+    private static String defaultBodyWithFields(String fields) {
+        String base = defaultBodyWith("", "[]", ALL_TYPES);
+        return base.substring(0, base.length() - 1) + ",\"fields\":" + fields + "}";
+    }
+
+    private static String field(String id, boolean visible, boolean required) {
+        return "{\"id\":\"" + id + "\",\"visible\":" + visible + ",\"required\":" + required + "}";
     }
 
     @Test
@@ -239,5 +258,145 @@ class SettingsControllerTest {
                         .content("{\"title\":\"개선 건\",\"description\":\"\",\"type\":\"" + typeId + "\",\"status\":\"todo\",\"priority\":\"LOW\",\"details\":{}}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.type").value(typeId));
+    }
+
+    @Test
+    void 필드_구성이_없는_본문도_13종_전부_표시_비필수로_채워_응답한다() throws Exception {
+        mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.fields.length()").value(13))
+                .andExpect(jsonPath("$.body.fields[0].id").value("description"))
+                .andExpect(jsonPath("$.body.fields[0].visible").value(true))
+                .andExpect(jsonPath("$.body.fields[0].required").value(false))
+                .andExpect(jsonPath("$.body.fields[1].id").value("assignee"))
+                .andExpect(jsonPath("$.body.fields[12].id").value("links"));
+        mvc.perform(get("/api/alm/settings/schemes").with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].body.fields.length()").value(13));
+    }
+
+    @Test
+    void 필드_구성_규칙_위반은_400으로_거부한다() throws Exception {
+        // 모르는 id
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields("[" + field("severity", true, false) + "]") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("없는 필드입니다: severity"));
+        // 숨긴 필드는 필수 불가
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields("[" + field("dueDate", false, true) + "]") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("숨긴 필드는 필수로 지정할 수 없습니다: 마감일"));
+        // 해결은 필수 불가
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields("[" + field("resolution", true, true) + "]") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("해결은 완료 상태에서만 입력하므로 필수로 지정할 수 없습니다"));
+        // 상위 항목은 필수 불가 — 필수로 걸면 최상위 이슈를 만들 수 없다
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields("[" + field("parent", true, true) + "]") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("상위 항목은 최상위 이슈가 있어야 하므로 필수로 지정할 수 없습니다"));
+        // id가 비었다
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields("[{\"visible\":true,\"required\":false}]") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("필드 id가 비어 있습니다"));
+        // 같은 id 중복
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields(
+                                "[" + field("labels", true, false) + "," + field("labels", false, false) + "]") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("같은 필드를 두 번 넣을 수 없습니다: 라벨"));
+        // 거부된 요청은 저장되지 않았다
+        mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.body.fields[9].id").value("resolution"))
+                .andExpect(jsonPath("$.body.fields[9].required").value(false));
+    }
+
+    @Test
+    void 필수_필드는_생성에서_막고_값을_주면_통과한다() throws Exception {
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields(
+                                "[" + field("assignee", true, true) + "," + field("dueDate", true, true)
+                                        + "," + field("links", false, false) + "]") + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.fields[1].id").value("assignee"))
+                .andExpect(jsonPath("$.body.fields[1].required").value(true))
+                .andExpect(jsonPath("$.body.fields[12].visible").value(false));
+
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업2\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"details\":{}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("담당자는 필수입니다"));
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업2\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\","
+                                + "\"assigneeId\":7,\"details\":{}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("마감일은 필수입니다"));
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업2\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\","
+                                + "\"assigneeId\":7,\"details\":{\"dueDate\":\"2026-09-30\"}}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.assigneeId").value(7));
+        // 수정(PUT)에서는 강제하지 않는다 — 구성이 바뀌었다고 기존 이슈 편집을 막지 않는다
+        mvc.perform(put("/api/alm/issues/{id}", issueId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\","
+                                + "\"expectedVersion\":" + version + ",\"details\":{}}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void 커스텀_프로젝트는_스킴과_다른_필드_구성으로_동작한다() throws Exception {
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFields("[" + field("assignee", true, true) + "]") + "}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"스킴 규칙\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"details\":{}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("담당자는 필수입니다"));
+
+        // 커스텀 전환은 스킴 본문을 복사하므로 필수 규칙도 함께 온다
+        mvc.perform(put("/api/alm/projects/{id}/settings/custom", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"custom\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("custom"))
+                .andExpect(jsonPath("$.body.fields[1].required").value(true));
+        // 이 프로젝트만 필수 해제
+        mvc.perform(put("/api/alm/projects/{id}/settings/custom-body", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(defaultBodyWithFields("[" + field("assignee", true, false) + "]")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.fields[1].required").value(false));
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"커스텀 규칙\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"details\":{}}"))
+                .andExpect(status().isCreated());
+        // 스킴 자체는 그대로 필수
+        mvc.perform(get("/api/alm/settings/schemes").with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$[0].body.fields[1].required").value(true));
+        // 스킴으로 복귀하면 다시 막힌다
+        mvc.perform(put("/api/alm/projects/{id}/settings/custom", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"custom\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("scheme"));
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"복귀\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"details\":{}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("담당자는 필수입니다"));
     }
 }

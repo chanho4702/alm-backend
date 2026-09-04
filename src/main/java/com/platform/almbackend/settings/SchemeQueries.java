@@ -66,7 +66,8 @@ public class SchemeQueries {
                     category == null ? "new" : category.getKind(),
                     category == null ? "neutral" : category.getColor()));
         }
-        return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes(), body.enabledPriorities(), body.defaultPriority());
+        return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes(),
+                body.enabledPriorities(), body.defaultPriority(), body.fields());
     }
 
     public String kindOf(String categoryId) {
@@ -132,7 +133,8 @@ public class SchemeQueries {
                     ? new SettingsBody.WorkflowStatus(s.id(), def.getName(), def.getCategoryId(), s.order(), null, null)
                     : s);
         }
-        return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes(), body.enabledPriorities(), body.defaultPriority());
+        return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes(),
+                body.enabledPriorities(), body.defaultPriority(), body.fields());
     }
 
     /** 타입을 지우면 모든 본문의 활성 목록에서도 뺀다 */
@@ -151,7 +153,7 @@ public class SchemeQueries {
     private static SettingsBody withoutType(SettingsBody body, String typeId) {
         return new SettingsBody(body.statuses(), body.transitions(), body.layout(),
                 body.enabledTypes().stream().filter(t -> !t.equals(typeId)).toList(),
-                body.enabledPriorities(), body.defaultPriority());
+                body.enabledPriorities(), body.defaultPriority(), body.fields());
     }
 
     /** 우선순위를 지우면 모든 본문의 활성 목록에서 빼고, 기본이었다면 남은 첫 항목으로 */

@@ -250,6 +250,31 @@ class VersionControllerTest {
         return JSON.readTree(body).get("id").asLong();
     }
 
+    @Test
+    void 이슈를_만들_때_수정_버전을_달_수_있고_다른_프로젝트_버전은_거부한다() throws Exception {
+        long versionId = createVersion("1.0");
+        String created = mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업\",\"description\":\"\",\"type\":\"TASK\",\"status\":\"todo\","
+                                + "\"priority\":\"MEDIUM\",\"details\":{\"fixVersionId\":" + versionId + "}}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.fixVersionId").value(versionId))
+                .andReturn().getResponse().getContentAsString();
+        // 다시 읽어도 저장돼 있다
+        long issueId = JSON.readTree(created).get("id").asLong();
+        mvc.perform(get("/api/alm/issues/{id}", issueId).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.fixVersionId").value(versionId));
+
+        long otherProject = createProject("oth2", "또 다른 제품");
+        long foreign = createVersionIn(otherProject, "1.0");
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업\",\"description\":\"\",\"type\":\"TASK\",\"status\":\"todo\","
+                                + "\"priority\":\"MEDIUM\",\"details\":{\"fixVersionId\":" + foreign + "}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("다른 프로젝트의 버전입니다: " + foreign));
+    }
+
     private long createIssue() throws Exception {
         String body = mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
