@@ -1,6 +1,7 @@
 package com.platform.almbackend.personal;
 
-import com.platform.almbackend.personal.PreferenceService.PreferenceBody;
+import com.platform.almbackend.personal.PreferenceService.PreferenceUpdate;
+import com.platform.almbackend.personal.PreferenceService.PreferenceView;
 import com.platform.almbackend.personal.ProjectShortcutService.ShortcutRequest;
 import com.platform.almbackend.personal.ProjectShortcutService.ShortcutResponse;
 import com.platform.almbackend.personal.SystemSettingService.Banner;
@@ -31,13 +32,13 @@ public class PersonalizationController {
     private final SystemSettingService systemSettings;
 
     @GetMapping("/api/alm/me/preferences")
-    public PreferenceBody myPreferences(@AuthenticationPrincipal Jwt jwt) {
-        return preferences.get(userId(jwt));
+    public PreferenceView myPreferences(@AuthenticationPrincipal Jwt jwt) {
+        return preferences.view(userId(jwt), jwt.getClaimAsString("email"));
     }
 
     @PutMapping("/api/alm/me/preferences")
-    public PreferenceBody savePreferences(@RequestBody PreferenceBody body, @AuthenticationPrincipal Jwt jwt) {
-        return preferences.save(userId(jwt), body);
+    public PreferenceView savePreferences(@RequestBody PreferenceUpdate body, @AuthenticationPrincipal Jwt jwt) {
+        return preferences.save(userId(jwt), jwt.getClaimAsString("email"), body);
     }
 
     @GetMapping("/api/alm/projects/{projectId}/shortcuts")

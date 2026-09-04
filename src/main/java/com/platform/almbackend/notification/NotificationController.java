@@ -26,7 +26,7 @@ public class NotificationController {
     /** 내 알림 — 최신순 100건 */
     @GetMapping("/api/alm/notifications")
     public List<NotificationResponse> mine(@AuthenticationPrincipal Jwt jwt) {
-        return service.mine(userId(jwt));
+        return service.mine(userId(jwt), jwt.getClaimAsString("email"));
     }
 
     @PostMapping("/api/alm/notifications/{id}/read")

@@ -121,7 +121,10 @@ class PersonalizationControllerTest {
                 .andExpect(jsonPath("$.notifications.assigned").value(true))
                 .andExpect(jsonPath("$.autoWatch.commented").value(true))
                 .andExpect(jsonPath("$.autoWatch.edited").value(false))
-                .andExpect(jsonPath("$.startPage").value("home"));
+                .andExpect(jsonPath("$.startPage").value("home"))
+                // 이메일 채널은 기본 꺼짐, 메일 서버가 없는 기본 설치라 mailConfigured도 false
+                .andExpect(jsonPath("$.emailEnabled").value(false))
+                .andExpect(jsonPath("$.mailConfigured").value(false));
         // Bob: 배정 알림 끔, 시작 화면 프로젝트
         mvc.perform(put("/api/alm/me/preferences").with(asUser(2, "Bob"))
                         .contentType(MediaType.APPLICATION_JSON)

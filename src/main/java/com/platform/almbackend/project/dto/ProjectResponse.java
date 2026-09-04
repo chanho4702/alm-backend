@@ -19,12 +19,14 @@ public record ProjectResponse(
         Instant createdAt,
         Instant updatedAt,
         Instant archivedAt,
-        Instant deletedAt
+        Instant deletedAt,
+        /** 휴지통 항목의 영구 삭제 예정 시각(보존 기간 경과 시점). 휴지통이 아니면 null */
+        Instant purgeAt
 ) {
-    public static ProjectResponse from(Project project) {
+    public static ProjectResponse from(Project project, Instant purgeAt) {
         return new ProjectResponse(project.getId(), project.getKey(), project.getName(), project.getDescription(),
                 project.getCategory(), project.getLeadId(), project.getDefaultAssignee(), project.getIcon(),
                 project.getColor(), project.getUrl(), project.getVersion(), project.getCreatedAt(), project.getUpdatedAt(),
-                project.getArchivedAt(), project.getDeletedAt());
+                project.getArchivedAt(), project.getDeletedAt(), purgeAt);
     }
 }

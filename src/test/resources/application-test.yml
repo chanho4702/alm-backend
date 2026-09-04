@@ -17,6 +17,9 @@ platform:
   events:
     enabled: false
   alm:
+    trash:
+      # 테스트는 잡 메서드를 직접 부른다 — 시계는 사실상 돌지 않게(매년 1월 1일)
+      purge-cron: "0 0 3 1 1 *"
     storage:
       files-dir: build/test-attachments
       s3:

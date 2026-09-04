@@ -41,6 +41,7 @@ public class NotificationService {
     private final IssueRepository issues;
     private final ProjectService projectService;
     private final PreferenceService preferences;
+    private final EmailNotifier email;
 
     // ── 워처 ──
 
@@ -72,8 +73,8 @@ public class NotificationService {
         if (issue.getAssigneeId() != null) {
             addWatcher(issue.getId(), issue.getAssigneeId(), now);
             if (!issue.getAssigneeId().equals(actorId) && preferences.get(issue.getAssigneeId()).notifications().assignedOn()) {
-                notifications.save(Notification.of(
-                        issue.getAssigneeId(), issue, actorId, Notification.Type.ASSIGNED, null, now));
+                email.notify(notifications.save(Notification.of(
+                        issue.getAssigneeId(), issue, actorId, Notification.Type.ASSIGNED, null, now)), issue);
             }
         }
     }
@@ -86,14 +87,15 @@ public class NotificationService {
         if (assignee != null && !assignee.equals(previousAssigneeId)) {
             addWatcher(issue.getId(), assignee, now);
             if (!assignee.equals(actorId) && preferences.get(assignee).notifications().assignedOn()) {
-                notifications.save(Notification.of(assignee, issue, actorId, Notification.Type.ASSIGNED, null, now));
+                email.notify(notifications.save(
+                        Notification.of(assignee, issue, actorId, Notification.Type.ASSIGNED, null, now)), issue);
             }
         }
         if (!Objects.equals(previousStatus, issue.getStatus())) {
             for (long recipient : recipients(issue, actorId)) {
                 if (!preferences.get(recipient).notifications().statusChangedOn()) continue;
-                notifications.save(Notification.of(
-                        recipient, issue, actorId, Notification.Type.STATUS_CHANGED, issue.getStatus(), now));
+                email.notify(notifications.save(Notification.of(
+                        recipient, issue, actorId, Notification.Type.STATUS_CHANGED, issue.getStatus(), now)), issue);
             }
         }
     }
@@ -103,7 +105,8 @@ public class NotificationService {
         if (preferences.get(actorId).autoWatch().commentedOn()) addWatcher(issue.getId(), actorId, now);
         for (long recipient : recipients(issue, actorId)) {
             if (!preferences.get(recipient).notifications().commentedOn()) continue;
-            notifications.save(Notification.of(recipient, issue, actorId, Notification.Type.COMMENTED, null, now));
+            email.notify(notifications.save(
+                    Notification.of(recipient, issue, actorId, Notification.Type.COMMENTED, null, now)), issue);
         }
     }
 
@@ -113,14 +116,16 @@ public class NotificationService {
         for (Long userId : new LinkedHashSet<>(userIds)) {
             if (userId == null || userId == actorId) continue;
             if (!preferences.get(userId).notifications().mentionedOn()) continue;
-            notifications.save(Notification.of(userId, issue, actorId, Notification.Type.MENTIONED, null, now));
+            email.notify(notifications.save(
+                    Notification.of(userId, issue, actorId, Notification.Type.MENTIONED, null, now)), issue);
         }
     }
 
     // ── 알림 ──
 
-    @Transactional(readOnly = true)
-    public List<NotificationResponse> mine(long userId) {
+    /** 알림함을 열 때 메일 주소 스냅샷도 갱신한다 — 발송 시점에는 수신자의 토큰이 없다 */
+    public List<NotificationResponse> mine(long userId, String jwtEmail) {
+        preferences.rememberEmail(userId, jwtEmail);
         return notifications.findByUserIdOrderByCreatedAtDescIdDesc(userId, PageRequest.of(0, PAGE))
                 .stream().map(NotificationResponse::from).toList();
     }

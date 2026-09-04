@@ -27,6 +27,18 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${AUTH_JWKS_URI:http://localhost:9000/.well-known/jwks.json}
+  # 이메일 알림은 선택 옵션 — host가 비면 발송기가 꺼지고 알림함만 남는다(개인 설정의 mailConfigured=false)
+  mail:
+    host: ${ALM_MAIL_HOST:}
+    port: ${ALM_MAIL_PORT:587}
+    username: ${ALM_MAIL_USERNAME:}
+    password: ${ALM_MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${ALM_MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${ALM_MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
 
 eureka:
   client:
@@ -49,6 +61,16 @@ platform:
     enabled: ${EVENTS_ENABLED:true}
     stream: ${EVENTS_STREAM:platform:events:v1}
   alm:
+    mail:
+      from: ${ALM_MAIL_FROM:alm@localhost}
+      # 메일 본문의 이슈 링크가 가리킬 곳 — 사용자가 브라우저로 여는 주소여야 한다
+      public-url: ${ALM_PUBLIC_URL:http://localhost/alm}
+    trash:
+      # 지라와 같은 60일. 프로젝트 응답의 purgeAt(= deleted_at + 이 값)이 화면에 "n일 후 영구 삭제"로 뜬다
+      retention-days: ${ALM_TRASH_RETENTION_DAYS:60}
+      # 인스턴스가 여럿이면 한 곳에서만 켜 둔다 — 겹쳐 돌아도 결과는 같지만 경합이 생긴다
+      purge-cron: ${ALM_TRASH_PURGE_CRON:0 0 3 * * *}
+      purge-enabled: ${ALM_TRASH_PURGE_ENABLED:true}
     storage:
       # 첨부 바이트 저장소. S3를 끄면 로컬 파일(개발·테스트) — 운영 compose는 MinIO를 켠다.
       files-dir: ${ALM_FILES_DIR:./data/attachments}

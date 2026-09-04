@@ -180,6 +180,13 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | `localhost` / `6379` / `0` | 이벤트 스트림 |
 | `EVENTS_ENABLED` / `EVENTS_STREAM` | `true` / `platform:events:v1` | 이벤트 발행 설정 |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
+| `ALM_TRASH_RETENTION_DAYS` | `60` | 휴지통 보존 기간 — 이 기간이 지난 프로젝트를 자동으로 영구 삭제 |
+| `ALM_TRASH_PURGE_CRON` / `ALM_TRASH_PURGE_ENABLED` | `0 0 3 * * *` / `true` | 자동 비우기 시각·스위치(인스턴스가 여럿이면 한 곳에서만) |
+| `ALM_MAIL_HOST` | (비어 있음) | SMTP 호스트. 비면 이메일 알림 채널이 꺼진다(알림함만 남음) |
+| `ALM_MAIL_PORT` / `ALM_MAIL_USERNAME` / `ALM_MAIL_PASSWORD` | `587` / (비어 있음) / (비어 있음) | SMTP 접속 |
+| `ALM_MAIL_SMTP_AUTH` / `ALM_MAIL_STARTTLS` | `true` / `true` | SMTP 인증·STARTTLS |
+| `ALM_MAIL_FROM` | `alm@localhost` | 알림 메일의 보낸 사람 |
+| `ALM_PUBLIC_URL` | `http://localhost/alm` | 메일 본문 이슈 링크의 기본 주소 |
 
 ## 테스트와 배포
 
