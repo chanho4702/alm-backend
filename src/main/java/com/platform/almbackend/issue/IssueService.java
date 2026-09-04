@@ -179,9 +179,16 @@ public class IssueService {
      * 구성이 바뀌었다고 기존 이슈 편집을 막지 않기 위해서다. 우선순위는 기본값이 항상 있어 여기서 막지 않고,
      * 해결·상위 항목은 필수로 지정할 수 없다(스킴 저장에서 거부). 첨부·링크는 생성 이후에 붙는 값이라 검사 대상이 아니다.
      */
+    /** 설명은 TipTap HTML로 온다 — `<p></p>`처럼 태그만 있는 빈 본문은 비어 있는 것으로 본다(프론트 isEmptyHtml과 같은 판정) */
+    public static boolean hasText(String html) {
+        if (html == null) return false;
+        String text = html.replaceAll("<[^>]*>", " ").replace("&nbsp;", " ");
+        return !text.isBlank();
+    }
+
     private static void assertRequiredFields(SettingsBody config, IssueCreateRequest request, IssueDetailsRequest details) {
         Map<String, SettingsBody.FieldConfig> fields = config.fieldsById();
-        requireField(fields, "description", request.description() != null && !request.description().isBlank());
+        requireField(fields, "description", hasText(request.description()));
         requireField(fields, "assignee", request.assigneeId() != null);
         requireField(fields, "labels", details != null && details.labels() != null && !details.labels().isEmpty());
         requireField(fields, "components", details != null && details.componentIds() != null && !details.componentIds().isEmpty());
