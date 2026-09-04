@@ -121,6 +121,50 @@ class SettingsControllerTest {
     }
 
     @Test
+    void 기본_상태는_아이콘을_갖고_워크플로_본문에도_실린다() throws Exception {
+        mvc.perform(get("/api/alm/settings/statuses").with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id=='todo')].icon").value("circle"))
+                .andExpect(jsonPath("$[?(@.id=='inprogress')].icon").value("loader-circle"))
+                .andExpect(jsonPath("$[?(@.id=='done')].icon").value("circle-check"));
+
+        // 워크플로 본문의 상태 캐시에도 읽을 때 채워 내려간다 — 화면이 레지스트리를 따로 안 받아도 되게
+        mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.statuses[0].icon").value("circle"))
+                .andExpect(jsonPath("$.body.statuses[2].icon").value("circle-check"));
+    }
+
+    @Test
+    void 아이콘을_고르고_지우면_카테고리_의미의_기본으로_돌아간다() throws Exception {
+        String created = mvc.perform(post("/api/alm/settings/statuses").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"검토 중\",\"categoryId\":\"inprogress\",\"icon\":\"flask\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.icon").value("flask"))
+                .andReturn().getResponse().getContentAsString();
+        String statusId = JSON.readTree(created).get("id").asText();
+
+        // 빈 문자열은 "미지정"이라는 유효한 값 — 레지스트리 응답은 원본을 그대로 준다(편집기가 "미지정"을 보여야 한다)
+        mvc.perform(put("/api/alm/settings/statuses/{id}", statusId).with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"icon\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.icon").value(""))
+                .andExpect(jsonPath("$.name").value("검토 중"));
+
+        // 워크플로에 넣으면 화면이 그릴 수 있게 의미(active)의 기본 아이콘으로 폴백해 내려간다
+        String body = defaultBodyWith(
+                ",{\"id\":\"" + statusId + "\",\"name\":\"검토 중\",\"category\":\"inprogress\",\"order\":4}",
+                "[]", ALL_TYPES);
+        mvc.perform(put("/api/alm/settings/schemes/{id}", "scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"기본 스킴\",\"body\":" + body + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.statuses[3].icon").value("refresh-cw"));
+    }
+
+    @Test
     void 레지스트리_규칙_기본값은_못_지우고_이름은_유일하며_쓰는_상태는_못_지운다() throws Exception {
         mvc.perform(delete("/api/alm/settings/categories/done").with(asAdmin(9, "Root")))
                 .andExpect(status().isBadRequest())

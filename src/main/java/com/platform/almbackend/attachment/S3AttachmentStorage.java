@@ -12,7 +12,6 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.InputStream;
-import java.util.UUID;
 
 /** S3 호환 저장소(운영: MinIO). wiki-backend의 S3AttachmentStorage와 같은 규약이다. */
 public class S3AttachmentStorage implements AttachmentStorage {
@@ -25,8 +24,11 @@ public class S3AttachmentStorage implements AttachmentStorage {
     }
 
     @Override
-    public StoredObject store(InputStream input, long contentLength, String contentType) {
-        String key = UUID.randomUUID().toString();
+    public String defaultBucket() { return bucket; }
+
+    @Override
+    public StoredObject store(InputStream input, long contentLength, String contentType, String key) {
+        AttachmentStorage.requireSafeKey(key);
         try {
             client.putObject(PutObjectRequest.builder()
                     .bucket(bucket)

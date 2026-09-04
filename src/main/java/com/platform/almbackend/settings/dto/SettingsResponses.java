@@ -15,9 +15,10 @@ public final class SettingsResponses {
         }
     }
 
-    public record StatusResponse(String id, String name, String categoryId, String description) {
+    /** icon은 저장된 원본이다(빈 문자열 = 미지정) — 레지스트리 편집기가 "미지정"을 보여야 하므로 폴백하지 않는다 */
+    public record StatusResponse(String id, String name, String categoryId, String description, String icon) {
         public static StatusResponse from(StatusDef d) {
-            return new StatusResponse(d.getId(), d.getName(), d.getCategoryId(), d.getDescription());
+            return new StatusResponse(d.getId(), d.getName(), d.getCategoryId(), d.getDescription(), d.getIcon());
         }
     }
 

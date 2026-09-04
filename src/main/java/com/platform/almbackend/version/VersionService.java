@@ -34,6 +34,7 @@ public class VersionService {
     private final ProjectVersionRepository versions;
     private final IssueRepository issues;
     private final ProjectService projectService;
+    private final com.platform.almbackend.settings.SchemeService settings;
 
     @Transactional(readOnly = true)
     public List<VersionResponse> list(long userId, long projectId) {
@@ -98,7 +99,10 @@ public class VersionService {
                         ? "릴리스된 버전으로는 이관할 수 없습니다"
                         : "보관된 버전으로는 이관할 수 없습니다");
             }
-            Set<String> done = request.doneStatuses() == null ? Set.of() : Set.copyOf(request.doneStatuses());
+            // 요청이 완료 목록을 안 주면 서버가 워크플로 의미(complete)로 판단한다
+            Set<String> done = request.doneStatuses() == null
+                    ? settings.completeStatusIds(projectId)
+                    : Set.copyOf(request.doneStatuses());
             for (Issue issue : issues.findByFixVersionId(versionId)) {
                 if (!done.contains(issue.getStatus())) {
                     issue.assignFixVersion(targetId);

@@ -61,10 +61,13 @@ public class SchemeQueries {
             StatusDef def = defs.get(s.id());
             String categoryId = def != null ? def.getCategoryId() : s.category();
             StatusCategory category = cats.getOrDefault(categoryId, cats.get("todo"));
+            String kind = category == null ? "new" : category.getKind();
             enriched.add(new SettingsBody.WorkflowStatus(
                     s.id(), def != null ? def.getName() : s.name(), categoryId, s.order(),
-                    category == null ? "new" : category.getKind(),
-                    category == null ? "neutral" : category.getColor()));
+                    kind,
+                    category == null ? "neutral" : category.getColor(),
+                    // 화면이 늘 아이콘 하나는 그릴 수 있게 여기서 폴백까지 끝낸다(레지스트리 응답은 원본을 준다)
+                    StatusIcons.resolve(def == null ? null : def.getIcon(), kind)));
         }
         return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes(),
                 body.enabledPriorities(), body.defaultPriority(), body.fields());
@@ -72,6 +75,23 @@ public class SchemeQueries {
 
     public String kindOf(String categoryId) {
         return categories.findById(categoryId).map(StatusCategory::getKind).orElse("new");
+    }
+
+    /**
+     * 상태 표시에 필요한 값 한 묶음. {@code kind}는 카테고리를 못 찾으면 null이고,
+     * 호출자는 의미에 딸린 표시(이모지 등)만 생략한다 — 이름은 그대로 쓴다.
+     */
+    public record StatusLabel(String name, String kind) {}
+
+    /**
+     * 상태 id → 이름과 카테고리 의미를 **한 번에**. 이름만/의미만 따로 부르면 같은 행을 두 번 읽는다.
+     * 레지스트리에 없으면 empty — 호출자가 그 표시를 통째로 생략한다.
+     */
+    public Optional<StatusLabel> statusLabel(String statusId) {
+        if (statusId == null || statusId.isBlank()) return Optional.empty();
+        return statuses.findById(statusId).map(def -> new StatusLabel(
+                def.getName(),
+                categories.findById(def.getCategoryId()).map(StatusCategory::getKind).orElse(null)));
     }
 
     /** 스킴·커스텀 본문 전부 */
@@ -130,7 +150,7 @@ public class SchemeQueries {
         List<SettingsBody.WorkflowStatus> next = new ArrayList<>();
         for (SettingsBody.WorkflowStatus s : body.statuses()) {
             next.add(s.id().equals(def.getId())
-                    ? new SettingsBody.WorkflowStatus(s.id(), def.getName(), def.getCategoryId(), s.order(), null, null)
+                    ? new SettingsBody.WorkflowStatus(s.id(), def.getName(), def.getCategoryId(), s.order(), null, null, null)
                     : s);
         }
         return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes(),

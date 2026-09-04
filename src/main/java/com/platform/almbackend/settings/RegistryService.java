@@ -122,7 +122,8 @@ public class RegistryService {
         String name = requireName(request.name(), "상태 이름을 입력하세요");
         if (statuses.existsByName(name)) throw new IllegalArgumentException("상태 이름이 중복됩니다: " + name);
         requireCategory(request.categoryId());
-        return statuses.save(StatusDef.of(newId("st"), name, request.categoryId(), request.description()));
+        return statuses.save(StatusDef.of(newId("st"), name, request.categoryId(), request.description(),
+                StatusIcons.normalize(request.icon())));
     }
 
     public StatusDef updateStatus(String id, StatusRequest request) {
@@ -142,6 +143,8 @@ public class RegistryService {
             }
         }
         if (request.description() != null) def.describe(request.description());
+        // 아이콘은 빈 문자열도 유효한 값(미지정 → 카테고리 기본)이라 null만 "안 바꿈"으로 본다
+        if (request.icon() != null) def.reicon(StatusIcons.normalize(request.icon()));
         schemes.syncStatusCache(def);
         return def;
     }

@@ -172,6 +172,27 @@ class SprintPlanningControllerTest {
     }
 
     @Test
+    void doneStatuses를_안_보내면_서버가_워크플로_의미로_완료를_판정한다() throws Exception {
+        // 프론트 어댑터는 완료 목록을 보내지 않는다(목업과 같은 시그니처) — 서버가 complete 의미 상태를 안다
+        long next = createSprint();
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        long finished = createIssue("끝난 것", "done", sprintId);
+        long unfinished = createIssue("남은 것", "inprogress", sprintId);
+
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"moveUnfinishedToSprintId\":" + next + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("DONE"));
+
+        mvc.perform(get("/api/alm/issues/{id}", unfinished).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.sprintId").value(next));
+        mvc.perform(get("/api/alm/issues/{id}", finished).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.sprintId").value(sprintId));
+    }
+
+    @Test
     void 이관_대상은_같은_프로젝트의_끝나지_않은_다른_스프린트여야_한다() throws Exception {
         mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "Alice")))
                 .andExpect(status().isOk());

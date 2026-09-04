@@ -40,6 +40,7 @@ public class SprintService {
     private final ProjectRepository projects;
     private final ProjectService projectService;
     private final IssueChangeLogService changeLog;
+    private final com.platform.almbackend.settings.SchemeService settings;
 
     @Transactional(readOnly = true)
     public List<SprintResponse> list(long userId, long projectId) {
@@ -124,8 +125,9 @@ public class SprintService {
         if (locked.getState() != SprintState.ACTIVE) {
             throw new ConflictException("진행 중인 스프린트만 완료할 수 있습니다: " + locked.getState());
         }
+        // 완료 판정: 요청이 주면 그대로, 없으면 서버가 워크플로 의미(complete)로 판단한다 — V11부터 서버가 상태 카테고리를 안다
         Set<String> doneStatuses = request == null || request.doneStatuses() == null
-                ? Set.of()
+                ? settings.completeStatusIds(sprint.getProjectId())
                 : Set.copyOf(request.doneStatuses());
         Long targetSprintId = request == null ? null : request.moveUnfinishedToSprintId();
         if (targetSprintId != null) {

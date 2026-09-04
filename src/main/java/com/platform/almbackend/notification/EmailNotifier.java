@@ -3,6 +3,7 @@ package com.platform.almbackend.notification;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.Notification;
 import com.platform.almbackend.personal.PreferenceService;
+import com.platform.almbackend.settings.SchemeQueries;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -34,8 +36,30 @@ import java.util.concurrent.Executors;
 @Slf4j
 public class EmailNotifier {
 
+    /**
+     * 메일 본문은 플레인 텍스트라 아이콘을 실을 수 없다 — 앱이 색 있는 lucide 아이콘으로 하는 구분을
+     * 메일에서는 이모지가 대신한다(디자인시스템의 "글자 기호 금지"는 앱 UI 규칙이고 메일은 예외다).
+     * 소스에는 이스케이프로 둔다 — 빌드 환경의 인코딩에 흔들리지 않게.
+     */
+    private static final Map<Notification.Type, String> TYPE_EMOJI = Map.of(
+            Notification.Type.ASSIGNED, "\uD83D\uDCCC",       // 압정
+            Notification.Type.STATUS_CHANGED, "\uD83D\uDD04", // 화살표 순환
+            Notification.Type.COMMENTED, "\uD83D\uDCAC",      // 말풍선
+            Notification.Type.MENTIONED, "\uD83D\uDCE3");     // 확성기
+
+    /** 상태 카테고리 의미별 — 이름과 함께 쓰고 이모지만으로 뜻을 전하지 않는다 */
+    private static final Map<String, String> KIND_EMOJI = Map.of(
+            "new", "\u26AA",              // 흰 동그라미
+            "active", "\uD83D\uDD35",  // 파란 동그라미
+            "complete", "\u2705");        // 체크
+
+    private static final String BLANK_LINE = "\n\n";
+    /** 오른쪽 화살표 — 메일 클라이언트가 폰트를 갈아도 깨지지 않게 이스케이프로 둔다 */
+    private static final String ARROW = "\u2192";
+
     private final ObjectProvider<JavaMailSender> senders;
     private final ObjectProvider<PreferenceService> preferences;
+    private final ObjectProvider<SchemeQueries> schemes;
     private final String host;
     private final String from;
     private final String publicUrl;
@@ -47,11 +71,13 @@ public class EmailNotifier {
 
     public EmailNotifier(ObjectProvider<JavaMailSender> senders,
                          ObjectProvider<PreferenceService> preferences,
+                         ObjectProvider<SchemeQueries> schemes,
                          @Value("${spring.mail.host:}") String host,
                          @Value("${platform.alm.mail.from:alm@localhost}") String from,
                          @Value("${platform.alm.mail.public-url:http://localhost/alm}") String publicUrl) {
         this.senders = senders;
         this.preferences = preferences;
+        this.schemes = schemes;
         this.host = host == null ? "" : host.trim();
         this.from = from;
         this.publicUrl = publicUrl.endsWith("/") ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
@@ -67,10 +93,15 @@ public class EmailNotifier {
      * {@link NotificationService}가 판단했다 — 여기서는 이메일 채널 스위치와 주소만 본다.
      */
     public void notify(Notification saved, Issue issue) {
+        notify(saved, issue, null);
+    }
+
+    /** 상태 변경은 이전 상태까지 받아 본문에 "상태: 할 일 -> 완료" 한 줄을 싣는다 */
+    public void notify(Notification saved, Issue issue, String previousStatusId) {
         if (!configured()) return;
         Optional<String> to = preferences.getObject().emailRecipient(saved.getUserId());
         if (to.isEmpty()) return;
-        sendAfterCommit(compose(to.get(), saved.getType(), issue, actorName()));
+        sendAfterCommit(compose(to.get(), saved.getType(), issue, actorName(), previousStatusId));
     }
 
     /** 커밋 뒤 별도 스레드로 보낸다. 트랜잭션 밖이면 바로. */
@@ -95,6 +126,10 @@ public class EmailNotifier {
     }
 
     SimpleMailMessage compose(String to, Notification.Type type, Issue issue, String actor) {
+        return compose(to, type, issue, actor, null);
+    }
+
+    SimpleMailMessage compose(String to, Notification.Type type, Issue issue, String actor, String previousStatusId) {
         String label = issue.getKey() + " " + issue.getTitle();
         String subject = switch (type) {
             case ASSIGNED -> actor + "님이 '" + label + "' 이슈를 나에게 배정했습니다";
@@ -104,6 +139,10 @@ public class EmailNotifier {
         };
         StringBuilder body = new StringBuilder();
         body.append(subject).append("\n\n");
+        if (type == Notification.Type.STATUS_CHANGED) {
+            String line = statusLine(previousStatusId, issue.getStatus());
+            if (!line.isEmpty()) body.append(line).append(BLANK_LINE);
+        }
         body.append("이슈 열기: ").append(issueLink(issue)).append("\n\n");
         body.append("이 메일은 ALM 개인 설정의 이메일 알림에 따라 보내졌습니다. 받지 않으려면: ")
                 .append(publicUrl).append("/settings/notifications\n");
@@ -111,9 +150,30 @@ public class EmailNotifier {
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(from);
         message.setTo(to);
-        message.setSubject("[ALM] " + subject);
+        String prefix = TYPE_EMOJI.getOrDefault(type, "");
+        message.setSubject("[ALM] " + (prefix.isEmpty() ? "" : prefix + " ") + subject);
         message.setText(body.toString());
         return message;
+    }
+
+    /**
+     * "상태: 할 일 -> (이모지) 완료". 상태 이름과 의미는 레지스트리에서 읽고, 모르면 그 부분만
+     * 생략한다 — 메일 한 줄 때문에 발송 자체가 막히면 안 된다.
+     */
+    private String statusLine(String previousStatusId, String currentStatusId) {
+        SchemeQueries registry = schemes.getIfAvailable();
+        if (registry == null) return "";
+        // 상태마다 한 번만 읽는다 — 이름과 의미를 따로 부르면 같은 행을 두 번 조회한다
+        SchemeQueries.StatusLabel current = registry.statusLabel(currentStatusId).orElse(null);
+        if (current == null) return "";
+        String emoji = current.kind() == null ? "" : KIND_EMOJI.getOrDefault(current.kind(), "");
+        String prefix = emoji.isEmpty() ? "" : emoji + " ";
+        String from = registry.statusLabel(previousStatusId)
+                .map(SchemeQueries.StatusLabel::name)
+                .orElse("");
+        return from.isEmpty()
+                ? "상태: " + prefix + current.name()
+                : "상태: " + from + " " + ARROW + " " + prefix + current.name();
     }
 
     private String issueLink(Issue issue) {

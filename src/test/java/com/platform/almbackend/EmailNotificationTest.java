@@ -73,10 +73,24 @@ class EmailNotificationTest {
     }
 
     private void assignIssueToBob() throws Exception {
-        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+        createIssueAssignedToBob();
+    }
+
+    /** @return 만든 이슈의 (id, version) */
+    private long[] createIssueAssignedToBob() throws Exception {
+        String body = mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"배정\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"assigneeId\":2,\"details\":{}}"))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return new long[]{JSON.readTree(body).get("id").asLong(), JSON.readTree(body).get("version").asLong()};
+    }
+
+    private void enableMailForBob() throws Exception {
+        mvc.perform(put("/api/alm/me/preferences").with(asUser(2, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"emailEnabled\":true}"))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -114,6 +128,40 @@ class EmailNotificationTest {
         assertThat(message.getSubject()).startsWith("[ALM] ").contains("Alice");
         assertThat(message.getText())
                 .contains("/projects/" + projectId + "/issues?issue=MAIL-1");
+    }
+
+    /**
+     * 메일은 플레인 텍스트라 앱의 색 있는 아이콘을 실을 수 없다 — 종류는 제목 접두 이모지가,
+     * 상태는 본문 한 줄이 대신한다. 이모지만으로 뜻을 전하지 않고 늘 이름과 함께 쓴다.
+     */
+    @Test
+    void 제목에_종류_이모지가_붙는다() throws Exception {
+        enableMailForBob();
+        assignIssueToBob();
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, timeout(3000)).send(sent.capture());
+        assertThat(sent.getValue().getSubject()).startsWith("[ALM] 📌 ").contains("Alice");
+    }
+
+    @Test
+    void 상태_변경_메일은_이전과_이후_상태를_의미_이모지와_함께_싣는다() throws Exception {
+        enableMailForBob();
+        long[] issue = createIssueAssignedToBob();
+
+        mvc.perform(put("/api/alm/issues/{id}", issue[0]).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"배정\",\"description\":\"\",\"type\":\"task\",\"status\":\"done\","
+                                + "\"priority\":\"MEDIUM\",\"assigneeId\":2,\"details\":{},"
+                                + "\"expectedVersion\":" + issue[1] + "}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        // 배정(생성) 한 통 + 상태 변경 한 통
+        verify(mailSender, timeout(3000).times(2)).send(sent.capture());
+        SimpleMailMessage statusMail = sent.getAllValues().get(1);
+        assertThat(statusMail.getSubject()).startsWith("[ALM] 🔄 ");
+        assertThat(statusMail.getText()).contains("상태: 할 일 → ✅ 완료");
     }
 
     @Test

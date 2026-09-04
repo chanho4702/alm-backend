@@ -193,6 +193,16 @@ public class SchemeService {
                 .findFirst().orElse("todo");
     }
 
+    /** 프로젝트의 "완료" 의미 상태 id 전부 — 스프린트 완료·릴리스가 doneStatuses를 안 보내면 이걸 쓴다 */
+    @Transactional(readOnly = true)
+    public Set<String> completeStatusIds(long projectId) {
+        Set<String> ids = new HashSet<>();
+        for (SettingsBody.WorkflowStatus s : body(projectId).statuses()) {
+            if ("complete".equals(s.kind())) ids.add(s.id());
+        }
+        return ids;
+    }
+
     /** 완료 의미인가 — 해결 규칙 */
     @Transactional(readOnly = true)
     public boolean isComplete(long projectId, String statusId) {

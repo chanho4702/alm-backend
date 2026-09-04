@@ -22,8 +22,10 @@ public record SettingsBody(
         List<FieldConfig> fields) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record WorkflowStatus(String id, String name, String category, int order, String kind, String color) {
-        public WorkflowStatus stored() { return new WorkflowStatus(id, name, category, order, null, null); }
+    /** kind·color·icon은 레지스트리에서 파생된 읽기 전용 값이다 — 저장하지 않고 읽을 때 다시 채운다 */
+    public record WorkflowStatus(String id, String name, String category, int order, String kind, String color,
+                                 String icon) {
+        public WorkflowStatus stored() { return new WorkflowStatus(id, name, category, order, null, null, null); }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -136,9 +138,9 @@ public record SettingsBody(
 
     public static SettingsBody defaults() {
         return new SettingsBody(
-                List.of(new WorkflowStatus("todo", "할 일", "todo", 1, null, null),
-                        new WorkflowStatus("inprogress", "진행 중", "inprogress", 2, null, null),
-                        new WorkflowStatus("done", "완료", "done", 3, null, null)),
+                List.of(new WorkflowStatus("todo", "할 일", "todo", 1, null, null, null),
+                        new WorkflowStatus("inprogress", "진행 중", "inprogress", 2, null, null, null),
+                        new WorkflowStatus("done", "완료", "done", 3, null, null, null)),
                 List.of(), Map.of(), List.of("task", "story", "bug", "epic", "subtask"),
                 BUILTIN_PRIORITIES, "medium", defaultFields());
     }

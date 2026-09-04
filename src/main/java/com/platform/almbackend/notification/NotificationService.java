@@ -95,7 +95,8 @@ public class NotificationService {
             for (long recipient : recipients(issue, actorId)) {
                 if (!preferences.get(recipient).notifications().statusChangedOn()) continue;
                 email.notify(notifications.save(Notification.of(
-                        recipient, issue, actorId, Notification.Type.STATUS_CHANGED, issue.getStatus(), now)), issue);
+                                recipient, issue, actorId, Notification.Type.STATUS_CHANGED, issue.getStatus(), now)),
+                        issue, previousStatus);
             }
         }
     }

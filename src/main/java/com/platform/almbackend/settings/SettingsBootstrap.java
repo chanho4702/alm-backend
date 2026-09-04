@@ -98,7 +98,10 @@ public class SettingsBootstrap implements ApplicationRunner {
             }
         }
         for (Cat c : CATEGORIES) {
-            if (statuses.findById(c.id()).isEmpty()) statuses.save(StatusDef.of(c.id(), c.name(), c.id(), ""));
+            if (statuses.findById(c.id()).isEmpty()) {
+                statuses.save(StatusDef.of(c.id(), c.name(), c.id(), "",
+                        StatusIcons.BUILT_IN.getOrDefault(c.id(), "")));
+            }
         }
         for (Type t : TYPES) {
             if (types.findById(t.id()).isEmpty()) {

@@ -91,6 +91,10 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/attachments/{id}` | VIEW | 내려받기(attachment 처분, nosniff) |
 | `GET` | `/api/alm/attachments/{id}/inline` | VIEW | 인라인(래스터 이미지만) |
 | `DELETE` | `/api/alm/attachments/{id}` | EDIT | 삭제(오브젝트는 커밋 뒤 정리) |
+| `PUT` | `/api/alm/me/avatar` | 인증(본인) | 아바타 올리기(multipart `file`, PNG·JPG·WebP, 2MB 이하) |
+| `DELETE` | `/api/alm/me/avatar` | 인증(본인) | 아바타 제거 |
+| `GET` | `/api/alm/users/{userId}/avatar` | 인증 | 아바타 바이트(원본 타입, `private, max-age=300`), 없으면 404 |
+| `GET` | `/api/alm/users/avatars` | 인증 | 아바타가 있는 사용자 목록 — 화면이 한 번 받아 URL을 붙인다 |
 | `GET` | `/api/alm/projects/{projectId}/changes` | VIEW | 변경 이력(리포트 원천) — `field`·`sprintId`·`since` 필터 |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |
@@ -98,6 +102,44 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `PUT` | `/api/alm/sprints/{sprintId}` | EDIT | 계획 메타 수정(이름·목표·예정 기간, `expectedVersion`) |
 | `POST` | `/api/alm/sprints/{sprintId}/start` | EDIT | 스프린트 시작(프로젝트당 1개) |
 | `POST` | `/api/alm/sprints/{sprintId}/complete` | EDIT | 스프린트 완료, 미완료 이슈는 지정 스프린트(`moveUnfinishedToSprintId`) 또는 백로그로 |
+
+### 상태 아이콘 (V20)
+
+상태를 색만으로 구분하면 색각 이상·흑백 인쇄에서 정보가 사라진다. `status_def.icon`이 프론트
+아이콘 맵의 lucide 키를 담고, 화면은 아이콘 모양과 상태 이름을 늘 함께 쓴다.
+
+- `GET/POST/PUT /api/alm/settings/statuses`의 `icon`은 **저장된 원본**이다 — 빈 문자열은 "미지정"이라는
+  유효한 값이고 레지스트리 편집기가 그대로 보여야 한다. `PUT`에서 `icon`을 아예 보내지 않으면 안 바꾸고,
+  빈 문자열을 보내면 미지정으로 되돌린다.
+- 워크플로 본문(`GET /api/alm/projects/{id}/settings`, `GET/PUT /api/alm/settings/schemes/{id}`)의
+  `body.statuses[].icon`은 **해석된 값**이다 — 미지정이면 카테고리 의미별 기본
+  (`new`=`circle`, `active`=`refresh-cw`, `complete`=`circle-check`)으로 폴백해 내려간다.
+  `kind`·`color`와 마찬가지로 읽기 전용 파생값이라 저장되지 않는다.
+- 기본 3종 시드: `todo`=`circle`, `inprogress`=`loader-circle`, `done`=`circle-check`.
+
+### 아바타 (V20)
+
+프로필 사진은 첨부와 **같은 저장소**(MinIO/로컬 파일)에 `avatars/{userId}/{uuid}.{ext}` 키로 넣고,
+`user_preference.avatar_key`에 키만 남긴다 — `issue_attachment` 행은 만들지 않는다(아바타는 이슈에
+딸린 파일이 아니고 권한 규칙도 다르다). 형식은 클라이언트가 보낸 `Content-Type`이 아니라 매직
+바이트로 판별한다: SVG가 프로필 사진 이름으로 들어와 인라인 실행되면 안 된다.
+
+`PUT /api/alm/me/avatar`와 `GET /api/alm/users/avatars`의 항목은 같은 모양이다.
+
+```json
+{ "userId": 7, "avatarUrl": "/api/alm/users/7/avatar?v=1757000000000", "updatedAt": "2026-09-05T02:00:00Z" }
+```
+
+`avatarUrl`의 `?v=`는 `avatar_updated_at`의 epoch millis다. 개인 설정 저장 시각(`updated_at`)과
+분리해 두었기 때문에 아바타와 무관한 설정 저장이 이미지 URL을 흔들지 않는다.
+`GET /api/alm/me/preferences` 응답에도 같은 `avatarUrl`(없으면 `null`)이 실린다.
+
+**이 URL은 `<img src>`에 그대로 넣을 수 없다.** 바이트 엔드포인트가 Bearer 인증을 요구하는데
+브라우저는 `<img>` 요청에 Authorization 헤더를 붙이지 않아 401이 난다. 프론트는 첨부 내려받기와
+같이 fetch로 바이트를 받아 object URL을 만들어 쓴다 — `avatarUrl`은 "아바타가 있다"는 신호이자
+fetch 대상 경로다. `?v=`는 캐시버스터일 뿐이고 서버는 읽지 않는다.
+거부 문구는 `아바타는 2MB 이하 이미지여야 합니다`, `아바타는 PNG·JPG·WebP 이미지만 올릴 수 있습니다`,
+`빈 파일은 올릴 수 없습니다`이고 조회 실패는 `아바타가 없습니다`(404)다.
 
 프로젝트 키와 이슈 키는 생성 후 바뀌지 않는다. 프로젝트·이슈 수정 요청에는
 `expectedVersion`이 필요하며, 현재 버전과 다르면 `409 Conflict`를 반환한다.
