@@ -585,6 +585,40 @@ class SettingsControllerTest {
     }
 
     @Test
+    void 커스텀_본문의_타입별_구성은_왕복하고_그_프로젝트에만_적용된다() throws Exception {
+        mvc.perform(put("/api/alm/projects/{id}/settings/custom", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"custom\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("custom"));
+
+        // 커스텀 본문에만 버그 타입 덮어쓰기를 얹는다
+        mvc.perform(put("/api/alm/projects/{id}/settings/custom-body", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(defaultBodyWithFieldsByType("[]", "{\"bug\":[" + field("dueDate", true, true) + "]}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.fieldsByType.bug.length()").value(13))
+                .andExpect(jsonPath("$.body.fieldsByType.bug[7].id").value("dueDate"))
+                .andExpect(jsonPath("$.body.fieldsByType.bug[7].required").value(true));
+        // 다시 읽어도 같은 값이다
+        mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.fieldsByType.bug[7].required").value(true));
+
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"버그\",\"description\":\"\",\"type\":\"bug\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"details\":{}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("마감일은 필수입니다"));
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"작업\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"MEDIUM\",\"details\":{}}"))
+                .andExpect(status().isCreated());
+        // 스킴은 건드리지 않았다
+        mvc.perform(get("/api/alm/settings/schemes").with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$[0].body.fieldsByType").isEmpty());
+    }
+
+    @Test
     void 필드_구성이_아예_없는_구버전_본문도_기본_13종과_빈_타입별_구성으로_읽는다() throws Exception {
         SettingsScheme scheme = schemes.findById("scheme-default").orElseThrow();
         scheme.replaceBody(defaultBodyWith("", "[]", ALL_TYPES));
