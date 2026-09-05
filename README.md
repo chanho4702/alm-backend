@@ -183,6 +183,23 @@ POST /api/alm/sprints/{sprintId}/complete
 포함되는 서버 관리 값이며 생성 시 프로젝트 내 다음 번호로 발급한다. 재정렬은 별도 API로
 제공하기 전까지 일반 수정 요청으로 바꿀 수 없다.
 
+## OpenAPI
+
+`GET /v3/api-docs`가 이 서비스의 OpenAPI 3.1 스펙(JSON)을 낸다. springdoc(`springdoc-openapi-starter-webmvc-api`)이
+컨트롤러 주석에서 뽑아내며, Swagger UI는 싣지 않는다 — 사람이 읽는 문서는 myFront 생성기가 이 JSON을
+받아 `/docs/`의 "API 레퍼런스" 트리로 만든다.
+
+- **토큰 없이 읽힌다.** `SecurityFilterChain`에서 `/v3/api-docs/**`만 permitAll이다. 게이트웨이와 nginx가
+  `/v3`를 라우팅하지 않으므로 클러스터 안에서만 보인다.
+- **주석 규약.** 컨트롤러에 `@Tag(name, description)`(name은 영문 리소스명, description은 한국어 한 줄),
+  엔드포인트마다 `@Operation(summary)`, 뜻이 드러나지 않는 파라미터에 `@Parameter(description)`,
+  주요 DTO 필드에 `@Schema(description, example)`. 한 컨트롤러가 여러 리소스를 담는 협업·설정은
+  메서드마다 태그를 나눠 붙이고, 그 설명은 `config/OpenApiConfig`가 한 번에 준다.
+- **공통 오류.** `OperationCustomizer`가 401·403을 모든 오퍼레이션에, 404를 경로 변수가 있는 오퍼레이션에,
+  409를 `expectedVersion`을 받는 PUT에 붙인다. 스키마는 `{"error": "메시지"}`(`PlatformError`)로 common-starter의
+  오류 계약과 같다. 예외 핸들러에서 springdoc이 유추한 오류 응답은 걷어내고 이 규칙만 남긴다.
+- **게이트.** `OpenApiDocsTest`가 스펙 200·태그와 요약 누락 0건·내부 전용 경로 부재·전역 `bearerAuth`를 검증한다.
+
 ## 전역 관리자 판정 (2026-09-05)
 
 **판정 주체는 org-service 하나다.** 전역 관리자는 org의 `GLOBAL`/`ADMIN` grant이며, gRPC

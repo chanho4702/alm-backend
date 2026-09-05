@@ -17,12 +17,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static com.platform.almbackend.issue.IssueController.userId;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RestController
 @RequiredArgsConstructor
+@Tag(name = "Attachments", description = "이슈 첨부 업로드·다운로드·삭제")
 public class AttachmentController {
     private final AttachmentService service;
 
+    @Operation(summary = "이슈에 파일을 첨부한다")
     @PostMapping("/api/alm/issues/{issueId}/attachments")
     @ResponseStatus(HttpStatus.CREATED)
     public AttachmentResponse upload(
@@ -32,12 +36,14 @@ public class AttachmentController {
         return service.upload(userId(jwt), issueId, file);
     }
 
+    @Operation(summary = "이슈의 첨부 목록을 조회한다")
     @GetMapping("/api/alm/issues/{issueId}/attachments")
     public List<AttachmentResponse> list(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return service.list(userId(jwt), issueId);
     }
 
     /** Content-Disposition attachment 고정 — 브라우저 인라인 실행(XSS) 차단 */
+    @Operation(summary = "첨부 파일을 내려받는다")
     @GetMapping("/api/alm/attachments/{id}")
     public ResponseEntity<Resource> download(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         AttachmentService.DownloadItem item = service.download(userId(jwt), id);
@@ -50,6 +56,7 @@ public class AttachmentController {
     }
 
     /** 안전한 래스터 이미지만 인라인으로 — 썸네일용 */
+    @Operation(summary = "이미지 첨부를 인라인으로 조회한다")
     @GetMapping("/api/alm/attachments/{id}/inline")
     public ResponseEntity<Resource> inline(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
@@ -63,6 +70,7 @@ public class AttachmentController {
                 .body(item.resource());
     }
 
+    @Operation(summary = "첨부를 삭제한다")
     @DeleteMapping("/api/alm/attachments/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {

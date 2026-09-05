@@ -27,6 +27,8 @@ import java.util.List;
 import java.util.Map;
 
 import static com.platform.almbackend.issue.IssueController.userId;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
  * 대시보드(지라 Dashboards) — 내 것 + 공유된 것. 가젯 배치는 JSON 배열 그대로 저장하고 프론트가 해석한다.
@@ -35,6 +37,7 @@ import static com.platform.almbackend.issue.IssueController.userId;
 @RestController
 @RequiredArgsConstructor
 @Transactional
+@Tag(name = "Dashboards", description = "대시보드와 가젯 배치")
 public class DashboardController {
     private static final int MAX_GADGETS = 24;
 
@@ -45,12 +48,14 @@ public class DashboardController {
                                     Instant createdAt, Instant updatedAt) {}
     public record DashboardRequest(String name, Boolean shared, List<Map<String, Object>> gadgets) {}
 
+    @Operation(summary = "내 대시보드와 공유된 대시보드를 조회한다")
     @GetMapping("/api/alm/dashboards")
     @Transactional(readOnly = true)
     public List<DashboardResponse> list(@AuthenticationPrincipal Jwt jwt) {
         return dashboards.findByOwnerIdOrSharedTrueOrderByCreatedAtAscIdAsc(userId(jwt)).stream().map(this::response).toList();
     }
 
+    @Operation(summary = "대시보드 하나를 조회한다")
     @GetMapping("/api/alm/dashboards/{id}")
     @Transactional(readOnly = true)
     public DashboardResponse get(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
@@ -59,6 +64,7 @@ public class DashboardController {
         return response(dashboard);
     }
 
+    @Operation(summary = "대시보드를 만든다")
     @PostMapping("/api/alm/dashboards")
     @ResponseStatus(HttpStatus.CREATED)
     public DashboardResponse create(@RequestBody DashboardRequest request, @AuthenticationPrincipal Jwt jwt) {
@@ -67,6 +73,7 @@ public class DashboardController {
         return response(saved);
     }
 
+    @Operation(summary = "대시보드 이름·공유 여부·가젯 배치를 수정한다")
     @PutMapping("/api/alm/dashboards/{id}")
     public DashboardResponse update(@PathVariable long id, @RequestBody DashboardRequest request, @AuthenticationPrincipal Jwt jwt) {
         Dashboard dashboard = requireOwned(id, userId(jwt));
@@ -77,6 +84,7 @@ public class DashboardController {
         return response(dashboard);
     }
 
+    @Operation(summary = "대시보드를 삭제한다")
     @DeleteMapping("/api/alm/dashboards/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {

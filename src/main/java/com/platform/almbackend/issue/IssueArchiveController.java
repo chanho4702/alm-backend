@@ -22,6 +22,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import static com.platform.almbackend.issue.IssueController.userId;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
  * 이슈 보관(지라 "보관된 업무 항목") — 보드·목록·검색에서 빠지고 프로젝트 보관함에서 복원한다.
@@ -30,11 +32,13 @@ import static com.platform.almbackend.issue.IssueController.userId;
 @RestController
 @RequiredArgsConstructor
 @Transactional
+@Tag(name = "Issue Archive", description = "이슈 보관과 보관함 복원")
 public class IssueArchiveController {
     private final IssueRepository issues;
     private final ProjectService projectService;
     private final EventRelay events;
 
+    @Operation(summary = "프로젝트 보관함의 이슈를 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues/archived")
     @Transactional(readOnly = true)
     public List<IssueResponse> archived(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
@@ -42,6 +46,7 @@ public class IssueArchiveController {
         return issues.findArchivedByProject(projectId).stream().map(IssueResponse::from).toList();
     }
 
+    @Operation(summary = "이슈를 보관함으로 옮긴다")
     @PostMapping("/api/alm/issues/{issueId}/archive")
     public IssueResponse archive(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         Issue issue = issues.findById(issueId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));
@@ -52,6 +57,7 @@ public class IssueArchiveController {
         return IssueResponse.from(issue);
     }
 
+    @Operation(summary = "보관된 이슈를 되돌린다")
     @PostMapping("/api/alm/issues/{issueId}/restore")
     public IssueResponse restore(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         Issue issue = issues.findArchivedById(issueId)
