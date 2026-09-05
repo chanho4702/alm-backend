@@ -69,8 +69,9 @@ public class SchemeQueries {
                     // 화면이 늘 아이콘 하나는 그릴 수 있게 여기서 폴백까지 끝낸다(레지스트리 응답은 원본을 준다)
                     StatusIcons.resolve(def == null ? null : def.getIcon(), kind)));
         }
+        // 필드 구성은 읽을 때 정규화되므로 원본을 그대로 넘긴다 — 여기서 미리 훑으면 이중 정규화다
         return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes(),
-                body.enabledPriorities(), body.defaultPriority(), body.fields());
+                body.enabledPriorities(), body.defaultPriority(), body.rawFields(), body.rawFieldsByType());
     }
 
     public String kindOf(String categoryId) {
@@ -154,26 +155,32 @@ public class SchemeQueries {
                     : s);
         }
         return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes(),
-                body.enabledPriorities(), body.defaultPriority(), body.fields());
+                body.enabledPriorities(), body.defaultPriority(), body.rawFields(), body.rawFieldsByType());
     }
 
-    /** 타입을 지우면 모든 본문의 활성 목록에서도 뺀다 */
+    /** 타입을 지우면 모든 본문의 활성 목록과 타입별 필드 덮어쓰기에서도 뺀다 */
     public void removeTypeEverywhere(String typeId) {
         for (SettingsScheme scheme : schemes.findAll()) {
             SettingsBody body = parse(scheme.getBody());
-            if (body.enabledTypes().contains(typeId)) scheme.replaceBody(serialize(withoutType(body, typeId)));
+            if (usesType(body, typeId)) scheme.replaceBody(serialize(withoutType(body, typeId)));
         }
         for (ProjectSettings ps : projectSettings.findAll()) {
             if (!ps.isCustom()) continue;
             SettingsBody body = parse(ps.getCustomBody());
-            if (body.enabledTypes().contains(typeId)) ps.customize(serialize(withoutType(body, typeId)));
+            if (usesType(body, typeId)) ps.customize(serialize(withoutType(body, typeId)));
         }
     }
 
+    private static boolean usesType(SettingsBody body, String typeId) {
+        return body.enabledTypes().contains(typeId) || body.rawFieldsByType().containsKey(typeId);
+    }
+
     private static SettingsBody withoutType(SettingsBody body, String typeId) {
+        Map<String, List<SettingsBody.FieldConfig>> byType = new LinkedHashMap<>(body.fieldsByType());
+        byType.remove(typeId);
         return new SettingsBody(body.statuses(), body.transitions(), body.layout(),
                 body.enabledTypes().stream().filter(t -> !t.equals(typeId)).toList(),
-                body.enabledPriorities(), body.defaultPriority(), body.fields());
+                body.enabledPriorities(), body.defaultPriority(), body.fields(), byType);
     }
 
     /** 우선순위를 지우면 모든 본문의 활성 목록에서 빼고, 기본이었다면 남은 첫 항목으로 */

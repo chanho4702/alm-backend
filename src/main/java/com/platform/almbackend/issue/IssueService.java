@@ -135,7 +135,7 @@ public class IssueService {
         String type = normalizeType(request.type() == null ? settings.defaultType(projectId) : request.type());
         settings.assertTypeEnabled(projectId, type);
         IssueDetailsRequest details = request.details();
-        assertRequiredFields(settings.body(projectId), request, details);
+        assertRequiredFields(settings.body(projectId), type, request, details);
         Long parentId = details == null ? null : details.parentId();
         validateParent(projectId, null, type, parentId);
         Long sprintId = details == null ? null : details.sprintId();
@@ -175,7 +175,8 @@ public class IssueService {
     }
 
     /**
-     * 프로젝트 필드 구성에서 필수로 지정된 필드는 생성 시 값이 있어야 한다. 수정(PUT)에서는 검사하지 않는다 —
+     * 요청의 이슈 타입으로 해석한 필드 구성에서 필수로 지정된 필드는 생성 시 값이 있어야 한다(CSV 가져오기도
+     * 같은 경로를 탄다). 수정(PUT)에서는 검사하지 않는다 —
      * 구성이 바뀌었다고 기존 이슈 편집을 막지 않기 위해서다. 우선순위는 기본값이 항상 있어 여기서 막지 않고,
      * 해결·상위 항목은 필수로 지정할 수 없다(스킴 저장에서 거부). 첨부·링크는 생성 이후에 붙는 값이라 검사 대상이 아니다.
      */
@@ -186,8 +187,9 @@ public class IssueService {
         return !text.isBlank();
     }
 
-    private static void assertRequiredFields(SettingsBody config, IssueCreateRequest request, IssueDetailsRequest details) {
-        Map<String, SettingsBody.FieldConfig> fields = config.fieldsById();
+    private static void assertRequiredFields(SettingsBody config, String typeId, IssueCreateRequest request,
+                                             IssueDetailsRequest details) {
+        Map<String, SettingsBody.FieldConfig> fields = config.fieldsById(typeId);
         requireField(fields, "description", hasText(request.description()));
         requireField(fields, "assignee", request.assigneeId() != null);
         requireField(fields, "labels", details != null && details.labels() != null && !details.labels().isEmpty());

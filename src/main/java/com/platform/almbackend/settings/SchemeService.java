@@ -275,10 +275,24 @@ public class SchemeService {
         validateFields(body);
     }
 
-    /** 필드 구성 — id는 13종 안에서 유일, 숨긴 필드·해결·상위 항목은 필수 불가 */
-    private static void validateFields(SettingsBody body) {
+    /**
+     * 필드 구성 — id는 13종 안에서 유일, 숨긴 필드·해결·상위 항목은 필수 불가. 타입별 덮어쓰기는
+     * 키가 레지스트리의 이슈 타입이어야 하고 목록은 기본 구성과 같은 규칙을 따른다.
+     */
+    private void validateFields(SettingsBody body) {
+        validateFieldList(body.rawFields());
+        for (Map.Entry<String, List<SettingsBody.FieldConfig>> entry : body.rawFieldsByType().entrySet()) {
+            String typeId = entry.getKey();
+            if (typeId == null || typeId.isBlank() || types.findById(typeId).isEmpty()) {
+                throw new IllegalArgumentException("없는 이슈 타입입니다: " + typeId);
+            }
+            validateFieldList(entry.getValue() == null ? List.of() : entry.getValue());
+        }
+    }
+
+    private static void validateFieldList(List<SettingsBody.FieldConfig> fields) {
         Set<String> seen = new HashSet<>();
-        for (SettingsBody.FieldConfig field : body.rawFields()) {
+        for (SettingsBody.FieldConfig field : fields) {
             String id = field == null ? null : field.id();
             if (id == null || id.isBlank()) throw new IllegalArgumentException("필드 id가 비어 있습니다");
             if (!SettingsBody.FIELD_IDS.contains(id)) {
@@ -346,7 +360,7 @@ public class SchemeService {
             if (valid.contains(e.getKey()) || "__any__".equals(e.getKey())) layout.put(e.getKey(), e.getValue());
         }
         return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes(),
-                body.enabledPriorities(), body.defaultPriority(), body.fields());
+                body.enabledPriorities(), body.defaultPriority(), body.fields(), body.fieldsByType());
     }
 
     /** 새 구성에 없는 상태의 이슈를 옮긴다 — 반드시 구성을 바꾸기 전에(옛 구성으로 의미를 읽는다) */
