@@ -128,6 +128,49 @@ class OpenApiDocsTest {
     }
 
     @Test
+    void 본문을_받는_오퍼레이션에는_모두_400이_붙는다() {
+        List<String> missing = new ArrayList<>();
+        List<String> spurious = new ArrayList<>();
+        for (Operation operation : operations()) {
+            boolean hasBody = operation.node().has("requestBody");
+            boolean has400 = operation.node().path("responses").has("400");
+            if (hasBody && !has400) missing.add(operation.id());
+            if (!hasBody && has400) spurious.add(operation.id());
+        }
+        assertThat(missing).as("본문을 받는데 400이 없다").isEmpty();
+        assertThat(spurious).as("본문이 없는데 400이 붙었다").isEmpty();
+    }
+
+    /**
+     * 503은 org-service 권한 판정이 있는 오퍼레이션에만 붙는다. 아래 목록은 org를 부르지 않는다고
+     * 코드로 확인해 {@code @NoOrgDependency}로 표시한 것들이다 — 표식이 늘거나 줄면 여기서 먼저 깨진다.
+     */
+    @Test
+    void org_권한을_타지_않는_오퍼레이션에만_503이_없다() {
+        List<String> without503 = new ArrayList<>();
+        for (Operation operation : operations()) {
+            if (!operation.node().path("responses").has("503")) without503.add(operation.id());
+        }
+        assertThat(without503).containsExactlyInAnyOrder(
+                // 대시보드 — 저장소만 쓴다
+                "get /api/alm/dashboards", "post /api/alm/dashboards",
+                "get /api/alm/dashboards/{id}", "put /api/alm/dashboards/{id}",
+                "delete /api/alm/dashboards/{id}",
+                // 개인 설정·공지 배너 읽기
+                "get /api/alm/me/preferences", "put /api/alm/me/preferences", "get /api/alm/banner",
+                // 내 알림 — 프로젝트 권한을 묻지 않는다
+                "get /api/alm/notifications", "post /api/alm/notifications/{id}/read",
+                "post /api/alm/notifications/read-all",
+                // 레지스트리·스킴 읽기 — 로그인이면 된다(쓰기는 전역 관리자라 org를 탄다)
+                "get /api/alm/settings/categories",
+                "get /api/alm/settings/statuses", "get /api/alm/settings/statuses/usage",
+                "get /api/alm/settings/link-types", "get /api/alm/settings/link-types/usage",
+                "get /api/alm/settings/priorities", "get /api/alm/settings/priorities/usage",
+                "get /api/alm/settings/issue-types", "get /api/alm/settings/issue-types/usage",
+                "get /api/alm/settings/schemes", "get /api/alm/settings/schemes/{id}/projects/count");
+    }
+
+    @Test
     void 낙관적_락_PUT에만_409가_붙는다() {
         List<String> with409 = new ArrayList<>();
         for (Operation operation : operations()) {

@@ -24,6 +24,7 @@ import java.util.List;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.almbackend.config.NoOrgDependency;
 
 /** 개인 설정 · 프로젝트 바로 가기 · 공지 배너 */
 @RestController
@@ -34,12 +35,14 @@ public class PersonalizationController {
     private final ProjectShortcutService shortcuts;
     private final SystemSettingService systemSettings;
 
+    @NoOrgDependency
     @Operation(summary = "내 개인 설정을 조회한다")
     @GetMapping("/api/alm/me/preferences")
     public PreferenceView myPreferences(@AuthenticationPrincipal Jwt jwt) {
         return preferences.view(userId(jwt), jwt.getClaimAsString("email"));
     }
 
+    @NoOrgDependency
     @Operation(summary = "내 개인 설정을 저장한다")
     @PutMapping("/api/alm/me/preferences")
     public PreferenceView savePreferences(@RequestBody PreferenceUpdate body, @AuthenticationPrincipal Jwt jwt) {
@@ -75,6 +78,7 @@ public class PersonalizationController {
     }
 
     /** 로그인한 누구나 본다 — 셸이 상단에 띄운다 */
+    @NoOrgDependency
     @Operation(summary = "상단 공지 배너를 조회한다")
     @GetMapping("/api/alm/banner")
     public Banner banner() {

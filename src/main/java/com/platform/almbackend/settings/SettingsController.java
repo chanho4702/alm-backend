@@ -33,6 +33,7 @@ import java.util.Map;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.almbackend.config.NoOrgDependency;
 
 /**
  * 설정 API. 읽기는 로그인이면 되고, 전역(레지스트리·스킴) 쓰기는 전역 관리자, 프로젝트 설정 쓰기는
@@ -45,6 +46,7 @@ public class SettingsController {
     private final SchemeService schemes;
 
     // ── 상태 카테고리 ──
+    @NoOrgDependency
     @Tag(name = "Status Categories")
     @Operation(summary = "상태 카테고리를 조회한다")
     @GetMapping("/api/alm/settings/categories")
@@ -78,11 +80,13 @@ public class SettingsController {
     public void deleteCategory(@PathVariable String id) { registry.deleteCategory(id); }
 
     // ── 상태 ──
+    @NoOrgDependency
     @Tag(name = "Statuses")
     @Operation(summary = "상태 목록을 조회한다")
     @GetMapping("/api/alm/settings/statuses")
     public List<StatusResponse> statuses() { return registry.statuses().stream().map(StatusResponse::from).toList(); }
 
+    @NoOrgDependency
     @Tag(name = "Statuses")
     @Operation(summary = "상태별로 쓰이는 이슈 수를 조회한다")
     @GetMapping("/api/alm/settings/statuses/usage")
@@ -109,11 +113,13 @@ public class SettingsController {
     public void deleteStatus(@PathVariable String id) { registry.deleteStatus(id); }
 
     // ── 이슈 타입 ──
+    @NoOrgDependency
     @Tag(name = "Link Types")
     @Operation(summary = "이슈 연결 타입을 조회한다")
     @GetMapping("/api/alm/settings/link-types")
     public List<LinkTypeResponse> linkTypes() { return registry.linkTypes().stream().map(LinkTypeResponse::from).toList(); }
 
+    @NoOrgDependency
     @Tag(name = "Link Types")
     @Operation(summary = "연결 타입별로 쓰이는 연결 수를 조회한다")
     @GetMapping("/api/alm/settings/link-types/usage")
@@ -146,11 +152,13 @@ public class SettingsController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteLinkType(@PathVariable String id) { registry.deleteLinkType(id); }
 
+    @NoOrgDependency
     @Tag(name = "Priorities")
     @Operation(summary = "우선순위 목록을 조회한다")
     @GetMapping("/api/alm/settings/priorities")
     public List<PriorityResponse> priorities() { return registry.priorities().stream().map(PriorityResponse::from).toList(); }
 
+    @NoOrgDependency
     @Tag(name = "Priorities")
     @Operation(summary = "우선순위별로 쓰이는 이슈 수를 조회한다")
     @GetMapping("/api/alm/settings/priorities/usage")
@@ -183,11 +191,13 @@ public class SettingsController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deletePriority(@PathVariable String id) { registry.deletePriority(id); }
 
+    @NoOrgDependency
     @Tag(name = "Issue Types")
     @Operation(summary = "이슈 타입 목록을 조회한다")
     @GetMapping("/api/alm/settings/issue-types")
     public List<IssueTypeResponse> issueTypes() { return registry.issueTypes().stream().map(IssueTypeResponse::from).toList(); }
 
+    @NoOrgDependency
     @Tag(name = "Issue Types")
     @Operation(summary = "이슈 타입별로 쓰이는 이슈 수를 조회한다")
     @GetMapping("/api/alm/settings/issue-types/usage")
@@ -224,11 +234,13 @@ public class SettingsController {
     public record SchemeCreateRequest(String name) {}
     public record SchemeUpdateRequest(String name, SettingsBody body) {}
 
+    @NoOrgDependency
     @Tag(name = "Settings Schemes")
     @Operation(summary = "설정 스킴 목록을 조회한다")
     @GetMapping("/api/alm/settings/schemes")
     public List<SchemeResponse> listSchemes() { return schemes.list(); }
 
+    @NoOrgDependency
     @Tag(name = "Settings Schemes")
     @Operation(summary = "이 스킴을 쓰는 프로젝트 수를 조회한다")
     @GetMapping("/api/alm/settings/schemes/{id}/projects/count")

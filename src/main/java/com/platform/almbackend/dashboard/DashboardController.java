@@ -29,6 +29,7 @@ import java.util.Map;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.almbackend.config.NoOrgDependency;
 
 /**
  * 대시보드(지라 Dashboards) — 내 것 + 공유된 것. 가젯 배치는 JSON 배열 그대로 저장하고 프론트가 해석한다.
@@ -38,6 +39,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @RequiredArgsConstructor
 @Transactional
 @Tag(name = "Dashboards", description = "대시보드와 가젯 배치")
+@NoOrgDependency
 public class DashboardController {
     private static final int MAX_GADGETS = 24;
 

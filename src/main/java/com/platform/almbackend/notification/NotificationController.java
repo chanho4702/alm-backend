@@ -19,6 +19,7 @@ import java.util.List;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.almbackend.config.NoOrgDependency;
 
 @RestController
 @RequiredArgsConstructor
@@ -27,12 +28,14 @@ public class NotificationController {
     private final NotificationService service;
 
     /** 내 알림 — 최신순 100건 */
+    @NoOrgDependency
     @Operation(summary = "내 알림을 최신순으로 조회한다")
     @GetMapping("/api/alm/notifications")
     public List<NotificationResponse> mine(@AuthenticationPrincipal Jwt jwt) {
         return service.mine(userId(jwt), jwt.getClaimAsString("email"));
     }
 
+    @NoOrgDependency
     @Operation(summary = "알림 하나를 읽음 처리한다")
     @PostMapping("/api/alm/notifications/{id}/read")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -40,6 +43,7 @@ public class NotificationController {
         service.markRead(userId(jwt), id);
     }
 
+    @NoOrgDependency
     @Operation(summary = "내 알림을 모두 읽음 처리한다")
     @PostMapping("/api/alm/notifications/read-all")
     @ResponseStatus(HttpStatus.NO_CONTENT)

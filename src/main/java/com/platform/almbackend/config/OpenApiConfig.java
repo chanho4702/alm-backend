@@ -23,7 +23,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.lang.reflect.RecordComponent;
 import java.util.List;
@@ -86,8 +88,14 @@ public class OpenApiConfig {
             if (hasPathVariable(handlerMethod)) {
                 addError(operation, "404", "대상을 찾을 수 없습니다");
             }
+            if (hasRequestBody(handlerMethod)) {
+                addError(operation, "400", "요청 검증 실패");
+            }
             if (isPut(handlerMethod) && hasOptimisticLock(handlerMethod)) {
                 addError(operation, "409", "다른 사용자가 먼저 수정했습니다 — 새로고침 후 다시 시도하세요");
+            }
+            if (dependsOnOrg(handlerMethod)) {
+                addError(operation, "503", "권한 서비스(org) 불능");
             }
             return operation;
         };
@@ -116,6 +124,29 @@ public class OpenApiConfig {
             if (parameter.hasParameterAnnotation(PathVariable.class)) return true;
         }
         return false;
+    }
+
+    /** 본문을 받으면 bean validation·역직렬화가 400을 낼 수 있다. 파일 업로드도 본문이다 */
+    private static boolean hasRequestBody(HandlerMethod handlerMethod) {
+        for (MethodParameter parameter : handlerMethod.getMethodParameters()) {
+            if (parameter.hasParameterAnnotation(RequestBody.class)) return true;
+            if (parameter.hasParameterAnnotation(RequestPart.class)) return true;
+            Class<?> type = parameter.getParameterType();
+            if (MultipartFile.class.isAssignableFrom(type)) return true;
+            if (type.isArray() && MultipartFile.class.isAssignableFrom(type.getComponentType())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * org-service gRPC로 권한을 판정하는 오퍼레이션인가 — 불능이면 {@code ServiceUnavailableException}이
+     * 503으로 올라간다({@code GrpcPermissionClient}는 UNAVAILABLE·DEADLINE_EXCEEDED만 그렇게 다루고
+     * 나머지는 fail-closed다). 프로젝트 권한이든 전역 관리자 판정이든 같은 클라이언트를 탄다.
+     * 부르지 않는 소수는 {@link NoOrgDependency}로 표시해 둔다.
+     */
+    private static boolean dependsOnOrg(HandlerMethod handlerMethod) {
+        return !AnnotatedElementUtils.hasAnnotation(handlerMethod.getMethod(), NoOrgDependency.class)
+                && !AnnotatedElementUtils.hasAnnotation(handlerMethod.getBeanType(), NoOrgDependency.class);
     }
 
     private static boolean isPut(HandlerMethod handlerMethod) {

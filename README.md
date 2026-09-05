@@ -195,10 +195,24 @@ POST /api/alm/sprints/{sprintId}/complete
   엔드포인트마다 `@Operation(summary)`, 뜻이 드러나지 않는 파라미터에 `@Parameter(description)`,
   주요 DTO 필드에 `@Schema(description, example)`. 한 컨트롤러가 여러 리소스를 담는 협업·설정은
   메서드마다 태그를 나눠 붙이고, 그 설명은 `config/OpenApiConfig`가 한 번에 준다.
-- **공통 오류.** `OperationCustomizer`가 401·403을 모든 오퍼레이션에, 404를 경로 변수가 있는 오퍼레이션에,
-  409를 `expectedVersion`을 받는 PUT에 붙인다. 스키마는 `{"error": "메시지"}`(`PlatformError`)로 common-starter의
-  오류 계약과 같다. springdoc은 기본값으로 예외 핸들러가 다루는 상태를 모든 오퍼레이션에 복사하므로
-  (GET에도 404·409가 달린다) `springdoc.override-with-generic-response: false`로 끈다 — wiki·org도 같다.
+- **공통 오류.** `OperationCustomizer`가 규칙대로 붙인다 — 세 서비스(wiki·alm·org)가 같은 규칙을 쓴다.
+  스키마는 `{"error": "메시지"}`(`PlatformError`)로 common-starter의 오류 계약과 같다.
+
+  | 상태 | 붙는 오퍼레이션 | 개수 |
+  |------|----------------|------|
+  | 401·403 | 전부 | 122 |
+  | 400 `요청 검증 실패` | 요청 본문(`@RequestBody`·`MultipartFile`)이 있는 것 | 47 |
+  | 404 | 경로 변수가 있는 것 | 92 |
+  | 409 | `expectedVersion`을 받는 PUT | 4 |
+  | 503 `권한 서비스(org) 불능` | org gRPC로 권한을 판정하는 것 | 100 |
+
+  503은 `GrpcPermissionClient`가 org 불능(UNAVAILABLE·DEADLINE_EXCEEDED)에서 던지는
+  `ServiceUnavailableException`이다. alm은 프로젝트 권한이든 전역 관리자 판정이든 같은 클라이언트를 타므로
+  503이 기본이고, org를 부르지 않는 22개(대시보드·개인 설정·배너 읽기·내 알림·레지스트리 읽기)만
+  `@NoOrgDependency`로 표시해 뺀다. 이 표식은 문서 전용이며 보안 통제가 아니다.
+
+  springdoc은 기본값으로 예외 핸들러가 다루는 상태를 모든 오퍼레이션에 복사하므로(GET에도 404·409가 달린다)
+  `springdoc.override-with-generic-response: false`로 끈다.
 - **게이트.** `OpenApiDocsTest`가 스펙 200·태그와 요약 누락 0건·내부 전용 경로 부재·전역 `bearerAuth`를 검증한다.
 
 ## 전역 관리자 판정 (2026-09-05)
