@@ -549,6 +549,21 @@ class SettingsControllerTest {
                                 "[]", "{\"bug\":[" + field("severity", true, false) + "]}") + "}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("없는 필드입니다: severity"));
+        // 빈 id — 기본 구성과 같은 문구를 타입별 목록에서도 낸다
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFieldsByType(
+                                "[]", "{\"bug\":[{\"visible\":true,\"required\":false}]}") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("필드 id가 비어 있습니다"));
+        // 검사는 목록의 요소 단위다 — 앞 요소의 위반이 뒤 요소의 빈 id보다 먼저 난다
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\":" + defaultBodyWithFieldsByType(
+                                "[]", "{\"bug\":[" + field("severity", true, false)
+                                        + ",{\"visible\":true,\"required\":false}]}") + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("없는 필드입니다: severity"));
         // 거부된 요청은 저장되지 않았다
         mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
                 .andExpect(jsonPath("$.body.fieldsByType").isEmpty());
