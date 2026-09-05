@@ -73,14 +73,14 @@ public class OpenApiConfig {
      * 코드가 실제로 내는 공통 오류만 붙인다. 401·403은 모든 경로에서 나고(인증 필수 + org-service 권한 판정),
      * 404는 경로 변수로 대상을 지목하는 경로에서, 409는 `expectedVersion`을 받는 PUT에서만 난다.
      *
-     * <p>springdoc은 {@code @RestControllerAdvice}(common-starter의 예외 핸들러)가 다루는 상태를
-     * <b>모든</b> 오퍼레이션에 자동으로 붙인다 — 그러면 GET에도 409가 달린다. 자동으로 붙은 오류 응답을
-     * 먼저 걷어내고 위 규칙만 다시 넣어, 문서에 실제로 날 수 있는 상태만 남긴다.
+     * <p>springdoc은 기본값으로 {@code @RestControllerAdvice}(common-starter의 예외 핸들러)가 다루는
+     * 상태를 <b>모든</b> 오퍼레이션에 복사한다 — 그러면 GET에도 404·409가 달린다.
+     * {@code springdoc.override-with-generic-response=false}(application.yml)로 그 복사를 끄고,
+     * 여기서 규칙대로만 붙인다. wiki·org 서비스도 같은 방식이다.
      */
     @Bean
     OperationCustomizer commonErrorResponses() {
         return (operation, handlerMethod) -> {
-            stripDerivedErrors(operation);
             addError(operation, "401", "인증 토큰이 없거나 유효하지 않습니다");
             addError(operation, "403", "이 작업을 수행할 권한이 없습니다");
             if (hasPathVariable(handlerMethod)) {
@@ -91,16 +91,6 @@ public class OpenApiConfig {
             }
             return operation;
         };
-    }
-
-    /** 예외 핸들러에서 유추된 4xx·5xx를 지운다 — 성공 응답(2xx·3xx)은 그대로 둔다 */
-    private static void stripDerivedErrors(Operation operation) {
-        if (operation.getResponses() == null) return;
-        List<String> errorCodes = operation.getResponses().keySet().stream()
-                .filter(code -> code.length() == 3 && code.chars().allMatch(Character::isDigit)
-                        && Integer.parseInt(code) >= 400)
-                .toList();
-        errorCodes.forEach(operation.getResponses()::remove);
     }
 
     private static void addError(Operation operation, String status, String description) {

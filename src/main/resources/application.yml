@@ -40,6 +40,11 @@ spring:
       mail.smtp.timeout: 10000
       mail.smtp.writetimeout: 10000
 
+# 예외 핸들러(common-starter)가 다루는 상태를 springdoc이 모든 오퍼레이션에 복사하지 않게 한다 —
+# 켜 두면 GET에도 404·409가 달린다. 공통 오류는 OpenApiConfig의 OperationCustomizer가 규칙대로 붙인다.
+springdoc:
+  override-with-generic-response: false
+
 eureka:
   client:
     service-url:

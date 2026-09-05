@@ -197,7 +197,8 @@ POST /api/alm/sprints/{sprintId}/complete
   메서드마다 태그를 나눠 붙이고, 그 설명은 `config/OpenApiConfig`가 한 번에 준다.
 - **공통 오류.** `OperationCustomizer`가 401·403을 모든 오퍼레이션에, 404를 경로 변수가 있는 오퍼레이션에,
   409를 `expectedVersion`을 받는 PUT에 붙인다. 스키마는 `{"error": "메시지"}`(`PlatformError`)로 common-starter의
-  오류 계약과 같다. 예외 핸들러에서 springdoc이 유추한 오류 응답은 걷어내고 이 규칙만 남긴다.
+  오류 계약과 같다. springdoc은 기본값으로 예외 핸들러가 다루는 상태를 모든 오퍼레이션에 복사하므로
+  (GET에도 404·409가 달린다) `springdoc.override-with-generic-response: false`로 끈다 — wiki·org도 같다.
 - **게이트.** `OpenApiDocsTest`가 스펙 200·태그와 요약 누락 0건·내부 전용 경로 부재·전역 `bearerAuth`를 검증한다.
 
 ## 전역 관리자 판정 (2026-09-05)
