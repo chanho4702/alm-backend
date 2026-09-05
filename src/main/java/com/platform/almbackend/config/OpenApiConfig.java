@@ -29,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.lang.reflect.RecordComponent;
 import java.util.List;
+import java.util.Map;
 
 /**
  * `GET /v3/api-docs`로 나가는 OpenAPI 3 스펙. Swagger UI는 싣지 않는다 — 문서는 myFront 생성기가
@@ -44,6 +45,18 @@ public class OpenApiConfig {
     static {
         SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthenticationPrincipal.class);
     }
+
+    /**
+     * 공통 오류 설명 — 세 서비스(wiki·alm·org)가 글자 그대로 공유한다(2026-09-05 팀 확정).
+     * 문서 페이지가 나란히 놓이므로 임의로 바꾸지 않는다. 바꾸면 {@code OpenApiDocsTest}가 먼저 깨진다.
+     */
+    static final Map<String, String> ERROR_DESCRIPTIONS = Map.of(
+            "400", "요청 검증 실패",
+            "401", "인증 실패 — 토큰 없음·만료·무효",
+            "403", "권한 없음",
+            "404", "대상 없음",
+            "409", "버전 충돌 — expectedVersion 불일치",
+            "503", "권한 서비스(org) 불능");
 
     private static final String BEARER_SCHEME = "bearerAuth";
     private static final String ERROR_SCHEMA = "PlatformError";
@@ -83,28 +96,28 @@ public class OpenApiConfig {
     @Bean
     OperationCustomizer commonErrorResponses() {
         return (operation, handlerMethod) -> {
-            addError(operation, "401", "인증 토큰이 없거나 유효하지 않습니다");
-            addError(operation, "403", "이 작업을 수행할 권한이 없습니다");
+            addError(operation, "401");
+            addError(operation, "403");
             if (hasPathVariable(handlerMethod)) {
-                addError(operation, "404", "대상을 찾을 수 없습니다");
+                addError(operation, "404");
             }
             if (hasRequestBody(handlerMethod)) {
-                addError(operation, "400", "요청 검증 실패");
+                addError(operation, "400");
             }
             if (isPut(handlerMethod) && hasOptimisticLock(handlerMethod)) {
-                addError(operation, "409", "다른 사용자가 먼저 수정했습니다 — 새로고침 후 다시 시도하세요");
+                addError(operation, "409");
             }
             if (dependsOnOrg(handlerMethod)) {
-                addError(operation, "503", "권한 서비스(org) 불능");
+                addError(operation, "503");
             }
             return operation;
         };
     }
 
-    private static void addError(Operation operation, String status, String description) {
+    private static void addError(Operation operation, String status) {
         if (operation.getResponses() == null) return;
         operation.getResponses().addApiResponse(status, new ApiResponse()
-                .description(description)
+                .description(ERROR_DESCRIPTIONS.get(status))
                 .content(new Content().addMediaType("application/json",
                         new MediaType().schema(new Schema<>().$ref(ERROR_REF)))));
     }

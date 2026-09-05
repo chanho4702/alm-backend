@@ -32,7 +32,18 @@ public record PermissionDecision(boolean allowed, String deniedReason) {
      * 호출측이 null일 때 자기 맥락에 맞는 문구를 쓴다("전역 관리자만 할 수 있습니다" 같은).
      */
     public String accountMessage() {
-        return switch (deniedReason) {
+        return accountMessage(deniedReason);
+    }
+
+    /**
+     * 계정 상태 → 사용자에게 할 말. org가 주는 {@code denied_reason}과
+     * {@code MemberInfo.status}가 같은 낱말을 쓰므로 문구도 한 곳에서 정한다
+     * ({@link com.platform.almbackend.security.AccountStatusInterceptor}가 상태 쪽에서 부른다).
+     * 모르는 값이면 null — 상태로 막힌 것이 아니라는 뜻이다.
+     */
+    public static String accountMessage(String status) {
+        if (status == null) return null;
+        return switch (status) {
             case PENDING -> "승인 대기 중인 계정입니다";
             case SUSPENDED -> "정지된 계정입니다";
             case DEACTIVATED -> "비활성된 계정입니다";

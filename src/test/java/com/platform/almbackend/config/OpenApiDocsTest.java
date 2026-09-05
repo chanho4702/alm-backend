@@ -142,6 +142,32 @@ class OpenApiDocsTest {
     }
 
     /**
+     * 공통 오류 문구는 세 서비스(wiki·alm·org)가 글자 그대로 공유한다 — 문서 페이지가 나란히 놓이므로
+     * 표기가 갈리면 안 된다. 상수와 실제로 나간 스펙 양쪽을 확인한다.
+     */
+    @Test
+    void 공통_오류_문구는_세_서비스_공통값과_같다() {
+        Map<String, String> expected = Map.of(
+                "400", "요청 검증 실패",
+                "401", "인증 실패 — 토큰 없음·만료·무효",
+                "403", "권한 없음",
+                "404", "대상 없음",
+                "409", "버전 충돌 — expectedVersion 불일치",
+                "503", "권한 서비스(org) 불능");
+        assertThat(OpenApiConfig.ERROR_DESCRIPTIONS).isEqualTo(expected);
+
+        for (Operation operation : operations()) {
+            expected.forEach((code, text) -> {
+                JsonNode response = operation.node().path("responses").path(code);
+                if (response.isMissingNode()) return;
+                assertThat(response.path("description").asText())
+                        .as("%s의 %s 문구", operation.id(), code)
+                        .isEqualTo(text);
+            });
+        }
+    }
+
+    /**
      * 503은 org-service 권한 판정이 있는 오퍼레이션에만 붙는다. 아래 목록은 org를 부르지 않는다고
      * 코드로 확인해 {@code @NoOrgDependency}로 표시한 것들이다 — 표식이 늘거나 줄면 여기서 먼저 깨진다.
      */

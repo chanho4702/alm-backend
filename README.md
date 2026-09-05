@@ -198,13 +198,21 @@ POST /api/alm/sprints/{sprintId}/complete
 - **공통 오류.** `OperationCustomizer`가 규칙대로 붙인다 — 세 서비스(wiki·alm·org)가 같은 규칙을 쓴다.
   스키마는 `{"error": "메시지"}`(`PlatformError`)로 common-starter의 오류 계약과 같다.
 
-  | 상태 | 붙는 오퍼레이션 | 개수 |
-  |------|----------------|------|
-  | 401·403 | 전부 | 122 |
-  | 400 `요청 검증 실패` | 요청 본문(`@RequestBody`·`MultipartFile`)이 있는 것 | 47 |
-  | 404 | 경로 변수가 있는 것 | 92 |
-  | 409 | `expectedVersion`을 받는 PUT | 4 |
-  | 503 `권한 서비스(org) 불능` | org gRPC로 권한을 판정하는 것 | 100 |
+  설명 문구는 세 서비스가 글자 그대로 공유한다(2026-09-05 확정) — `OpenApiConfig.ERROR_DESCRIPTIONS`에
+  모아 두었고 `OpenApiDocsTest`가 상수와 실제 스펙 양쪽을 검사한다.
+
+  | 상태 | 설명 문구 | 붙는 오퍼레이션 | 개수 |
+  |------|----------|----------------|------|
+  | 400 | 요청 검증 실패 | 요청 본문(`@RequestBody`·`MultipartFile`)이 있는 것 | 47 |
+  | 401 | 인증 실패 — 토큰 없음·만료·무효 | 전부 | 122 |
+  | 403 | 권한 없음 | 전부 | 122 |
+  | 404 | 대상 없음 | 경로 변수가 있는 것 | 92 |
+  | 409 | 버전 충돌 — expectedVersion 불일치 | `expectedVersion`을 받는 PUT | 4 |
+  | 503 | 권한 서비스(org) 불능 | org gRPC로 권한을 판정하는 것 | 100 |
+
+  **400은 본문을 받는 엔드포인트를 기준으로 붙인 것이지, 400이 날 수 있는 모든 경로를 빠짐없이 적은 목록이 아니다.**
+  읽는 사람이 본문을 잘못 보내 실제로 400을 만들 수 있는 자리를 표시한 것으로 읽어야 한다 — 예를 들어
+  잘못된 쿼리 파라미터 타입도 400이 되지만 문서에는 적지 않는다.
 
   503은 `GrpcPermissionClient`가 org 불능(UNAVAILABLE·DEADLINE_EXCEEDED)에서 던지는
   `ServiceUnavailableException`이다. alm은 프로젝트 권한이든 전역 관리자 판정이든 같은 클라이언트를 타므로

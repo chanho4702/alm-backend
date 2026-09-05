@@ -2,6 +2,7 @@ package com.platform.almbackend;
 
 import com.platform.almbackend.directory.DirectoryMember;
 import com.platform.almbackend.directory.MemberDirectory;
+import com.platform.almbackend.directory.MemberDirectory.Outcome;
 import com.platform.almbackend.event.EventPublisher;
 import com.platform.almbackend.permission.AccessScope;
 import com.platform.almbackend.permission.AlmAction;
@@ -157,29 +158,34 @@ public class TestConfig {
         private final Map<Long, DirectoryMember> members = new HashMap<>();
         private final List<Call> calls = Collections.synchronizedList(new ArrayList<>());
         private boolean unavailable;
+        private boolean failed;
 
         public void put(long id, String displayName, String email, String status) {
             members.put(id, new DirectoryMember(id, displayName, email, status, "HUMAN"));
         }
-        /** org 불능 — 조회는 빈 결과를 주고 호출측이 스냅샷으로 폴백해야 한다 */
+        /** org 불능 — 알림은 스냅샷으로 폴백하고, 계정 상태 게이트는 503을 낸다 */
         public void setUnavailable(boolean unavailable) { this.unavailable = unavailable; }
+        /** 가용성 장애가 아닌 조회 실패 — 게이트는 통과시켜야 한다(org 버그를 계정 정지로 말하지 않는다) */
+        public void setFailed(boolean failed) { this.failed = failed; }
         public List<Call> calls() { return List.copyOf(calls); }
         public void reset() {
             members.clear();
             calls.clear();
             unavailable = false;
+            failed = false;
         }
 
-        @Override public Map<Long, DirectoryMember> members(Collection<Long> ids) {
+        @Override public Lookup lookup(Collection<Long> ids) {
             calls.add(new Call(List.copyOf(ids),
                     TransactionSynchronizationManager.isActualTransactionActive()));
-            if (unavailable) return Map.of();
+            if (unavailable) return new Lookup(Outcome.UNAVAILABLE, Map.of());
+            if (failed) return new Lookup(Outcome.FAILED, Map.of());
             Map<Long, DirectoryMember> found = new HashMap<>();
             for (Long id : ids) {
                 DirectoryMember member = members.get(id);
                 if (member != null) found.put(id, member);
             }
-            return found;
+            return Lookup.ok(found);
         }
     }
 

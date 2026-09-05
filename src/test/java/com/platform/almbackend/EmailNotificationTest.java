@@ -285,7 +285,10 @@ class EmailNotificationTest {
         assignIssueToBob();
 
         verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+        // 알림함에는 남는다. 본인이 REST로 읽지는 못한다 — 비활성 계정은 계정 상태 게이트가 막는다
+        assertThat(notifications.count()).isEqualTo(1);
         mvc.perform(get("/api/alm/notifications").with(asUser(2, "Bob")))
-                .andExpect(jsonPath("$.length()").value(1));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("비활성된 계정입니다"));
     }
 }
