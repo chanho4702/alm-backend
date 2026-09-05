@@ -19,6 +19,7 @@ import java.util.List;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @RestController
 @RequiredArgsConstructor
@@ -30,7 +31,7 @@ public class AttachmentController {
     @PostMapping("/api/alm/issues/{issueId}/attachments")
     @ResponseStatus(HttpStatus.CREATED)
     public AttachmentResponse upload(
-            @PathVariable long issueId,
+            @Parameter(description = "이슈 ID") @PathVariable long issueId,
             @RequestParam("file") MultipartFile file,
             @AuthenticationPrincipal Jwt jwt) {
         return service.upload(userId(jwt), issueId, file);
@@ -38,14 +39,14 @@ public class AttachmentController {
 
     @Operation(summary = "이슈의 첨부 목록을 조회한다")
     @GetMapping("/api/alm/issues/{issueId}/attachments")
-    public List<AttachmentResponse> list(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public List<AttachmentResponse> list(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return service.list(userId(jwt), issueId);
     }
 
     /** Content-Disposition attachment 고정 — 브라우저 인라인 실행(XSS) 차단 */
     @Operation(summary = "첨부 파일을 내려받는다")
     @GetMapping("/api/alm/attachments/{id}")
-    public ResponseEntity<Resource> download(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public ResponseEntity<Resource> download(@Parameter(description = "첨부 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         AttachmentService.DownloadItem item = service.download(userId(jwt), id);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encode(item.meta().getFilename()))
@@ -58,7 +59,7 @@ public class AttachmentController {
     /** 안전한 래스터 이미지만 인라인으로 — 썸네일용 */
     @Operation(summary = "이미지 첨부를 인라인으로 조회한다")
     @GetMapping("/api/alm/attachments/{id}/inline")
-    public ResponseEntity<Resource> inline(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public ResponseEntity<Resource> inline(@Parameter(description = "첨부 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encode(item.meta().getFilename()))
@@ -73,7 +74,7 @@ public class AttachmentController {
     @Operation(summary = "첨부를 삭제한다")
     @DeleteMapping("/api/alm/attachments/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public void delete(@Parameter(description = "첨부 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         service.delete(userId(jwt), id);
     }
 

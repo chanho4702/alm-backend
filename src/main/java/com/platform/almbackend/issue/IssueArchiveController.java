@@ -24,6 +24,7 @@ import java.util.List;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 /**
  * 이슈 보관(지라 "보관된 업무 항목") — 보드·목록·검색에서 빠지고 프로젝트 보관함에서 복원한다.
@@ -41,14 +42,14 @@ public class IssueArchiveController {
     @Operation(summary = "프로젝트 보관함의 이슈를 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues/archived")
     @Transactional(readOnly = true)
-    public List<IssueResponse> archived(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public List<IssueResponse> archived(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         projectService.require(userId(jwt), projectId, AlmAction.VIEW);
         return issues.findArchivedByProject(projectId).stream().map(IssueResponse::from).toList();
     }
 
     @Operation(summary = "이슈를 보관함으로 옮긴다")
     @PostMapping("/api/alm/issues/{issueId}/archive")
-    public IssueResponse archive(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public IssueResponse archive(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         Issue issue = issues.findById(issueId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));
         long actorId = userId(jwt);
         projectService.require(actorId, issue.getProjectId(), AlmAction.EDIT);
@@ -59,7 +60,7 @@ public class IssueArchiveController {
 
     @Operation(summary = "보관된 이슈를 되돌린다")
     @PostMapping("/api/alm/issues/{issueId}/restore")
-    public IssueResponse restore(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public IssueResponse restore(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         Issue issue = issues.findArchivedById(issueId)
                 .orElseThrow(() -> new NotFoundException("보관함에 없는 이슈입니다"));
         long actorId = userId(jwt);

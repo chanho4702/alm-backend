@@ -30,6 +30,7 @@ import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.platform.almbackend.config.NoOrgDependency;
+import io.swagger.v3.oas.annotations.Parameter;
 
 /**
  * 대시보드(지라 Dashboards) — 내 것 + 공유된 것. 가젯 배치는 JSON 배열 그대로 저장하고 프론트가 해석한다.
@@ -60,7 +61,7 @@ public class DashboardController {
     @Operation(summary = "대시보드 하나를 조회한다")
     @GetMapping("/api/alm/dashboards/{id}")
     @Transactional(readOnly = true)
-    public DashboardResponse get(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public DashboardResponse get(@Parameter(description = "대시보드 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         Dashboard dashboard = require(id);
         if (!dashboard.isShared() && dashboard.getOwnerId() != userId(jwt)) throw new NotFoundException("대시보드를 찾을 수 없습니다");
         return response(dashboard);
@@ -77,7 +78,7 @@ public class DashboardController {
 
     @Operation(summary = "대시보드 이름·공유 여부·가젯 배치를 수정한다")
     @PutMapping("/api/alm/dashboards/{id}")
-    public DashboardResponse update(@PathVariable long id, @RequestBody DashboardRequest request, @AuthenticationPrincipal Jwt jwt) {
+    public DashboardResponse update(@Parameter(description = "대시보드 ID") @PathVariable long id, @RequestBody DashboardRequest request, @AuthenticationPrincipal Jwt jwt) {
         Dashboard dashboard = requireOwned(id, userId(jwt));
         Instant at = now();
         if (request.name() != null) dashboard.rename(requireName(request.name()), at);
@@ -89,7 +90,7 @@ public class DashboardController {
     @Operation(summary = "대시보드를 삭제한다")
     @DeleteMapping("/api/alm/dashboards/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public void delete(@Parameter(description = "대시보드 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         dashboards.delete(requireOwned(id, userId(jwt)));
     }
 

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @RestController
 @RequiredArgsConstructor
@@ -26,7 +27,7 @@ public class IssueController {
 
     @Operation(summary = "프로젝트의 이슈 목록을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues")
-    public List<IssueResponse> list(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public List<IssueResponse> list(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return issues.list(userId(jwt), projectId);
     }
 
@@ -34,7 +35,7 @@ public class IssueController {
     @PostMapping("/api/alm/projects/{projectId}/issues")
     @ResponseStatus(HttpStatus.CREATED)
     public IssueResponse create(
-            @PathVariable long projectId,
+            @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Valid @RequestBody IssueCreateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.create(userId(jwt), projectId, request);
@@ -44,7 +45,7 @@ public class IssueController {
     @Operation(summary = "이슈를 일괄로 가져온다 — 항목별 성공·실패를 함께 돌려준다")
     @PostMapping("/api/alm/projects/{projectId}/issues/import")
     public IssueImportResponse importIssues(
-            @PathVariable long projectId,
+            @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Valid @RequestBody IssueImportRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.importIssues(userId(jwt), projectId, request);
@@ -52,14 +53,14 @@ public class IssueController {
 
     @Operation(summary = "이슈 하나를 조회한다")
     @GetMapping("/api/alm/issues/{issueId}")
-    public IssueResponse get(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public IssueResponse get(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return issues.get(userId(jwt), issueId);
     }
 
     @Operation(summary = "이슈를 수정한다 — expectedVersion이 어긋나면 409")
     @PutMapping("/api/alm/issues/{issueId}")
     public IssueResponse update(
-            @PathVariable long issueId,
+            @Parameter(description = "이슈 ID") @PathVariable long issueId,
             @Valid @RequestBody IssueUpdateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.update(userId(jwt), issueId, request);
@@ -68,7 +69,7 @@ public class IssueController {
     @Operation(summary = "이슈를 다른 보드 컬럼(상태)으로 옮긴다")
     @PostMapping("/api/alm/issues/{issueId}/move")
     public IssueResponse move(
-            @PathVariable long issueId,
+            @Parameter(description = "이슈 ID") @PathVariable long issueId,
             @Valid @RequestBody IssueMoveRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.move(userId(jwt), issueId, request);
@@ -77,7 +78,7 @@ public class IssueController {
     @Operation(summary = "백로그·스프린트 안에서 이슈 순서를 바꾼다")
     @PostMapping("/api/alm/issues/{issueId}/rank")
     public IssueResponse rank(
-            @PathVariable long issueId,
+            @Parameter(description = "이슈 ID") @PathVariable long issueId,
             @Valid @RequestBody(required = false) IssueRankRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.rank(userId(jwt), issueId, request);
@@ -86,7 +87,7 @@ public class IssueController {
     @Operation(summary = "이슈를 삭제한다")
     @DeleteMapping("/api/alm/issues/{issueId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public void delete(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         issues.delete(userId(jwt), issueId);
     }
 

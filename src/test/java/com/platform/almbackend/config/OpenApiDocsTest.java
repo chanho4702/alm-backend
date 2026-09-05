@@ -156,8 +156,10 @@ class OpenApiDocsTest {
                 "503", "권한 서비스(org) 불능");
         assertThat(OpenApiConfig.ERROR_DESCRIPTIONS).isEqualTo(expected);
 
+        // 409만 예외다 — 사유가 엔드포인트마다 달라 _409_사유는_실제_예외_메시지와_같다가 따로 본다
         for (Operation operation : operations()) {
             expected.forEach((code, text) -> {
+                if (code.equals("409")) return;
                 JsonNode response = operation.node().path("responses").path(code);
                 if (response.isMissingNode()) return;
                 assertThat(response.path("description").asText())
@@ -196,17 +198,65 @@ class OpenApiDocsTest {
                 "get /api/alm/settings/schemes", "get /api/alm/settings/schemes/{id}/projects/count");
     }
 
+    /**
+     * {@code ConflictException}을 던지는 서비스 코드 전수와 그것이 나가는 엔드포인트.
+     * {@code grep -rn "new ConflictException(" src/main/java} 결과와 1:1로 맞춘다(2026-09-05 기준 14곳).
+     * 새 충돌을 만들면 여기 한 줄을 넣어야 하고, 그 엔드포인트가 409를 문서화하지 않으면 테스트가 깨진다.
+     * 소스를 스캔하지 않고 목록을 고정하는 이유는, 스캔이 조용히 0건을 세도 초록으로 보이기 때문이다.
+     */
+    private static final Map<String, String> CONFLICT_SITES = Map.ofEntries(
+            Map.entry("IssueService:217 낙관적 락", "put /api/alm/issues/{issueId}"),
+            Map.entry("ProjectService:68 프로젝트 키 중복", "post /api/alm/projects"),
+            Map.entry("ProjectService:86 낙관적 락", "put /api/alm/projects/{projectId}"),
+            Map.entry("SprintService:83 낙관적 락", "put /api/alm/sprints/{sprintId}"),
+            Map.entry("SprintService:101 계획 상태 아님", "post /api/alm/sprints/{sprintId}/start"),
+            Map.entry("SprintService:104 진행 중 스프린트 존재", "post /api/alm/sprints/{sprintId}/start"),
+            Map.entry("SprintService:110 진행 중 스프린트 존재(DB 유니크)", "post /api/alm/sprints/{sprintId}/start"),
+            Map.entry("SprintService:126 진행 중 아님", "post /api/alm/sprints/{sprintId}/complete"),
+            Map.entry("VersionService:53 버전 이름 중복(생성)", "post /api/alm/projects/{projectId}/versions"),
+            Map.entry("VersionService:65 낙관적 락", "put /api/alm/versions/{versionId}"),
+            Map.entry("VersionService:70 버전 이름 중복(수정)", "put /api/alm/versions/{versionId}"),
+            Map.entry("VersionService:82 이미 릴리스됨", "post /api/alm/versions/{versionId}/release"),
+            Map.entry("VersionService:85 보관된 버전", "post /api/alm/versions/{versionId}/release"),
+            Map.entry("VersionService:123 이미 보관됨", "post /api/alm/versions/{versionId}/archive"));
+
+    /** 엔드포인트별 409 사유 — 서비스가 던지는 메시지와 같게 적는다. 둘 이상이면 " / "로 잇는다. */
+    private static final Map<String, String> EXPECTED_409 = Map.of(
+            "put /api/alm/issues/{issueId}", "버전 충돌 — expectedVersion 불일치",
+            "put /api/alm/projects/{projectId}", "버전 충돌 — expectedVersion 불일치",
+            "put /api/alm/sprints/{sprintId}", "버전 충돌 — expectedVersion 불일치",
+            "put /api/alm/versions/{versionId}", "버전 충돌 — expectedVersion 불일치 / 이미 있는 버전 이름입니다",
+            "post /api/alm/projects", "이미 존재하는 프로젝트 키입니다",
+            "post /api/alm/sprints/{sprintId}/start",
+            "계획 상태의 스프린트만 시작할 수 있습니다 / 이미 진행 중인 스프린트가 있습니다",
+            "post /api/alm/sprints/{sprintId}/complete", "진행 중인 스프린트만 완료할 수 있습니다",
+            "post /api/alm/projects/{projectId}/versions", "이미 있는 버전 이름입니다",
+            "post /api/alm/versions/{versionId}/release", "이미 릴리스된 버전입니다 / 보관된 버전은 릴리스할 수 없습니다",
+            "post /api/alm/versions/{versionId}/archive", "이미 보관된 버전입니다");
+
     @Test
-    void 낙관적_락_PUT에만_409가_붙는다() {
-        List<String> with409 = new ArrayList<>();
+    void ConflictException을_던지는_엔드포인트는_전부_409를_문서화한다() {
+        Set<String> documented = new HashSet<>();
         for (Operation operation : operations()) {
-            if (operation.node().path("responses").has("409")) with409.add(operation.method() + " " + operation.path());
+            if (operation.node().path("responses").has("409")) documented.add(operation.id());
         }
-        assertThat(with409).containsExactlyInAnyOrder(
-                "put /api/alm/projects/{projectId}",
-                "put /api/alm/issues/{issueId}",
-                "put /api/alm/sprints/{sprintId}",
-                "put /api/alm/versions/{versionId}");
+        assertThat(documented)
+                .as("409를 내는 엔드포인트와 문서가 어긋난다")
+                .isEqualTo(new HashSet<>(CONFLICT_SITES.values()));
+        assertThat(EXPECTED_409.keySet())
+                .as("사유 표와 예외 사이트 표가 어긋난다")
+                .isEqualTo(new HashSet<>(CONFLICT_SITES.values()));
+    }
+
+    @Test
+    void _409_사유는_실제_예외_메시지와_같다() {
+        for (Operation operation : operations()) {
+            JsonNode response = operation.node().path("responses").path("409");
+            if (response.isMissingNode()) continue;
+            assertThat(response.path("description").asText())
+                    .as("%s의 409 사유", operation.id())
+                    .isEqualTo(EXPECTED_409.get(operation.id()));
+        }
     }
 
     @Test

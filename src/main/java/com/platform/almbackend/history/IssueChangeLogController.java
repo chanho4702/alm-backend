@@ -31,7 +31,7 @@ public class IssueChangeLogController {
     @Operation(summary = "프로젝트의 이슈 변경 이력을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/changes")
     public List<IssueChangeResponse> changes(
-            @PathVariable long projectId,
+            @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Parameter(description = "바뀐 필드로 거른다(상태·담당자 등)") @RequestParam(required = false) ChangeField field,
             @Parameter(description = "해당 스프린트에 속한 이슈만 본다") @RequestParam(required = false) Long sprintId,
             @Parameter(description = "이 시각 이후 변경만 본다. ISO-8601 인스턴트(예: 2026-08-01T00:00:00Z)")

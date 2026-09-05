@@ -20,6 +20,7 @@ import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.platform.almbackend.config.NoOrgDependency;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @RestController
 @RequiredArgsConstructor
@@ -39,7 +40,7 @@ public class NotificationController {
     @Operation(summary = "알림 하나를 읽음 처리한다")
     @PostMapping("/api/alm/notifications/{id}/read")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void markRead(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public void markRead(@Parameter(description = "알림 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         service.markRead(userId(jwt), id);
     }
 
@@ -53,20 +54,20 @@ public class NotificationController {
 
     @Operation(summary = "이슈의 관심 등록자를 조회한다")
     @GetMapping("/api/alm/issues/{issueId}/watchers")
-    public WatchersResponse watchers(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public WatchersResponse watchers(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return service.watchers(userId(jwt), issueId);
     }
 
     /** 관심 등록 — 멱등 */
     @Operation(summary = "이슈를 관심 등록한다")
     @PutMapping("/api/alm/issues/{issueId}/watchers/me")
-    public WatchersResponse watch(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public WatchersResponse watch(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return service.watch(userId(jwt), issueId);
     }
 
     @Operation(summary = "이슈 관심 등록을 해제한다")
     @DeleteMapping("/api/alm/issues/{issueId}/watchers/me")
-    public WatchersResponse unwatch(@PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+    public WatchersResponse unwatch(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
         return service.unwatch(userId(jwt), issueId);
     }
 }

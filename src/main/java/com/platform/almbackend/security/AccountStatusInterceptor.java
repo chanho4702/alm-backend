@@ -81,6 +81,10 @@ public class AccountStatusInterceptor implements HandlerInterceptor {
     /** org가 아는 상태. 그런 사람이 없으면 empty(통과), 못 물어봤으면 던진다(503) */
     private Optional<String> status(long userId) {
         MemberDirectory.Lookup lookup = directory.lookup(List.of(userId));
+        if (lookup.outcome() == MemberDirectory.Outcome.UNAVAILABLE) {
+            // 콜드 스타트·순간 끊김 한 번은 흡수한다 — 모든 ALM 요청 앞에 서는 게이트라 첫 요청이 503으로 죽으면 화면 전체가 막힌다
+            lookup = directory.lookup(List.of(userId));
+        }
         switch (lookup.outcome()) {
             case UNAVAILABLE -> throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
             case FAILED -> {

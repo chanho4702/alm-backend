@@ -80,7 +80,7 @@ public class OpenApiConfig {
                                 .type(SecurityScheme.Type.HTTP)
                                 .scheme("bearer")
                                 .bearerFormat("JWT")
-                                .description("개인 API 토큰 chanho_pat_… 또는 세션 JWT"))
+                                .description("개인 API 토큰 `chanho_pat_…` 또는 세션 JWT"))
                         .addSchemas(ERROR_SCHEMA, errorSchema()));
     }
 
@@ -104,8 +104,9 @@ public class OpenApiConfig {
             if (hasRequestBody(handlerMethod)) {
                 addError(operation, "400");
             }
-            if (isPut(handlerMethod) && hasOptimisticLock(handlerMethod)) {
-                addError(operation, "409");
+            String conflict = conflictReason(handlerMethod);
+            if (conflict != null) {
+                addError(operation, "409", conflict);
             }
             if (dependsOnOrg(handlerMethod)) {
                 addError(operation, "503");
@@ -114,10 +115,28 @@ public class OpenApiConfig {
         };
     }
 
+    /**
+     * 409 사유. 낙관적 락(요청 본문의 {@code expectedVersion})은 자동 판별하고, 그 밖의 업무 충돌은
+     * {@link ConflictResponse}가 사유를 준다. 둘 다인 엔드포인트는 두 사유를 이어 붙인다.
+     * 어느 쪽도 아니면 409를 내지 않는 엔드포인트이므로 null이다.
+     */
+    private static String conflictReason(HandlerMethod handlerMethod) {
+        String lock = isPut(handlerMethod) && hasOptimisticLock(handlerMethod)
+                ? ERROR_DESCRIPTIONS.get("409")
+                : null;
+        ConflictResponse business = handlerMethod.getMethodAnnotation(ConflictResponse.class);
+        if (lock == null) return business == null ? null : business.value();
+        return business == null ? lock : lock + " / " + business.value();
+    }
+
     private static void addError(Operation operation, String status) {
+        addError(operation, status, ERROR_DESCRIPTIONS.get(status));
+    }
+
+    private static void addError(Operation operation, String status, String description) {
         if (operation.getResponses() == null) return;
         operation.getResponses().addApiResponse(status, new ApiResponse()
-                .description(ERROR_DESCRIPTIONS.get(status))
+                .description(description)
                 .content(new Content().addMediaType("application/json",
                         new MediaType().schema(new Schema<>().$ref(ERROR_REF)))));
     }

@@ -43,19 +43,30 @@ public class SecurityConfig {
     ManagedChannel orgChannel(
             @Value("${platform.org-grpc.host}") String host,
             @Value("${platform.org-grpc.port}") int port) {
-        return ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
+        // 콜드 스타트 방지: 첫 요청이 이름 해석·연결 수립에 1초 넘게 걸려 DEADLINE_EXCEEDED(→503)가 나던 것을
+        // 시작 시 연결을 선점(getState(true))하고 keepalive로 유휴 끊김을 막아 없앤다(2026-09-05 실측).
+        ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port)
+                .usePlaintext()
+                .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
+                .keepAliveWithoutCalls(true)
+                .build();
+        channel.getState(true);
+        return channel;
     }
 
     @Bean
     @ConditionalOnMissingBean(PermissionClient.class)
-    PermissionClient permissionClient(@Qualifier("orgChannel") ManagedChannel channel) {
-        return new GrpcPermissionClient(PermissionServiceGrpc.newBlockingStub(channel));
+    PermissionClient permissionClient(@Qualifier("orgChannel") ManagedChannel channel,
+                                      @Value("${platform.org-grpc.deadline-seconds:5}") long deadlineSeconds) {
+        // waitForReady: 연결이 아직 없으면 데드라인 안에서 기다린다(콜드 스타트에 즉시 UNAVAILABLE로 떨어지지 않게)
+        return new GrpcPermissionClient(PermissionServiceGrpc.newBlockingStub(channel).withWaitForReady(), deadlineSeconds);
     }
 
     /** 사람의 이름·이메일도 org-service가 원장이다 — 권한과 같은 채널을 쓴다 */
     @Bean
     @ConditionalOnMissingBean(MemberDirectory.class)
-    MemberDirectory memberDirectory(@Qualifier("orgChannel") ManagedChannel channel) {
-        return new GrpcMemberDirectory(PermissionServiceGrpc.newBlockingStub(channel));
+    MemberDirectory memberDirectory(@Qualifier("orgChannel") ManagedChannel channel,
+                                    @Value("${platform.org-grpc.deadline-seconds:5}") long deadlineSeconds) {
+        return new GrpcMemberDirectory(PermissionServiceGrpc.newBlockingStub(channel).withWaitForReady(), deadlineSeconds);
     }
 }

@@ -32,8 +32,15 @@ public class GrpcMemberDirectory implements MemberDirectory {
 
     private final PermissionServiceGrpc.PermissionServiceBlockingStub stub;
 
+    private final long deadlineSeconds;
+
     public GrpcMemberDirectory(PermissionServiceGrpc.PermissionServiceBlockingStub stub) {
+        this(stub, 2);
+    }
+
+    public GrpcMemberDirectory(PermissionServiceGrpc.PermissionServiceBlockingStub stub, long deadlineSeconds) {
         this.stub = stub;
+        this.deadlineSeconds = deadlineSeconds;
     }
 
     @Override
@@ -45,7 +52,7 @@ public class GrpcMemberDirectory implements MemberDirectory {
         for (int from = 0; from < unique.size(); from += MAX_IDS) {
             List<Long> chunk = unique.subList(from, Math.min(from + MAX_IDS, unique.size()));
             try {
-                GetMembersResponse response = stub.withDeadlineAfter(2, TimeUnit.SECONDS)
+                GetMembersResponse response = stub.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS)
                         .getMembers(GetMembersRequest.newBuilder().addAllIds(chunk).build());
                 for (MemberInfo info : response.getMembersList()) {
                     found.put(info.getId(), toMember(info));

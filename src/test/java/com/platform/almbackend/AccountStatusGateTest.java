@@ -145,6 +145,7 @@ class AccountStatusGateTest {
         mvc.perform(get(OPEN_READ).with(asUser(19, "Alice")))
                 .andExpect(status().isOk());
 
-        assertThat(directory.calls()).hasSize(2);
+        // 불능 시 게이트가 한 번 재시도한다(콜드 스타트 흡수) → 실패 2회 + 복구 후 1회
+        assertThat(directory.calls()).hasSize(3);
     }
 }

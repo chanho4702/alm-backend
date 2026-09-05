@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.almbackend.config.ConflictResponse;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @RestController
 @RequestMapping("/api/alm/projects")
@@ -29,10 +31,11 @@ public class ProjectController {
 
     @Operation(summary = "프로젝트 하나를 조회한다")
     @GetMapping("/{projectId}")
-    public ProjectResponse get(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public ProjectResponse get(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return projects.get(userId(jwt), projectId);
     }
 
+    @ConflictResponse("이미 존재하는 프로젝트 키입니다")
     @Operation(summary = "프로젝트를 만든다 — 키는 만든 뒤 바꿀 수 없다")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -45,7 +48,7 @@ public class ProjectController {
     @Operation(summary = "프로젝트를 수정한다 — expectedVersion이 어긋나면 409")
     @PutMapping("/{projectId}")
     public ProjectResponse update(
-            @PathVariable long projectId,
+            @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Valid @RequestBody ProjectUpdateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return projects.update(userId(jwt), projectId, request);
@@ -59,33 +62,33 @@ public class ProjectController {
 
     @Operation(summary = "프로젝트를 보관한다")
     @PostMapping("/{projectId}/archive")
-    public ProjectResponse archive(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public ProjectResponse archive(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return projects.archive(userId(jwt), projectId);
     }
 
     @Operation(summary = "프로젝트 보관을 해제한다")
     @PostMapping("/{projectId}/unarchive")
-    public ProjectResponse unarchive(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public ProjectResponse unarchive(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return projects.unarchive(userId(jwt), projectId);
     }
 
     @Operation(summary = "휴지통의 프로젝트를 되돌린다")
     @PostMapping("/{projectId}/restore")
-    public ProjectResponse restore(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public ProjectResponse restore(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return projects.restoreFromTrash(userId(jwt), projectId);
     }
 
     @Operation(summary = "휴지통의 프로젝트를 영구 삭제한다")
     @DeleteMapping("/{projectId}/permanent")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void purge(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public void purge(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         projects.purge(userId(jwt), projectId);
     }
 
     @Operation(summary = "프로젝트를 휴지통으로 옮긴다")
     @DeleteMapping("/{projectId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public void delete(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         projects.delete(userId(jwt), projectId);
     }
 

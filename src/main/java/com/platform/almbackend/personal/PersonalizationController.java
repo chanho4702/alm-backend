@@ -25,6 +25,7 @@ import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.platform.almbackend.config.NoOrgDependency;
+import io.swagger.v3.oas.annotations.Parameter;
 
 /** 개인 설정 · 프로젝트 바로 가기 · 공지 배너 */
 @RestController
@@ -51,21 +52,21 @@ public class PersonalizationController {
 
     @Operation(summary = "프로젝트 바로 가기를 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/shortcuts")
-    public List<ShortcutResponse> listShortcuts(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public List<ShortcutResponse> listShortcuts(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return shortcuts.list(userId(jwt), projectId);
     }
 
     @Operation(summary = "프로젝트에 바로 가기를 만든다")
     @PostMapping("/api/alm/projects/{projectId}/shortcuts")
     @ResponseStatus(HttpStatus.CREATED)
-    public ShortcutResponse createShortcut(@PathVariable long projectId, @RequestBody ShortcutRequest request,
+    public ShortcutResponse createShortcut(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @RequestBody ShortcutRequest request,
                                            @AuthenticationPrincipal Jwt jwt) {
         return shortcuts.create(userId(jwt), projectId, request);
     }
 
     @Operation(summary = "바로 가기를 수정한다")
     @PutMapping("/api/alm/shortcuts/{id}")
-    public ShortcutResponse updateShortcut(@PathVariable long id, @RequestBody ShortcutRequest request,
+    public ShortcutResponse updateShortcut(@Parameter(description = "바로 가기 ID") @PathVariable long id, @RequestBody ShortcutRequest request,
                                            @AuthenticationPrincipal Jwt jwt) {
         return shortcuts.update(userId(jwt), id, request);
     }
@@ -73,7 +74,7 @@ public class PersonalizationController {
     @Operation(summary = "바로 가기를 삭제한다")
     @DeleteMapping("/api/alm/shortcuts/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteShortcut(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+    public void deleteShortcut(@Parameter(description = "바로 가기 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         shortcuts.delete(userId(jwt), id);
     }
 

@@ -28,8 +28,15 @@ public class GrpcPermissionClient implements PermissionClient {
             .maximumSize(10_000)
             .build();
 
+    private final long deadlineSeconds;
+
     public GrpcPermissionClient(PermissionServiceGrpc.PermissionServiceBlockingStub stub) {
+        this(stub, 2);
+    }
+
+    public GrpcPermissionClient(PermissionServiceGrpc.PermissionServiceBlockingStub stub, long deadlineSeconds) {
         this.stub = stub;
+        this.deadlineSeconds = deadlineSeconds;
     }
 
     @Override
@@ -128,7 +135,7 @@ public class GrpcPermissionClient implements PermissionClient {
     }
 
     private PermissionServiceGrpc.PermissionServiceBlockingStub deadline() {
-        return stub.withDeadlineAfter(2, TimeUnit.SECONDS);
+        return stub.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS);
     }
 
     private static Long parseId(String raw) {

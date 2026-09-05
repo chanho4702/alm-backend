@@ -16,6 +16,8 @@ import java.util.List;
 import static com.platform.almbackend.issue.IssueController.userId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.platform.almbackend.config.ConflictResponse;
+import io.swagger.v3.oas.annotations.Parameter;
 
 @RestController
 @RequiredArgsConstructor
@@ -25,48 +27,52 @@ public class VersionController {
 
     @Operation(summary = "프로젝트의 버전을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/versions")
-    public List<VersionResponse> list(@PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
+    public List<VersionResponse> list(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         return versions.list(userId(jwt), projectId);
     }
 
+    @ConflictResponse("이미 있는 버전 이름입니다")
     @Operation(summary = "버전을 만든다")
     @PostMapping("/api/alm/projects/{projectId}/versions")
     @ResponseStatus(HttpStatus.CREATED)
     public VersionResponse create(
-            @PathVariable long projectId,
+            @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Valid @RequestBody VersionCreateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return versions.create(userId(jwt), projectId, request);
     }
 
+    @ConflictResponse("이미 있는 버전 이름입니다")
     @Operation(summary = "버전을 수정한다 — expectedVersion이 어긋나면 409")
     @PutMapping("/api/alm/versions/{versionId}")
     public VersionResponse update(
-            @PathVariable long versionId,
+            @Parameter(description = "버전 ID") @PathVariable long versionId,
             @Valid @RequestBody VersionUpdateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return versions.update(userId(jwt), versionId, request);
     }
 
+    @ConflictResponse("이미 릴리스된 버전입니다 / 보관된 버전은 릴리스할 수 없습니다")
     @Operation(summary = "버전을 릴리스로 표시하고 미완료 이슈를 옮긴다")
     @PostMapping("/api/alm/versions/{versionId}/release")
     public VersionResponse release(
-            @PathVariable long versionId,
+            @Parameter(description = "버전 ID") @PathVariable long versionId,
             @Valid @RequestBody(required = false) VersionReleaseRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return versions.release(userId(jwt), versionId, request);
     }
 
+    @ConflictResponse("이미 보관된 버전입니다")
     @Operation(summary = "버전을 보관한다")
     @PostMapping("/api/alm/versions/{versionId}/archive")
-    public VersionResponse archive(@PathVariable long versionId, @AuthenticationPrincipal Jwt jwt) {
+    public VersionResponse archive(@Parameter(description = "버전 ID") @PathVariable long versionId, @AuthenticationPrincipal Jwt jwt) {
         return versions.archive(userId(jwt), versionId);
     }
 
     @Operation(summary = "버전을 삭제한다")
     @DeleteMapping("/api/alm/versions/{versionId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long versionId, @AuthenticationPrincipal Jwt jwt) {
+    public void delete(@Parameter(description = "버전 ID") @PathVariable long versionId, @AuthenticationPrincipal Jwt jwt) {
         versions.delete(userId(jwt), versionId);
     }
 }
