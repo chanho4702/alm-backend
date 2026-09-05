@@ -1,5 +1,7 @@
 package com.platform.almbackend.notification;
 
+import com.platform.almbackend.directory.DirectoryMember;
+import com.platform.almbackend.directory.MemberDirectory;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.Notification;
 import com.platform.almbackend.personal.PreferenceService;
@@ -16,8 +18,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -31,6 +37,12 @@ import java.util.concurrent.Executors;
  * 발송은 **커밋 뒤, 다른 스레드**에서 한다. 저장 트랜잭션 안에서 SMTP를 기다리면 이슈를 고친 사람의
  * 저장이 메일 서버 속도에 묶이고, 롤백된 저장의 메일이 먼저 나가 버린다. 실패는 warn 로그로만 남긴다 —
  * 메일은 알림함의 사본이지 원본이 아니다.
+ *
+ * <p>수신 주소를 org-service에서 읽는 gRPC 호출도 같은 이유로 커밋 뒤에 한다(2026-09-05). 트랜잭션 안에서
+ * 부르면 DB 커넥션을 쥔 채 남의 서비스를 기다리게 되고, 워처가 많은 이슈일수록 그 대기가 배로 늘어난다.
+ * 그래서 한 트랜잭션에서 생긴 알림을 모아 두었다가 커밋 뒤 {@code GetMembers(ids[])} <b>한 번</b>으로
+ * 주소를 받는다. 반대로 행위자 이름 같은 요청 스코프 값은 지금 이 자리에서 캡처한다 — 메일 스레드에는
+ * SecurityContext가 없다.
  */
 @Component
 @Slf4j
@@ -59,6 +71,7 @@ public class EmailNotifier {
 
     private final ObjectProvider<JavaMailSender> senders;
     private final ObjectProvider<PreferenceService> preferences;
+    private final ObjectProvider<MemberDirectory> directory;
     private final ObjectProvider<SchemeQueries> schemes;
     private final String host;
     private final String from;
@@ -71,12 +84,14 @@ public class EmailNotifier {
 
     public EmailNotifier(ObjectProvider<JavaMailSender> senders,
                          ObjectProvider<PreferenceService> preferences,
+                         ObjectProvider<MemberDirectory> directory,
                          ObjectProvider<SchemeQueries> schemes,
                          @Value("${spring.mail.host:}") String host,
                          @Value("${platform.alm.mail.from:alm@localhost}") String from,
                          @Value("${platform.alm.mail.public-url:http://localhost/alm}") String publicUrl) {
         this.senders = senders;
         this.preferences = preferences;
+        this.directory = directory;
         this.schemes = schemes;
         this.host = host == null ? "" : host.trim();
         this.from = from;
@@ -87,6 +102,12 @@ public class EmailNotifier {
     public boolean configured() {
         return !host.isEmpty() && senders.getIfAvailable() != null;
     }
+
+    /** 커밋 뒤에 보낼 한 통 — 주소는 아직 모른다(디렉터리 조회가 커밋 뒤에 일어난다) */
+    private record Pending(long userId, String snapshotEmail, SimpleMailMessage message) {}
+
+    /** 한 트랜잭션이 만든 발송 대기 묶음을 담아 두는 자리 */
+    private static final String PENDING_KEY = EmailNotifier.class.getName() + ".pending";
 
     /**
      * 알림함에 새 행이 생긴 직후 호출한다. 인앱 알림을 보낼지(개인 설정의 종류별 on/off)는 이미
@@ -99,37 +120,100 @@ public class EmailNotifier {
     /** 상태 변경은 이전 상태까지 받아 본문에 "상태: 할 일 -> 완료" 한 줄을 싣는다 */
     public void notify(Notification saved, Issue issue, String previousStatusId) {
         if (!configured()) return;
-        Optional<String> to = preferences.getObject().emailRecipient(saved.getUserId());
-        if (to.isEmpty()) return;
-        sendAfterCommit(compose(to.get(), saved.getType(), issue, actorName(), previousStatusId));
+        // 스위치와 스냅샷 주소는 지금 읽는다 — 이미 열려 있는 트랜잭션의 DB 조회이고, 메일 스레드에서
+        // 다시 커넥션을 잡을 이유가 없다. 밖으로 미루는 것은 남의 서비스를 부르는 일뿐이다.
+        PreferenceService.MailTarget target = preferences.getObject().mailTarget(saved.getUserId());
+        if (!target.enabled()) return;
+        // 본문도 여기서 만든다: 상태 이름을 읽는 SchemeQueries와 Issue 엔티티가 이 트랜잭션 것이다.
+        SimpleMailMessage message = compose(saved.getType(), issue, actorName(), previousStatusId);
+        enqueue(new Pending(saved.getUserId(), target.snapshotEmail(), message));
     }
 
-    /** 커밋 뒤 별도 스레드로 보낸다. 트랜잭션 밖이면 바로. */
-    public void sendAfterCommit(SimpleMailMessage message) {
+    /**
+     * 트랜잭션 안이면 묶음에 쌓고 커밋 뒤 한 번에 보낸다(디렉터리 조회 1회). 트랜잭션 밖이면 바로 보낸다 —
+     * 그때는 롤백으로 되돌아갈 저장도, 묶을 형제 알림도 없다.
+     */
+    private void enqueue(Pending pending) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            dispatch(List.of(pending));
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        List<Pending> batch = (List<Pending>) TransactionSynchronizationManager.getResource(PENDING_KEY);
+        if (batch == null) {
+            List<Pending> created = new ArrayList<>();
+            TransactionSynchronizationManager.bindResource(PENDING_KEY, created);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { dispatch(List.copyOf(created)); }
+                // 롤백이든 커밋이든 자리를 비운다 — 안 비우면 같은 스레드의 다음 요청에 섞인다
+                @Override public void afterCompletion(int status) {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(PENDING_KEY);
+                }
+            });
+            batch = created;
+        }
+        batch.add(pending);
+    }
+
+    /**
+     * 메일 스레드에서 주소를 정하고 보낸다. 여기서만 org-service를 부른다 — 트랜잭션은 이미 끝났고,
+     * 수신자가 여럿이어도 왕복은 한 번이다.
+     */
+    private void dispatch(List<Pending> batch) {
         JavaMailSender sender = senders.getIfAvailable();
-        if (sender == null) return;
-        Runnable send = () -> executor.execute(() -> {
-            try {
-                sender.send(message);
-            } catch (Exception e) {
-                String to = message.getTo() == null ? "" : String.join(",", message.getTo());
-                log.warn("알림 메일 발송 실패: to={} subject={}", to, message.getSubject(), e);
+        if (sender == null || batch.isEmpty()) return;
+        executor.execute(() -> {
+            Set<Long> ids = new LinkedHashSet<>();
+            for (Pending pending : batch) ids.add(pending.userId());
+            Map<Long, DirectoryMember> found = directory.getObject().members(ids);
+            for (Pending pending : batch) {
+                Optional<String> to = recipient(pending, found.get(pending.userId()));
+                if (to.isEmpty()) continue;
+                pending.message().setTo(to.get());
+                send(sender, pending.message());
             }
         });
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() { send.run(); }
-            });
-        } else {
-            send.run();
+    }
+
+    /**
+     * 보낼 주소 — 정본은 org-service 디렉터리다(2026-09-05). 개인 설정에 남은 주소는 로그인 때 찍힌
+     * 스냅샷이라 org에서 이메일을 바꾸면 낡는다.
+     *
+     * <p>디렉터리가 답을 못 주면(org 불능 등) 스냅샷으로 폴백하고, 그것도 없으면 보내지 않는다 —
+     * 주소를 모르는 것은 조용히 넘어갈 일이지 이슈 저장을 막을 일이 아니다. 다만 디렉터리가
+     * "이 계정은 비활성됐다"고 답하면 폴백하지 않는다: 떠난 사람에게 계속 보내지 않는다.
+     */
+    private Optional<String> recipient(Pending pending, DirectoryMember member) {
+        if (member != null) {
+            if (member.deactivated()) {
+                log.debug("비활성 계정이라 알림 메일을 보내지 않는다: user={}", pending.userId());
+                return Optional.empty();
+            }
+            if (member.hasEmail()) return Optional.of(member.email());
+        }
+        String snapshot = pending.snapshotEmail();
+        if (snapshot == null || snapshot.isBlank()) {
+            log.warn("보낼 주소를 몰라 알림 메일을 생략한다: user={}", pending.userId());
+            return Optional.empty();
+        }
+        return Optional.of(snapshot);
+    }
+
+    private void send(JavaMailSender sender, SimpleMailMessage message) {
+        try {
+            sender.send(message);
+        } catch (Exception e) {
+            String to = message.getTo() == null ? "" : String.join(",", message.getTo());
+            log.warn("알림 메일 발송 실패: to={} subject={}", to, message.getSubject(), e);
         }
     }
 
-    SimpleMailMessage compose(String to, Notification.Type type, Issue issue, String actor) {
-        return compose(to, type, issue, actor, null);
+    /** 수신 주소를 빼고 만든다 — 주소는 커밋 뒤 디렉터리를 읽어 {@link #dispatch} 가 채운다 */
+    SimpleMailMessage compose(Notification.Type type, Issue issue, String actor) {
+        return compose(type, issue, actor, null);
     }
 
-    SimpleMailMessage compose(String to, Notification.Type type, Issue issue, String actor, String previousStatusId) {
+    SimpleMailMessage compose(Notification.Type type, Issue issue, String actor, String previousStatusId) {
         String label = issue.getKey() + " " + issue.getTitle();
         String subject = switch (type) {
             case ASSIGNED -> actor + "님이 '" + label + "' 이슈를 나에게 배정했습니다";
@@ -149,7 +233,6 @@ public class EmailNotifier {
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(from);
-        message.setTo(to);
         String prefix = TYPE_EMOJI.getOrDefault(type, "");
         message.setSubject("[ALM] " + (prefix.isEmpty() ? "" : prefix + " ") + subject);
         message.setText(body.toString());

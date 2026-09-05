@@ -51,6 +51,7 @@ class EmailNotificationTest {
     @Autowired NotificationRepository notifications;
     @Autowired UserPreferenceRepository preferences;
     @Autowired TestConfig.FakePermissionClient permissions;
+    @Autowired TestConfig.FakeMemberDirectory directory;
     @MockitoBean JavaMailSender mailSender;
 
     MockMvc mvc;
@@ -64,6 +65,7 @@ class EmailNotificationTest {
         issues.deleteAllInBatch();
         projects.deleteAllInBatch();
         permissions.setAllowed(true);
+        directory.reset();
         String body = mvc.perform(post("/api/alm/projects").with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"key\":\"mail\",\"name\":\"메일\",\"description\":\"\"}"))
@@ -87,7 +89,11 @@ class EmailNotificationTest {
     }
 
     private void enableMailForBob() throws Exception {
-        mvc.perform(put("/api/alm/me/preferences").with(asUser(2, "Bob"))
+        enableMailFor(2, "Bob");
+    }
+
+    private void enableMailFor(long id, String name) throws Exception {
+        mvc.perform(put("/api/alm/me/preferences").with(asUser(id, name))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"emailEnabled\":true}"))
                 .andExpect(status().isOk());
@@ -182,6 +188,99 @@ class EmailNotificationTest {
                         .content("{\"emailEnabled\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailEnabled").value(true));
+
+        assignIssueToBob();
+
+        verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
+        mvc.perform(get("/api/alm/notifications").with(asUser(2, "Bob")))
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    /**
+     * 주소의 정본은 org-service다(2026-09-05). 개인 설정에 남은 주소는 로그인 때 찍힌 스냅샷이라
+     * org에서 이메일을 바꾸면 낡는다 — 발송 시점에 디렉터리를 읽는 이유다.
+     */
+    @Test
+    void 디렉터리_주소가_스냅샷보다_우선한다() throws Exception {
+        enableMailForBob(); // 스냅샷은 bob@test.com
+        directory.put(2, "Bob", "bob@org.example", "ACTIVE");
+
+        assignIssueToBob();
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, timeout(3000)).send(sent.capture());
+        assertThat(sent.getValue().getTo()).containsExactly("bob@org.example");
+        // 쓰기 트랜잭션이 남의 서비스를 기다리지 않는다 — 조회는 커밋 뒤 발송 스레드에서 한다
+        assertThat(directory.calls()).isNotEmpty()
+                .allSatisfy(call -> assertThat(call.inTransaction()).isFalse());
+    }
+
+    /**
+     * 워처가 여럿인 이슈의 상태가 바뀌면 알림도 여럿이다. 주소 조회는 그 수만큼 왕복하지 않고
+     * {@code GetMembers(ids[])} 한 번이며, 커밋 뒤에 일어난다.
+     */
+    @Test
+    void 수신자가_여럿이면_디렉터리를_커밋_뒤_한_번만_읽는다() throws Exception {
+        enableMailFor(1, "Alice");
+        enableMailForBob();
+        long[] issue = createIssueAssignedToBob(); // 배정 메일 한 통(Bob)
+        verify(mailSender, timeout(3000)).send(any(SimpleMailMessage.class));
+
+        // 배정 건의 조회 기록을 지우고 상태 변경만 본다
+        directory.reset();
+        directory.put(1, "Alice", "alice@org.example", "ACTIVE");
+        directory.put(2, "Bob", "bob@org.example", "ACTIVE");
+
+        // 제3자가 상태를 바꾸면 워처 둘(보고자 Alice·담당자 Bob)에게 간다
+        mvc.perform(put("/api/alm/issues/{id}", issue[0]).with(asUser(3, "Carol"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"배정\",\"description\":\"\",\"type\":\"task\",\"status\":\"done\","
+                                + "\"priority\":\"MEDIUM\",\"assigneeId\":2,\"details\":{},"
+                                + "\"expectedVersion\":" + issue[1] + "}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, timeout(3000).times(3)).send(sent.capture());
+        assertThat(sent.getAllValues().subList(1, 3))
+                .extracting(message -> message.getTo()[0])
+                .containsExactlyInAnyOrder("alice@org.example", "bob@org.example");
+
+        assertThat(directory.calls()).hasSize(1);
+        assertThat(directory.calls().get(0).ids()).containsExactlyInAnyOrder(1L, 2L);
+        assertThat(directory.calls().get(0).inTransaction()).isFalse();
+    }
+
+    /** org가 잠깐 불능이어도 알림 메일은 나간다 — 주소 조회는 인가 결정이 아니다 */
+    @Test
+    void 디렉터리를_못_읽으면_스냅샷으로_보낸다() throws Exception {
+        enableMailForBob();
+        directory.setUnavailable(true);
+
+        assignIssueToBob();
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, timeout(3000)).send(sent.capture());
+        assertThat(sent.getValue().getTo()).containsExactly("bob@test.com");
+    }
+
+    /** 디렉터리에 있지만 이메일이 비어 있으면 스냅샷으로 떨어진다 */
+    @Test
+    void 디렉터리에_주소가_없으면_스냅샷으로_보낸다() throws Exception {
+        enableMailForBob();
+        directory.put(2, "Bob", "", "ACTIVE");
+
+        assignIssueToBob();
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, timeout(3000)).send(sent.capture());
+        assertThat(sent.getValue().getTo()).containsExactly("bob@test.com");
+    }
+
+    /** 떠난 사람에게는 스냅샷 주소가 남아 있어도 보내지 않는다 */
+    @Test
+    void 비활성된_계정에는_보내지_않는다() throws Exception {
+        enableMailForBob();
+        directory.put(2, "Bob", "bob@org.example", "DEACTIVATED");
 
         assignIssueToBob();
 

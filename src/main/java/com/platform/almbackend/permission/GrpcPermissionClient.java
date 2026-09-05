@@ -15,10 +15,15 @@ import java.util.stream.Collectors;
 
 @Slf4j
 public class GrpcPermissionClient implements PermissionClient {
-    private record CacheKey(long userId, long projectId, AlmAction action) {}
+    /** GLOBAL이면 resourceId는 빈 문자열이다(proto 계약) */
+    private record CacheKey(long userId, ResourceType type, String resourceId, AlmAction action) {}
 
     private final PermissionServiceGrpc.PermissionServiceBlockingStub stub;
-    private final Cache<CacheKey, Boolean> cache = Caffeine.newBuilder()
+    // 판정을 30초 캐시한다 — 매 요청 gRPC 왕복을 피하는 값이다. 대가는 반영 지연이고, grant 회수만이
+    // 아니라 **계정 상태 전이도 그만큼 늦는다**: 방금 정지·비활성된 사람이 최대 30초 더 하던 일을
+    // 이어갈 수 있다(그 사이 새 요청은 캐시된 allowed를 본다). 즉시 차단이 필요해지면 캐시를 줄이거나
+    // org가 무효화를 알리는 경로를 먼저 만든다 — 값만 늘리는 결정은 이 지연을 키운다.
+    private final Cache<CacheKey, PermissionDecision> cache = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofSeconds(30))
             .maximumSize(10_000)
             .build();
@@ -28,28 +33,48 @@ public class GrpcPermissionClient implements PermissionClient {
     }
 
     @Override
-    public boolean isAllowed(long userId, long projectId, AlmAction action) {
-        return cache.get(new CacheKey(userId, projectId, action), key -> {
+    public PermissionDecision check(long userId, long projectId, AlmAction action) {
+        return decide(new CacheKey(userId, ResourceType.PROJECT, String.valueOf(projectId), action));
+    }
+
+    @Override
+    public PermissionDecision checkGlobal(long userId, AlmAction action) {
+        return decide(new CacheKey(userId, ResourceType.GLOBAL, "", action));
+    }
+
+    private PermissionDecision decide(CacheKey key) {
+        return cache.get(key, k -> {
             try {
-                return deadline().checkPermission(CheckPermissionRequest.newBuilder()
-                        .setUserId(key.userId())
-                        .setResourceType(ResourceType.PROJECT)
-                        .setResourceId(String.valueOf(key.projectId()))
-                        .setAction(toProto(key.action()))
-                        .build()).getAllowed();
+                CheckPermissionResponse response = deadline().checkPermission(CheckPermissionRequest.newBuilder()
+                        .setUserId(k.userId())
+                        .setResourceType(k.type())
+                        .setResourceId(k.resourceId())
+                        .setAction(toProto(k.action()))
+                        .build());
+                return response.getAllowed()
+                        ? PermissionDecision.allow()
+                        : PermissionDecision.deny(response.getDeniedReason());
             } catch (Exception e) {
+                // 가용성 장애만 503으로 올린다 — 나머지는 fail-closed다. 둘을 뭉뚱그리면
+                // org가 죽은 동안 사용자에게 "당신은 권한이 없다"고 거짓말하거나(전자),
+                // 진짜 거부를 열어 준다(후자).
                 if (isUnavailable(e)) {
-                    log.error("권한 서비스 불가 — 503 전파: user={} project={} action={}",
-                            key.userId(), key.projectId(), key.action(), e);
+                    log.error("권한 서비스 불가 — 503 전파: user={} resource={}/{} action={}",
+                            k.userId(), k.type(), k.resourceId(), k.action(), e);
                     throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다", e);
                 }
-                log.warn("권한 조회 실패 — fail-closed: user={} project={} action={}",
-                        key.userId(), key.projectId(), key.action(), e);
-                return false;
+                log.warn("권한 조회 실패 — fail-closed: user={} resource={}/{} action={}",
+                        k.userId(), k.type(), k.resourceId(), k.action(), e);
+                return PermissionDecision.deny("");
             }
         });
     }
 
+    /**
+     * 볼 수 있는 프로젝트 범위. 실패하면 <b>빈 범위</b>다(fail-closed) — 목록·검색이 "권한 없음"이 아니라
+     * "결과 없음"으로 보이므로 조용하지만, 남의 프로젝트를 흘리는 것보다는 낫다. 그래서 warn으로 남긴다:
+     * 사용자가 "내 프로젝트가 사라졌다"고 할 때 이 로그가 유일한 단서다. 가용성 장애는 여기서도 503이다.
+     */
     @Override
     public AccessScope accessibleProjects(long userId) {
         try {
@@ -66,6 +91,7 @@ public class GrpcPermissionClient implements PermissionClient {
             return AccessScope.of(ids);
         } catch (Exception e) {
             if (isUnavailable(e)) {
+                log.error("권한 서비스 불가 — 503 전파: user={} (grant 목록)", userId, e);
                 throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다", e);
             }
             log.warn("프로젝트 grant 조회 실패 — fail-closed: user={}", userId, e);
@@ -126,4 +152,3 @@ public class GrpcPermissionClient implements PermissionClient {
         };
     }
 }
-

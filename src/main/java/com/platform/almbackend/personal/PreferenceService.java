@@ -129,13 +129,23 @@ public class PreferenceService {
         preferences.findById(userId).ifPresent(p -> p.rememberEmail(jwtEmail));
     }
 
-    /** 이메일 알림을 받을 주소 — 스위치가 꺼졌거나 주소를 모르면 empty */
+    /**
+     * 이메일 알림을 보낼지와, 보낸다면 폴백으로 쓸 주소. 한 번 읽어 둘 다 준다 — 발송기는 이걸
+     * 트랜잭션 안에서 캡처해 두고, 커밋 뒤에는 DB를 다시 건드리지 않는다.
+     *
+     * <p>{@code snapshotEmail}은 로그인 때 받아 둔 주소(V19)다. 정본은 org-service 디렉터리이고 이 값은
+     * 그 조회가 실패했을 때의 폴백이다 — 토큰을 마지막으로 본 시점의 주소라 org에서 이메일을 바꾸면 낡는다.
+     */
+    public record MailTarget(boolean enabled, String snapshotEmail) {
+        static final MailTarget OFF = new MailTarget(false, null);
+    }
+
     @Transactional(readOnly = true)
-    public Optional<String> emailRecipient(long userId) {
+    public MailTarget mailTarget(long userId) {
         return preferences.findById(userId)
                 .filter(UserPreference::isEmailEnabled)
-                .map(UserPreference::getEmail)
-                .filter(address -> !address.isBlank());
+                .map(p -> new MailTarget(true, p.getEmail()))
+                .orElse(MailTarget.OFF);
     }
 
     private PreferenceView toView(PreferenceBody body, boolean emailEnabled) {

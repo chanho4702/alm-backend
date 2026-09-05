@@ -48,6 +48,8 @@ class AdminControllerTest {
         sprints.deleteAllInBatch();
         projects.deleteAllInBatch();
         permissions.setAllowed(true);
+        // 전역 관리자는 org-service의 GLOBAL/ADMIN grant다 — JWT 역할이 아니다(2026-09-05)
+        permissions.setGlobalAdmins(9);
     }
 
     @Test

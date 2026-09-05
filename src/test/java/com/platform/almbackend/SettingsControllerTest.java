@@ -69,6 +69,8 @@ class SettingsControllerTest {
         projects.deleteAllInBatch();
         seeder.resetToDefaults();
         permissions.setAllowed(true);
+        // 전역 관리자는 org-service의 GLOBAL/ADMIN grant다 — JWT 역할이 아니다(2026-09-05)
+        permissions.setGlobalAdmins(9);
         String body = mvc.perform(post("/api/alm/projects").with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"key\":\"alm\",\"name\":\"ALM 제품\",\"description\":\"\"}"))

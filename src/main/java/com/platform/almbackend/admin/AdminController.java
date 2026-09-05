@@ -14,10 +14,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 
-/** 관리 콘솔 — 감사 로그·시스템 현황. 토큰의 roles에 ADMIN이 있어야 한다. */
+/** 관리 콘솔 — 감사 로그·시스템 현황. 전역 관리자(org-service GLOBAL/ADMIN)만 읽는다. */
 @RestController
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("@globalAdmin.check(authentication)")
 public class AdminController {
     private final AuditLogService audit;
     private final ProjectRepository projects;

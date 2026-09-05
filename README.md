@@ -7,7 +7,7 @@
 ![Redis Streams](https://img.shields.io/badge/Redis-Streams-DC382D?logo=redis&logoColor=white)
 
 MSA_TEMPLATE의 **ALM 프로젝트·이슈 정본 서비스**다. PostgreSQL에 데이터를 저장하고,
-org-service의 `PROJECT` grant로 요청을 인가한다. 변경 이벤트는 Redis Streams에 발행하며,
+org-service의 grant로 요청을 인가한다(프로젝트 권한과 전역 관리자 모두 — Keycloak 역할이 아니다). 변경 이벤트는 Redis Streams에 발행하며,
 search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱스를 만든다.
 
 전체 플랫폼 구성은 [infra-settings](https://github.com/chanho4702/infra-settings), 컨테이너
@@ -25,7 +25,7 @@ search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱�
 | REST | `:9120` / dev `:19120` · `/api/alm/**` |
 | 내부 gRPC | `:9121` / dev `:19121` · `AlmContentService` |
 | 데이터 | PostgreSQL `almdb` · Flyway · 첨부 바이트는 MinIO(S3 호환, `ALM_S3_*`) — 끄면 로컬 파일 |
-| 인증·인가 | auth-server RS256 JWT 검증 + org-service `PROJECT` grant |
+| 인증·인가 | auth-server RS256 JWT 검증 + org-service grant(`PROJECT` · 전역은 `GLOBAL`/`ADMIN`) |
 | 이벤트 | Redis Streams `platform:events:v1` |
 
 ## 빠른 시작
@@ -183,18 +183,77 @@ POST /api/alm/sprints/{sprintId}/complete
 포함되는 서버 관리 값이며 생성 시 프로젝트 내 다음 번호로 발급한다. 재정렬은 별도 API로
 제공하기 전까지 일반 수정 요청으로 바꿀 수 없다.
 
+## 전역 관리자 판정 (2026-09-05)
+
+**판정 주체는 org-service 하나다.** 전역 관리자는 org의 `GLOBAL`/`ADMIN` grant이며, gRPC
+`CheckPermission(GLOBAL, ADMIN)`으로 묻는다. 그 전에는 Keycloak realm 역할 `ADMIN`(JWT `roles`)으로
+따로 판정했다 — 같은 사람에 대해 wiki와 ALM이 서로 다른 답을 낼 수 있는 구조였다. **JWT 역할은 이제
+인가에 쓰지 않는다.** 판정 규칙과 grant 모델은 `platform-backend/README.md`의 "org-service > 권한 모델"
+절이 정본이다.
+
+**최초 관리자는 `PLATFORM_BOOTSTRAP_ADMIN_ID` 시드**(org-service `BootstrapAdminSeeder`)로 생긴다.
+ALM에는 부트스트랩 경로가 없다.
+
+> ⚠️ **로컬에서 관리 화면이 전부 403이면 대개 이것이다.** compose는
+> `PLATFORM_BOOTSTRAP_ADMIN_ID:-1`로 1을 주입해 사용자 1이 재기동마다 GLOBAL ADMIN으로 복구되지만,
+> `gradlew :org-service:bootRun`으로 직접 띄우면 값이 비어 있어 **아무도 시딩되지 않는다.** dev-offset
+> 클러스터로 개발할 때는 org-service 실행에 이 값을 지정하거나, `POST /api/org/grants`로 직접 넣는다.
+
+### 응답 계약
+
+| 상황 | 상태 | 본문 |
+|---|---|---|
+| grant 없음 · 사유 불명 | `403` | `{"error":"전역 관리자만 할 수 있습니다"}` |
+| `denied_reason=PENDING` | `403` | `{"error":"승인 대기 중인 계정입니다"}` |
+| `denied_reason=SUSPENDED` | `403` | `{"error":"정지된 계정입니다"}` |
+| `denied_reason=DEACTIVATED` | `403` | `{"error":"비활성된 계정입니다"}` |
+| org-service 불능(`UNAVAILABLE`·`DEADLINE_EXCEEDED`) | `503` | `{"error":"권한 서비스에 연결할 수 없습니다"}` |
+
+`denied_reason`(common-proto 0.16.0)은 **거부 사유이지 장애 신호가 아니다** — 모르는 값은 일반 거부로
+다룬다(값은 앞으로 늘 수 있다). 장애는 gRPC 상태 코드로만 판단하며 `503`이다. 프론트가 이 `503`을
+"권한 없음"으로 그리면 org가 죽은 동안 관리자에게 "당신은 관리자가 아니다"라고 거짓말하게 된다.
+프로젝트 권한(`VIEW`/`EDIT`/`ADMIN`)도 같은 구분을 따른다: 계정 상태로 막힌 것이면 위 문구를,
+권한만 모자라면 `ADMIN 권한이 필요합니다 (project N)`를 준다.
+
+판정은 30초 캐시된다(`GrpcPermissionClient`). grant 회수뿐 아니라 **계정 정지·비활성도 그만큼 늦게**
+반영된다.
+
+### 전역 관리자 전용 엔드포인트 (26개)
+
+읽기는 로그인이면 되고 아래 쓰기만 막힌다 — 레지스트리·스킴은 모든 프로젝트가 함께 보는 값이다.
+(애너테이션은 25개다: `AdminController`는 클래스 단위로 걸려 두 엔드포인트를 덮는다.)
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET` | `/api/alm/admin/audit` | 감사 로그 |
+| `GET` | `/api/alm/admin/stats` | 시스템 현황 |
+| `PUT` | `/api/alm/admin/banner` | 공지 배너 저장(읽기 `GET /api/alm/banner`는 인증만) |
+| `POST`/`PUT`/`DELETE` | `/api/alm/settings/categories[/{id}]` | 상태 카테고리 — `POST /{id}/move` 포함 |
+| `POST`/`PUT`/`DELETE` | `/api/alm/settings/statuses[/{id}]` | 상태 |
+| `POST`/`PUT`/`DELETE` | `/api/alm/settings/link-types[/{id}]` | 링크 타입 — `POST /{id}/move` 포함 |
+| `POST`/`PUT`/`DELETE` | `/api/alm/settings/priorities[/{id}]` | 우선순위 — `POST /{id}/move` 포함 |
+| `POST`/`PUT`/`DELETE` | `/api/alm/settings/issue-types[/{id}]` | 이슈 타입 — `POST /{id}/move` 포함 |
+| `POST`/`PUT`/`DELETE` | `/api/alm/settings/schemes[/{id}]` | 설정 스킴 — `POST /{id}/default` 포함 |
+
+프로젝트 설정 쓰기(`PUT /api/alm/projects/{id}/settings/*`)는 전역 관리자가 아니라 **그 프로젝트의
+ADMIN**이다.
+
 ## 서비스 경계
 
 ```text
 gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
                                   │
-                                  ├─gRPC──▶ org-service (PROJECT 권한)
+                                  ├─gRPC──▶ org-service (권한 판정 · 사용자 디렉터리)
                                   ├─XADD──▶ Redis Streams (커밋 이후 이벤트)
                                   └◀─gRPC── search-service (이슈 원문 조달)
 ```
 
 - 권한 판정은 `VIEW < EDIT < ADMIN`이며, org-service 장애를 권한 없음으로 오인하지 않는다.
-  `UNAVAILABLE`·`DEADLINE_EXCEEDED`는 REST `503`으로 응답한다.
+  `UNAVAILABLE`·`DEADLINE_EXCEEDED`는 REST `503`으로 응답한다. 프로젝트 권한과 전역 관리자
+  (`GLOBAL`/`ADMIN`) 둘 다 org-service가 판정한다 — "전역 관리자 판정" 절을 볼 것.
+- 알림 메일 주소도 org-service가 원장이다(`GetMembers`). 조회는 **커밋 뒤 발송 스레드**에서 하고
+  수신자가 여럿이면 한 번에 묻는다 — 쓰기 트랜잭션이 남의 서비스를 기다리지 않는다. 못 읽으면
+  개인 설정의 주소 스냅샷으로 폴백하고, 그것도 없으면 그 한 통을 생략한다.
 - 이벤트에는 이슈 본문을 싣지 않는다. 정본 트랜잭션 커밋 후 발행하며, 발행 실패가 정본을
   롤백하지는 않는다. 검색 색인은 관리자 재색인으로 복구한다.
 - gRPC `AlmContentService`는 search-service 전용이다. 컨테이너 배포에서는 호스트에 포트를
@@ -209,7 +268,7 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `ALM_DB_USERNAME` / `ALM_DB_PASSWORD` | `keycloak` / `keycloak` | DB 자격증명 |
 | `AUTH_JWKS_URI` | `http://localhost:9000/.well-known/jwks.json` | JWT 공개키 |
 | `PLATFORM_ISSUER` / `PLATFORM_AUDIENCE` | `http://localhost:9000` / `platform-api` | JWT 검증 계약 |
-| `ORG_GRPC_HOST` / `ORG_GRPC_PORT` | `localhost` / `9131` | PROJECT 권한 판정 |
+| `ORG_GRPC_HOST` / `ORG_GRPC_PORT` | `localhost` / `9131` | 권한 판정(프로젝트·전역 관리자)과 사용자 디렉터리 |
 | `ALM_GRPC_ENABLED` / `ALM_GRPC_PORT` | `true` / `9121` | 콘텐츠 조달 gRPC |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | `localhost` / `6379` / `0` | 이벤트 스트림 |
 | `EVENTS_ENABLED` / `EVENTS_STREAM` | `true` / `platform:events:v1` | 이벤트 발행 설정 |

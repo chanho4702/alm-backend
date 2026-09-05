@@ -1,16 +1,28 @@
 package com.platform.almbackend;
 
+import com.platform.almbackend.directory.DirectoryMember;
+import com.platform.almbackend.directory.MemberDirectory;
 import com.platform.almbackend.event.EventPublisher;
 import com.platform.almbackend.permission.AccessScope;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.permission.PermissionClient;
+import com.platform.almbackend.permission.PermissionDecision;
+import com.platform.common.error.ServiceUnavailableException;
 import com.platform.proto.events.v1.EventEnvelope;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 @TestConfiguration
 public class TestConfig {
@@ -29,6 +41,12 @@ public class TestConfig {
     @Primary
     FakePermissionClient fakePermissionClient() {
         return new FakePermissionClient();
+    }
+
+    @Bean
+    @Primary
+    FakeMemberDirectory fakeMemberDirectory() {
+        return new FakeMemberDirectory();
     }
 
     @Bean
@@ -70,20 +88,99 @@ public class TestConfig {
         }
     }
 
+    /**
+     * org-service gRPC 대역. 프로젝트 판정과 전역 관리자 판정을 따로 둔다 — 전역 관리자는 이제 JWT 역할이
+     * 아니라 org의 GLOBAL/ADMIN grant다(2026-09-05). {@code unavailable}은 org 불능을 흉내 내
+     * 503 전파를 검증한다.
+     */
     public static final class FakePermissionClient implements PermissionClient {
         private boolean allowed = true;
+        private String deniedReason = "NO_GRANT";
+        private final Set<Long> globalAdmins = new HashSet<>();
+        private boolean unavailable;
         private long grantedProjectId;
 
         public void setAllowed(boolean allowed) { this.allowed = allowed; }
+        /** 거부 사유 — 계정 상태(PENDING/SUSPENDED/DEACTIVATED)면 문구가 달라진다 */
+        public void setDeniedReason(String reason) { this.deniedReason = reason; }
+        /** 전역 관리자 목록을 이 id들로 바꾼다(비우면 아무도 관리자가 아니다) */
+        public void setGlobalAdmins(long... ids) {
+            globalAdmins.clear();
+            for (long id : ids) globalAdmins.add(id);
+        }
+        /** org-service 불능 — 모든 판정이 503으로 올라간다 */
+        public void setUnavailable(boolean unavailable) { this.unavailable = unavailable; }
         public long grantedProjectId() { return grantedProjectId; }
 
-        @Override public boolean isAllowed(long userId, long projectId, AlmAction action) { return allowed; }
+        public void reset() {
+            allowed = true;
+            deniedReason = "NO_GRANT";
+            globalAdmins.clear();
+            unavailable = false;
+        }
+
+        @Override public PermissionDecision check(long userId, long projectId, AlmAction action) {
+            failIfUnavailable();
+            return allowed ? PermissionDecision.allow() : PermissionDecision.deny(deniedReason);
+        }
+
+        @Override public PermissionDecision checkGlobal(long userId, AlmAction action) {
+            failIfUnavailable();
+            return globalAdmins.contains(userId)
+                    ? PermissionDecision.allow()
+                    : PermissionDecision.deny(deniedReason);
+        }
+
         @Override public AccessScope accessibleProjects(long userId) { return AccessScope.global(); }
         @Override public boolean grantProjectAdmin(long userId, long projectId) {
             grantedProjectId = projectId;
             return true;
         }
         @Override public int revokeProjectGrants(long projectId) { return 1; }
+
+        private void failIfUnavailable() {
+            if (unavailable) throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
+        }
+    }
+
+    /**
+     * org 사용자 디렉터리 대역. 기본은 비어 있다 — 그래야 디렉터리를 모르는 기존 테스트가
+     * 개인 설정 스냅샷 폴백을 그대로 검증한다.
+     *
+     * <p>호출을 기록한다: 조회한 id 묶음과 <b>그때 트랜잭션이 열려 있었는지</b>. 디렉터리 조회는 커밋 뒤에
+     * 일어나야 하고(쓰기 트랜잭션이 남의 서비스를 기다리면 안 된다), 수신자가 여럿이면 한 번이어야 한다.
+     */
+    public static final class FakeMemberDirectory implements MemberDirectory {
+        /** 한 번의 조회 — 물어본 id들과 그때 트랜잭션이 열려 있었는지 */
+        public record Call(List<Long> ids, boolean inTransaction) {}
+
+        private final Map<Long, DirectoryMember> members = new HashMap<>();
+        private final List<Call> calls = Collections.synchronizedList(new ArrayList<>());
+        private boolean unavailable;
+
+        public void put(long id, String displayName, String email, String status) {
+            members.put(id, new DirectoryMember(id, displayName, email, status, "HUMAN"));
+        }
+        /** org 불능 — 조회는 빈 결과를 주고 호출측이 스냅샷으로 폴백해야 한다 */
+        public void setUnavailable(boolean unavailable) { this.unavailable = unavailable; }
+        public List<Call> calls() { return List.copyOf(calls); }
+        public void reset() {
+            members.clear();
+            calls.clear();
+            unavailable = false;
+        }
+
+        @Override public Map<Long, DirectoryMember> members(Collection<Long> ids) {
+            calls.add(new Call(List.copyOf(ids),
+                    TransactionSynchronizationManager.isActualTransactionActive()));
+            if (unavailable) return Map.of();
+            Map<Long, DirectoryMember> found = new HashMap<>();
+            for (Long id : ids) {
+                DirectoryMember member = members.get(id);
+                if (member != null) found.put(id, member);
+            }
+            return found;
+        }
     }
 
     public static final class RecordingEventPublisher implements EventPublisher {

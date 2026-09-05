@@ -72,7 +72,7 @@ public class PersonalizationController {
     }
 
     @PutMapping("/api/alm/admin/banner")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public Banner saveBanner(@RequestBody Banner banner) {
         return systemSettings.saveBanner(banner);
     }

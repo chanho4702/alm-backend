@@ -33,8 +33,8 @@ import java.util.Map;
 import static com.platform.almbackend.issue.IssueController.userId;
 
 /**
- * 설정 API. 읽기는 로그인이면 되고, 전역(레지스트리·스킴) 쓰기는 ADMIN 역할, 프로젝트 설정 쓰기는
- * 프로젝트 관리자(org-service 권한)다.
+ * 설정 API. 읽기는 로그인이면 되고, 전역(레지스트리·스킴) 쓰기는 전역 관리자, 프로젝트 설정 쓰기는
+ * 프로젝트 관리자다. 둘 다 판정은 org-service gRPC 하나로 한다(Keycloak 역할 아님, 2026-09-05).
  */
 @RestController
 @RequiredArgsConstructor
@@ -47,21 +47,21 @@ public class SettingsController {
     public List<CategoryResponse> categories() { return registry.categories().stream().map(CategoryResponse::from).toList(); }
 
     @PostMapping("/api/alm/settings/categories")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.CREATED)
     public CategoryResponse createCategory(@RequestBody CategoryRequest request) { return CategoryResponse.from(registry.createCategory(request)); }
 
     @PutMapping("/api/alm/settings/categories/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public CategoryResponse updateCategory(@PathVariable String id, @RequestBody CategoryRequest request) { return CategoryResponse.from(registry.updateCategory(id, request)); }
 
     @PostMapping("/api/alm/settings/categories/{id}/move")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void moveCategory(@PathVariable String id, @RequestBody MoveRequest request) { registry.moveCategory(id, request.delta()); }
 
     @DeleteMapping("/api/alm/settings/categories/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteCategory(@PathVariable String id) { registry.deleteCategory(id); }
 
@@ -73,16 +73,16 @@ public class SettingsController {
     public Map<String, Long> statusUsage() { return registry.statusUsage(); }
 
     @PostMapping("/api/alm/settings/statuses")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.CREATED)
     public StatusResponse createStatus(@RequestBody StatusRequest request) { return StatusResponse.from(registry.createStatus(request)); }
 
     @PutMapping("/api/alm/settings/statuses/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public StatusResponse updateStatus(@PathVariable String id, @RequestBody StatusRequest request) { return StatusResponse.from(registry.updateStatus(id, request)); }
 
     @DeleteMapping("/api/alm/settings/statuses/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteStatus(@PathVariable String id) { registry.deleteStatus(id); }
 
@@ -94,21 +94,21 @@ public class SettingsController {
     public Map<String, Long> linkTypeUsage() { return registry.linkTypeUsage(); }
 
     @PostMapping("/api/alm/settings/link-types")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.CREATED)
     public LinkTypeResponse createLinkType(@RequestBody LinkTypeRequest request) { return LinkTypeResponse.from(registry.createLinkType(request)); }
 
     @PutMapping("/api/alm/settings/link-types/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public LinkTypeResponse updateLinkType(@PathVariable String id, @RequestBody LinkTypeRequest request) { return LinkTypeResponse.from(registry.updateLinkType(id, request)); }
 
     @PostMapping("/api/alm/settings/link-types/{id}/move")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void moveLinkType(@PathVariable String id, @RequestBody MoveRequest request) { registry.moveLinkType(id, request.delta()); }
 
     @DeleteMapping("/api/alm/settings/link-types/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteLinkType(@PathVariable String id) { registry.deleteLinkType(id); }
 
@@ -119,21 +119,21 @@ public class SettingsController {
     public Map<String, Long> priorityUsage() { return registry.priorityUsage(); }
 
     @PostMapping("/api/alm/settings/priorities")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.CREATED)
     public PriorityResponse createPriority(@RequestBody PriorityRequest request) { return PriorityResponse.from(registry.createPriority(request)); }
 
     @PutMapping("/api/alm/settings/priorities/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public PriorityResponse updatePriority(@PathVariable String id, @RequestBody PriorityRequest request) { return PriorityResponse.from(registry.updatePriority(id, request)); }
 
     @PostMapping("/api/alm/settings/priorities/{id}/move")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void movePriority(@PathVariable String id, @RequestBody MoveRequest request) { registry.movePriority(id, request.delta()); }
 
     @DeleteMapping("/api/alm/settings/priorities/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deletePriority(@PathVariable String id) { registry.deletePriority(id); }
 
@@ -144,21 +144,21 @@ public class SettingsController {
     public Map<String, Long> issueTypeUsage() { return registry.issueTypeUsage(); }
 
     @PostMapping("/api/alm/settings/issue-types")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.CREATED)
     public IssueTypeResponse createIssueType(@RequestBody IssueTypeRequest request) { return IssueTypeResponse.from(registry.createIssueType(request)); }
 
     @PutMapping("/api/alm/settings/issue-types/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public IssueTypeResponse updateIssueType(@PathVariable String id, @RequestBody IssueTypeRequest request) { return IssueTypeResponse.from(registry.updateIssueType(id, request)); }
 
     @PostMapping("/api/alm/settings/issue-types/{id}/move")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void moveIssueType(@PathVariable String id, @RequestBody MoveRequest request) { registry.moveIssueType(id, request.delta()); }
 
     @DeleteMapping("/api/alm/settings/issue-types/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteIssueType(@PathVariable String id) { registry.deleteIssueType(id); }
 
@@ -173,23 +173,23 @@ public class SettingsController {
     public Map<String, Long> schemeProjects(@PathVariable String id) { return Map.of("count", schemes.countProjects(id)); }
 
     @PostMapping("/api/alm/settings/schemes")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.CREATED)
     public SchemeResponse createScheme(@RequestBody SchemeCreateRequest request) { return schemes.create(request.name()); }
 
     @PutMapping("/api/alm/settings/schemes/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     public SchemeResponse updateScheme(@PathVariable String id, @RequestBody SchemeUpdateRequest request, @AuthenticationPrincipal Jwt jwt) {
         return schemes.update(userId(jwt), id, request.name(), request.body());
     }
 
     @DeleteMapping("/api/alm/settings/schemes/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteScheme(@PathVariable String id) { schemes.delete(id); }
 
     @PostMapping("/api/alm/settings/schemes/{id}/default")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@globalAdmin.check(authentication)")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void setDefault(@PathVariable String id) { schemes.setDefault(id); }
 

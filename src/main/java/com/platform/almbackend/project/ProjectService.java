@@ -8,6 +8,7 @@ import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.permission.AccessScope;
 import com.platform.almbackend.permission.AlmAction;
+import com.platform.almbackend.permission.PermissionDecision;
 import com.platform.almbackend.permission.PermissionClient;
 import com.platform.almbackend.settings.SchemeService;
 import com.platform.almbackend.board.BoardService;
@@ -119,9 +120,7 @@ public class ProjectService {
     }
 
     public void require(long userId, long projectId, AlmAction action) {
-        if (!permissions.isAllowed(userId, projectId, action)) {
-            throw new ForbiddenException(action + " 권한이 필요합니다 (project " + projectId + ")");
-        }
+        requireGrant(userId, projectId, action);
         if (action != AlmAction.VIEW && projects.findById(projectId).map(Project::isArchived).orElse(false)) {
             throw new ForbiddenException("보관된 프로젝트는 읽기만 할 수 있습니다");
         }
@@ -129,9 +128,21 @@ public class ProjectService {
 
     /** 보관 가드를 우회하는 관리자 확인 — 보관 해제·휴지통 이동에 쓴다 */
     private void requireAdminIgnoringArchive(long userId, long projectId) {
-        if (!permissions.isAllowed(userId, projectId, AlmAction.ADMIN)) {
-            throw new ForbiddenException("ADMIN 권한이 필요합니다 (project " + projectId + ")");
-        }
+        requireGrant(userId, projectId, AlmAction.ADMIN);
+    }
+
+    /**
+     * 계정 상태로 막힌 것(승인 대기·정지·비활성)은 그 사실을 그대로 말하고, 권한이 모자란 것만
+     * "권한이 필요합니다"로 답한다 — 승인을 기다리는 사람에게 프로젝트 권한을 요청하라고 하면
+     * 엉뚱한 사람에게 문의하게 된다. org 불능은 여기까지 오지 않고 503으로 올라간다.
+     */
+    private void requireGrant(long userId, long projectId, AlmAction action) {
+        PermissionDecision decision = permissions.check(userId, projectId, action);
+        if (decision.allowed()) return;
+        String message = decision.accountMessage();
+        throw new ForbiddenException(message != null
+                ? message
+                : action + " 권한이 필요합니다 (project " + projectId + ")");
     }
 
     // ── 보관 · 휴지통 ──

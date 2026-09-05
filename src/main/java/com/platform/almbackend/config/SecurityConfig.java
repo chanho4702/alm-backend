@@ -1,5 +1,7 @@
 package com.platform.almbackend.config;
 
+import com.platform.almbackend.directory.GrpcMemberDirectory;
+import com.platform.almbackend.directory.MemberDirectory;
 import com.platform.almbackend.permission.GrpcPermissionClient;
 import com.platform.almbackend.permission.PermissionClient;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
@@ -45,5 +47,12 @@ public class SecurityConfig {
     @ConditionalOnMissingBean(PermissionClient.class)
     PermissionClient permissionClient(@Qualifier("orgChannel") ManagedChannel channel) {
         return new GrpcPermissionClient(PermissionServiceGrpc.newBlockingStub(channel));
+    }
+
+    /** 사람의 이름·이메일도 org-service가 원장이다 — 권한과 같은 채널을 쓴다 */
+    @Bean
+    @ConditionalOnMissingBean(MemberDirectory.class)
+    MemberDirectory memberDirectory(@Qualifier("orgChannel") ManagedChannel channel) {
+        return new GrpcMemberDirectory(PermissionServiceGrpc.newBlockingStub(channel));
     }
 }
