@@ -70,6 +70,14 @@ public class AccountStatusInterceptor implements HandlerInterceptor {
         return true;
     }
 
+    /**
+     * 캐시를 비운다. 지금은 테스트 격리용이고, org가 상태 변경을 알려 주는 경로가 생기면
+     * 그 훅이 여기를 부른다 — 그때까지 반영 지연은 30초다.
+     */
+    public void evictAll() {
+        cache.invalidateAll();
+    }
+
     /** org가 아는 상태. 그런 사람이 없으면 empty(통과), 못 물어봤으면 던진다(503) */
     private Optional<String> status(long userId) {
         MemberDirectory.Lookup lookup = directory.lookup(List.of(userId));

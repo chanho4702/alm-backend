@@ -20,6 +20,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.List;
+
 import static com.platform.almbackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -245,9 +247,13 @@ class EmailNotificationTest {
                 .extracting(message -> message.getTo()[0])
                 .containsExactlyInAnyOrder("alice@org.example", "bob@org.example");
 
-        assertThat(directory.calls()).hasSize(1);
-        assertThat(directory.calls().get(0).ids()).containsExactlyInAnyOrder(1L, 2L);
-        assertThat(directory.calls().get(0).inTransaction()).isFalse();
+        // 계정 상태 게이트도 같은 디렉터리를 쓰지만 그건 요청자 한 명짜리 조회다 — 발송용 묶음 조회는 한 번뿐
+        List<TestConfig.FakeMemberDirectory.Call> batched = directory.calls().stream()
+                .filter(call -> call.ids().size() > 1)
+                .toList();
+        assertThat(batched).hasSize(1);
+        assertThat(batched.get(0).ids()).containsExactlyInAnyOrder(1L, 2L);
+        assertThat(directory.calls()).allSatisfy(call -> assertThat(call.inTransaction()).isFalse());
     }
 
     /** org가 잠깐 불능이어도 알림 메일은 나간다 — 주소 조회는 인가 결정이 아니다 */
@@ -285,10 +291,7 @@ class EmailNotificationTest {
         assignIssueToBob();
 
         verify(mailSender, after(500).never()).send(any(SimpleMailMessage.class));
-        // 알림함에는 남는다. 본인이 REST로 읽지는 못한다 — 비활성 계정은 계정 상태 게이트가 막는다
+        // 알림함에는 남는다(본인이 REST로 못 읽는 것은 계정 상태 게이트의 몫 — AccountStatusGateTest)
         assertThat(notifications.count()).isEqualTo(1);
-        mvc.perform(get("/api/alm/notifications").with(asUser(2, "Bob")))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("비활성된 계정입니다"));
     }
 }

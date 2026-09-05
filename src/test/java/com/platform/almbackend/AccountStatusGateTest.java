@@ -11,6 +11,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.platform.almbackend.security.AccountStatusInterceptor;
+
 import static com.platform.almbackend.TestAuth.asUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -37,6 +39,7 @@ class AccountStatusGateTest {
     @Autowired TestConfig.FakeMemberDirectory directory;
     @Autowired TestConfig.FakePermissionClient permissions;
     @Autowired TestConfig.SettingsSeeder seeder;
+    @Autowired AccountStatusInterceptor gate;
 
     MockMvc mvc;
 
@@ -45,6 +48,7 @@ class AccountStatusGateTest {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         directory.reset();
         permissions.reset();
+        gate.evictAll(); // 30초 캐시가 테스트 사이에 남지 않게
         seeder.resetToDefaults();
     }
 
@@ -52,6 +56,7 @@ class AccountStatusGateTest {
     void restore() {
         directory.reset();
         permissions.reset();
+        gate.evictAll();
     }
 
     @Test
