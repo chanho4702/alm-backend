@@ -64,16 +64,17 @@ public class PreferenceService {
         }
     }
 
-    /** 개인 설정 응답 — 저장 문서 + 이메일 스위치 + 서버 메일 구성 여부(읽기 전용) */
+    /**
+     * 개인 설정 응답 — 저장 문서 + 이메일 스위치 + 서버 메일 구성 여부(읽기 전용).
+     * 아바타는 org-service로 옮겼다(2026-09-05) — 프론트는 {@code GET /api/org/me}에서 받는다.
+     */
     public record PreferenceView(
             NotificationPrefs notifications,
             AutoWatch autoWatch,
             String startPage,
             boolean emailEnabled,
             /** 서버에 메일 서버가 설정돼 있는가 — false면 스위치를 켜도 메일이 나가지 않는다 */
-            boolean mailConfigured,
-            /** 아바타 이미지 주소(없으면 null). 캐시가 갱신을 놓치지 않게 ?v=가 붙어 있다 */
-            String avatarUrl) {
+            boolean mailConfigured) {
     }
 
     /** 개인 설정 요청 — mailConfigured는 서버가 정한다(요청에 실려도 무시) */
@@ -95,9 +96,9 @@ public class PreferenceService {
         UserPreference stored = preferences.findById(userId).orElse(null);
         if (stored != null) {
             stored.rememberEmail(jwtEmail);
-            return toView(parse(stored.getBody()), stored.isEmailEnabled(), avatarUrl(stored));
+            return toView(parse(stored.getBody()), stored.isEmailEnabled());
         }
-        return toView(PreferenceBody.defaults(), false, null);
+        return toView(PreferenceBody.defaults(), false);
     }
 
     public PreferenceView save(long userId, String jwtEmail, PreferenceUpdate request) {
@@ -116,30 +117,7 @@ public class PreferenceService {
         stored.rememberEmail(jwtEmail);
         // 필드를 안 보내면 기존 값을 유지한다 — 기존 프론트 요청(emailEnabled 없음)이 스위치를 끄지 않게
         if (req.emailEnabled() != null) stored.setEmailEnabled(req.emailEnabled());
-        return toView(filled, stored.isEmailEnabled(), avatarUrl(stored));
-    }
-
-    /**
-     * 개인 설정 문서 밖의 값(아바타 키)을 저장할 때도 행이 필요하다 — 설정을 한 번도 저장하지 않은
-     * 사용자가 사진부터 올릴 수 있게 기본 문서로 만들어 둔다.
-     */
-    public UserPreference ensureRow(long userId) {
-        return preferences.findById(userId).orElseGet(() -> preferences.save(UserPreference.of(
-                userId, serialize(PreferenceBody.defaults()), Instant.now().truncatedTo(ChronoUnit.MICROS))));
-    }
-
-    /**
-     * 아바타 이미지 주소 — 목록 응답(/api/alm/users/avatars)과 같은 형식이다.
-     *
-     * <b>{@code <img src>}에 그대로 넣을 수 없다.</b> 이 엔드포인트는 Bearer 인증을 요구하는데
-     * 브라우저는 {@code <img>} 요청에 Authorization 헤더를 붙이지 않아 401이 난다. 프론트는
-     * fetch로 바이트를 받아 object URL을 만들어 쓴다(첨부 내려받기와 같은 방식).
-     * 이 문자열은 그래서 "아바타가 있다"는 신호와 fetch 대상 경로로 쓰인다.
-     */
-    public static String avatarUrl(UserPreference stored) {
-        if (stored == null || !stored.hasAvatar()) return null;
-        long version = stored.getAvatarUpdatedAt() == null ? 0L : stored.getAvatarUpdatedAt().toEpochMilli();
-        return "/api/alm/users/" + stored.getUserId() + "/avatar?v=" + version;
+        return toView(filled, stored.isEmailEnabled());
     }
 
     /**
@@ -160,10 +138,10 @@ public class PreferenceService {
                 .filter(address -> !address.isBlank());
     }
 
-    private PreferenceView toView(PreferenceBody body, boolean emailEnabled, String avatarUrl) {
+    private PreferenceView toView(PreferenceBody body, boolean emailEnabled) {
         return new PreferenceView(
                 body.notifications(), body.autoWatch(), body.startPage(), emailEnabled,
-                email.getObject().configured(), avatarUrl);
+                email.getObject().configured());
     }
 
     private PreferenceBody parse(String body) {

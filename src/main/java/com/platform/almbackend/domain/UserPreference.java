@@ -34,17 +34,6 @@ public class UserPreference {
     @Column(length = 320)
     private String email;
 
-    /**
-     * 아바타 오브젝트 키(avatars/{userId}/{uuid}.{ext}). 바이트는 첨부와 같은 저장소에 있고
-     * issue_attachment 행은 만들지 않는다 — 아바타는 이슈에 딸린 파일이 아니다.
-     */
-    @Column(name = "avatar_key", length = 200)
-    private String avatarKey;
-
-    /** 캐시 무효화용(?v=). updatedAt과 분리해야 아바타와 무관한 설정 저장이 이미지 URL을 흔들지 않는다 */
-    @Column(name = "avatar_updated_at")
-    private Instant avatarUpdatedAt;
-
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
@@ -65,24 +54,6 @@ public class UserPreference {
     public void setEmailEnabled(boolean emailEnabled) {
         this.emailEnabled = emailEnabled;
     }
-
-    /** @return 방금 밀려난 이전 키(없으면 null) — 호출자가 커밋 뒤에 지운다 */
-    public String attachAvatar(String key, Instant at) {
-        String previous = this.avatarKey;
-        this.avatarKey = key;
-        this.avatarUpdatedAt = at;
-        return previous;
-    }
-
-    /** @return 지워야 할 키(없었으면 null) */
-    public String clearAvatar() {
-        String previous = this.avatarKey;
-        this.avatarKey = null;
-        this.avatarUpdatedAt = null;
-        return previous;
-    }
-
-    public boolean hasAvatar() { return avatarKey != null && !avatarKey.isBlank(); }
 
     /** 바뀐 것이 없으면 쓰지 않는다 — 알림함을 열 때마다 UPDATE가 나가지 않게 */
     public void rememberEmail(String email) {
