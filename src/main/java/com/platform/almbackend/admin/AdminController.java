@@ -2,10 +2,6 @@ package com.platform.almbackend.admin;
 
 import com.platform.almbackend.admin.dto.AuditPageResponse;
 import com.platform.almbackend.admin.dto.SystemStatsResponse;
-import com.platform.almbackend.repository.AuditLogRepository;
-import com.platform.almbackend.repository.IssueAttachmentRepository;
-import com.platform.almbackend.repository.IssueRepository;
-import com.platform.almbackend.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,10 +20,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @Tag(name = "Admin", description = "감사 로그와 시스템 현황 — 전역 관리자 전용")
 public class AdminController {
     private final AuditLogService audit;
-    private final ProjectRepository projects;
-    private final IssueRepository issues;
-    private final IssueAttachmentRepository attachments;
-    private final AuditLogRepository auditLogs;
+    private final SystemStatsService systemStats;
 
     @Operation(summary = "감사 로그를 조건별로 조회한다")
     @GetMapping("/api/alm/admin/audit")
@@ -42,11 +35,9 @@ public class AdminController {
         return audit.search(type, actorId, projectId, since, page, size);
     }
 
-    @Operation(summary = "프로젝트·이슈·첨부 총량 등 시스템 현황을 조회한다")
+    @Operation(summary = "프로젝트·이슈·첨부 총량 등 시스템 현황을 조회한다. 서버에서 60초 캐시한다")
     @GetMapping("/api/alm/admin/stats")
     public SystemStatsResponse stats() {
-        return new SystemStatsResponse(
-                projects.count(), issues.count(), attachments.count(),
-                attachments.totalBytes(), auditLogs.count());
+        return systemStats.stats();
     }
 }

@@ -45,6 +45,25 @@ spring:
 springdoc:
   override-with-generic-response: false
 
+# Actuator — 내부 네트워크 전용이다. 게이트웨이 라우트는 /api/**뿐이고 nginx도 /actuator를 넘기지 않는다.
+# 인디케이터는 db·redis 기본값만 쓴다. MinIO·OpenSearch·org gRPC는 넣지 않는다 — 프로브가
+# 남의 서비스를 때리면 그 서비스 장애가 이 서비스의 DOWN으로 번지고, 프로브 자체가 부하가 된다.
+# 메일은 host가 비어도 발송기 빈이 생겨 SMTP로 접속을 시도하므로 인디케이터를 끈다(선택 기능이다).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    mail:
+      enabled: false
+  info:
+    build:
+      enabled: true
+
 eureka:
   client:
     service-url:

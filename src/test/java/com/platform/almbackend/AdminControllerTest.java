@@ -1,6 +1,7 @@
 package com.platform.almbackend;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.platform.almbackend.admin.SystemStatsService;
 import com.platform.almbackend.repository.AuditLogRepository;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
@@ -39,10 +40,12 @@ class AdminControllerTest {
     @Autowired SprintRepository sprints;
     @Autowired AuditLogRepository auditLogs;
     @Autowired TestConfig.FakePermissionClient permissions;
+    @Autowired SystemStatsService systemStats;
 
     @BeforeEach
     void reset() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        systemStats.evictAll(); // 현황은 60초 캐시라 다른 테스트가 남긴 값을 물려받지 않게 비운다
         auditLogs.deleteAllInBatch();
         issues.deleteAllInBatch();
         sprints.deleteAllInBatch();

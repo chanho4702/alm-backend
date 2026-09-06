@@ -11,6 +11,12 @@ spring:
 eureka:
   client:
     enabled: false
+# 단위 테스트에는 Redis가 없다(이벤트 발행도 꺼 둔다) — 인디케이터를 켜 두면 헬스가 DOWN이 되어
+# 액추에이터 계약 테스트가 인프라 유무에 좌우된다. 운영에서는 기본값 그대로 켜져 있다.
+management:
+  health:
+    redis:
+      enabled: false
 platform:
   grpc:
     enabled: false
