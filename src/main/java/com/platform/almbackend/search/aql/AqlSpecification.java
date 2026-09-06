@@ -33,8 +33,10 @@ import java.util.Map;
  * <ul>
  *   <li><b>접근 범위</b>: 볼 수 있는 프로젝트 조건을 언제나 AND로 더한다. 질의에 뭘 쓰든 못 보는 건 안 나온다.</li>
  *   <li><b>보관 제외 기본</b>: {@code archived}를 쓰지 않은 질의는 보관된 이슈를 뺀다.</li>
- *   <li><b>NULL 안전</b>: 각 잎 술어는 참/거짓만 낸다(NULL을 내지 않는다). 그래야 {@code NOT}이
- *       정확한 여집합이 된다 — SQL 3값 논리로는 {@code NOT (assignee = 3)}이 미지정 이슈를 조용히 버린다.</li>
+ *   <li><b>NULL 안전</b>: 각 잎 술어는 참/거짓만 낸다(NULL을 내지 않는다). 그래야 {@code NOT (…)}이
+ *       정확한 여집합이 된다 — SQL 3값 논리로는 {@code NOT (assignee = 3)}이 미지정 이슈를 조용히 버린다.
+ *       <b>부정 필드 연산자는 여기서 갈린다</b>: {@code !=}·{@code NOT IN}·{@code !~}는 JQL대로 빈 값을
+ *       <b>제외</b>한다({@code excludeEmpty}). 여집합인 {@code NOT (…)}과 다르게 두는 것이 의도다.</li>
  * </ul>
  */
 final class AqlSpecification {
