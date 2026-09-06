@@ -77,6 +77,9 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성 |
 | `GET` | `/api/alm/issues/{issueId}` | VIEW | 이슈 조회 |
 | `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(V6), `details.fixVersionId`(같은 프로젝트·보관 아님; V7) |
+| `POST` | `/api/alm/issues/query` | 접근 가능한 프로젝트 | **AQL** 검색 — 아래 "AQL" 절 |
+| `POST` | `/api/alm/issues/query/validate` | 인증 | AQL 문법 검사(에디터 실시간) |
+| `GET` | `/api/alm/issues/query/fields` | 접근 가능한 프로젝트 | AQL 자동완성 사전(필드·별칭·연산자·값 후보) |
 | `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 |
 | `POST` | `/api/alm/issues/{issueId}/rank` | EDIT | 백로그/스프린트 랭크 이동 |
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |
@@ -182,6 +185,205 @@ POST /api/alm/sprints/{sprintId}/complete
 프로젝트에 있어야 하며, 부모 삭제 시 자식의 `parentId`는 해제된다. `order`는 응답에만
 포함되는 서버 관리 값이며 생성 시 프로젝트 내 다음 번호로 발급한다. 재정렬은 별도 API로
 제공하기 전까지 일반 수정 요청으로 바꿀 수 없다.
+
+## AQL — 조건을 조합하는 이슈 질의어
+
+JQL의 구조(필드 연산자 값 · AND/OR/NOT · 괄호 · IN · `~` · 상대 날짜 · ORDER BY)를 따르되 **한국어 필드
+별칭**을 받는다. 실행은 DB(JPA Criteria)로 하고 OpenSearch를 쓰지 않는다. 파서는 손으로 짠 재귀 하강이며
+(`search/aql/`), **프론트 `store/aql/`가 같은 문법·같은 AST를 만든다** — 아래 AST JSON이 그 계약이다.
+
+### 문법
+
+```
+query   := clause? ("ORDER BY" order ("," order)*)?
+clause  := term (("AND" | "OR") term)*          -- AND가 OR보다 강하게 묶인다
+term    := "NOT" term | "(" clause ")" | cond
+cond    := field op value
+         | field ("IN" | "NOT IN") "(" value ("," value)* ")"
+         | field ("IS" | "IS NOT") "EMPTY"
+op      := "=" | "!=" | "~" | "!~" | "<" | "<=" | ">" | ">="
+value   := string | number | ident | function
+order   := field ("ASC" | "DESC")?
+```
+
+- 키워드와 필드명·별칭은 **대소문자를 가리지 않는다**. 방향을 안 쓰면 `ASC`다.
+- 공백·특수문자가 있는 값은 따옴표로 감싼다(`"진행 중"`). 낱말 전체가 수일 때만 숫자로 읽으므로
+  `2026-09-06`·`-7d`는 낱말이다.
+- 빈 질의는 전체 + 기본 정렬(`updated DESC`)이다. 정렬은 언제나 `id ASC`로 마무리해 페이지가 흔들리지 않는다.
+- 상대 날짜는 `-7d` `+2w` `-1M` `+1y`(일/주/월/년), 함수는 `now()` `startOfDay(±n)` `endOfDay(±n)`
+  `startOfWeek(±n)` `endOfWeek(±n)` `startOfMonth(±n)` `endOfMonth(±n)` `startOfYear(±n)` `endOfYear(±n)`.
+  경계는 **Asia/Seoul** 기준이고 주의 시작은 월요일이다.
+
+### 필드
+
+| 필드 | 별칭 | 타입 | 값 |
+|---|---|---|---|
+| `project` | 프로젝트 | enum | 키(`ALM`) 또는 이름 |
+| `key` | 키 | text | `ALM-12`. `~`로 부분 일치 |
+| `type` | 타입, 유형 | enum | 레지스트리 id 또는 이름(작업/스토리/버그/에픽/하위 작업) |
+| `status` | 상태 | enum | 상태 id 또는 이름 |
+| `statusCategory` | 상태분류 | enum | `new`/`active`/`complete` 또는 할 일/진행 중/완료 |
+| `priority` | 우선순위 | enum(순서) | id 또는 이름. `priority >= high`는 "high 이상으로 중요" |
+| `assignee` | 담당자, 담당 | user | 이름·이메일·local-part·숫자 id·`currentUser()`·`EMPTY` |
+| `reporter` | 보고자 | user | 위와 같음(`EMPTY`는 없다 — 보고자는 항상 있다) |
+| `labels` | 라벨 | multi | `labels IN ("a","b")`, `labels = a`, `IS EMPTY` |
+| `component` | 컴포넌트 | multi | 이름 또는 id |
+| `sprint` | 스프린트 | enum | 이름·id, `EMPTY`(백로그), `openSprints()` |
+| `fixVersion` | 수정버전, 버전 | enum | 이름 또는 id, `EMPTY` |
+| `resolution` | 해결 | enum | `DONE`/`WONT_DO`/`DUPLICATE`/`CANNOT_REPRODUCE`(완료·하지않음·중복·재현불가), `EMPTY`(미해결) |
+| `parent` | 상위, 상위항목 | key | `ALM-3` 또는 id, `EMPTY` |
+| `created` / `updated` / `due` | 생성일 / 수정일 / 마감일 | date | 절대·상대·함수 |
+| `estimate` | 예상시간 | number | 시간(h) |
+| `text` | 텍스트, 내용 | text | `~`만 — 제목+설명 |
+| `summary` | 요약, 제목 | text | `~` 포함, `=` 정확(대소문자 무시) |
+| `archived` | 보관 | bool | 기본 false. `archived = true`로 보관함 검색 |
+
+정렬 가능: `created` `updated` `due` `priority` `key` `status` `summary` `assignee` `estimate`.
+`key`는 문자열이 아니라 프로젝트+이슈 번호로 센다(`ALM-9`가 `ALM-10`보다 앞).
+
+### 항상 걸리는 세 가지
+
+1. **접근 범위** — 볼 수 있는 프로젝트 조건을 언제나 AND로 더한다. 못 보는 프로젝트는 이름조차 풀리지
+   않는다(`프로젝트를 찾을 수 없습니다`).
+2. **보관 제외 기본** — `archived`를 한 번도 쓰지 않은 질의는 보관된 이슈를 뺀다. 쓰면 그 조건이 대신한다.
+3. **부정 연산자는 빈 값을 제외** — `!=`·`NOT IN`·`!~`는 JQL 그대로다. `assignee != 2`에 담당자
+   미지정 이슈는 **안 들어간다**. 넣으려면 `assignee != 2 OR assignee IS EMPTY`로 명시한다.
+   집합 여집합인 `NOT (…)`은 다르다 — `NOT labels = backend`는 라벨 없는 이슈를 **포함**한다.
+   JQL도 필드 연산자와 `NOT` 연산자를 이렇게 가르고, 여기도 그대로 따른다.
+
+### 이름을 id로 푸는 규칙
+
+- 상태·타입·우선순위는 설정 레지스트리, 프로젝트는 키/이름, 컴포넌트·스프린트·버전은 이름이다.
+  이름이 **여럿에 맞으면 전부**를 IN으로 넓힌다(컴포넌트·스프린트·버전 이름은 프로젝트 안에서만 유일하다).
+- **사람 이름은 프로젝트 조건과 무관하게** 푼다. 부분 일치는 하지 않는다 — 정확한 표시 이름, 이메일,
+  이메일 local-part, 숫자 id, `currentUser()`(JWT `sub`)만 본다. 같은 이름이 둘이면 IN으로 넓힌다.
+- org에는 **표시 이름으로 찾는 창구가 없고**(`LookupMembers`는 이메일과 local-part만 본다) 전원을 훑는
+  창구도 없다. 그래서 표시 이름은 이슈에 실제로 등장하는 담당자·보고자 id를 `GetMembers`로 읽어 그 안에서
+  맞춘다. 이슈에 한 번도 안 나온 사람은 어차피 검색 결과에도 없다.
+- 못 찾으면 400이다(빈 결과가 아니다). org를 못 읽었으면 **503**이다 — "그런 사람 없다"로 바꿔 말하지 않는다.
+
+### 오류 계약
+
+문법·해석 오류는 **400**이고 공통 `{"error"}`에 두 값을 더한다.
+
+```json
+{ "error": "필드를 모릅니다: statuss", "position": 0, "expected": [] }
+```
+
+- `position`은 0부터 세는 입력 오프셋이다 — 프론트 에디터가 그 자리에 밑줄을 긋는다. **틀린 것을 가리킨다**:
+  모르는 필드는 필드 자리(`statuss = done` → 0), 못 쓰는 연산자는 연산자 자리(`priority ~ high` → 9),
+  값 형식 오류는 값 자리(`due > yesterday` → 6).
+- `expected`는 그 자리에 올 수 있었던 것이고, 모르면 빈 배열이다.
+- 대표 문구: `연산자를 모릅니다: ==` · `값이 필요합니다` · `괄호를 닫아야 합니다` ·
+  `따옴표를 닫아야 합니다` · `필드를 모릅니다: …` · `'~'는 텍스트 필드에만 쓸 수 있습니다 (priority)` ·
+  `'>'는 날짜·숫자 필드에만 쓸 수 있습니다 (status)` · `날짜 형식이 아닙니다: yesterday` ·
+  `상태를 모릅니다: …` · `사용자를 찾을 수 없습니다: …` · `정렬할 수 없는 필드입니다: project`.
+
+### AST JSON — 프론트와의 계약
+
+`POST /api/alm/issues/query/validate`가 `ast`로 돌려주는 모양이다. 프론트 `store/aql/parser.ts`가
+같은 입력에 **글자까지 같은 JSON**을 만들어야 한다(서버 쪽 기준은 `AqlParserTest`).
+
+두 가지가 규칙이다.
+
+1. **필드는 쓴 그대로 담는다.** 별칭(`상태`→`status`)·소문자 정규화는 해석 단계가 한다 — 파서는 필드 표를
+   몰라도 된다.
+2. **같은 종류의 이항 연산자는 평탄화한다.** `a AND b AND c`는 자식 셋인 `and` 하나이고, 자식이 하나면
+   감싸지 않는다.
+
+노드는 `and`/`or`(`children`) · `not`(`child`) · `compare`(`field`,`operator`,`value`) ·
+`in`(`field`,`negated`,`values`) · `empty`(`field`,`negated`)이고, 값은
+`{"type":"string"|"ident"|"number","value":…}` 또는 `{"type":"function","name":…,"args":[…]}`다.
+
+벡터 1 — `status = "진행 중" AND assignee = currentUser()`
+
+```json
+{
+  "where": {
+    "kind": "and",
+    "children": [
+      {"kind": "compare", "field": "status", "operator": "=", "value": {"type": "string", "value": "진행 중"}},
+      {"kind": "compare", "field": "assignee", "operator": "=", "value": {"type": "function", "name": "currentUser", "args": []}}
+    ]
+  },
+  "orderBy": []
+}
+```
+
+벡터 2 — `project = ALM AND (priority >= high OR due <= +3d) ORDER BY due ASC, priority DESC`
+
+```json
+{
+  "where": {
+    "kind": "and",
+    "children": [
+      {"kind": "compare", "field": "project", "operator": "=", "value": {"type": "ident", "value": "ALM"}},
+      {
+        "kind": "or",
+        "children": [
+          {"kind": "compare", "field": "priority", "operator": ">=", "value": {"type": "ident", "value": "high"}},
+          {"kind": "compare", "field": "due", "operator": "<=", "value": {"type": "ident", "value": "+3d"}}
+        ]
+      }
+    ]
+  },
+  "orderBy": [
+    {"field": "due", "direction": "asc"},
+    {"field": "priority", "direction": "desc"}
+  ]
+}
+```
+
+`in`·`empty`·`not`이 섞인 나머지 벡터(§6 3~7번)의 AST는 `AqlParserTest`에 문자열 그대로 박혀 있다.
+
+### 요청·응답
+
+```jsonc
+// POST /api/alm/issues/query
+{ "aql": "project = ALM AND status != 완료 ORDER BY due ASC", "page": 0, "size": 50 }
+// → 기존 검색과 같은 이슈 shape + echoedAql (size는 최대 200)
+{ "items": [ /* IssueResponse */ ], "page": 0, "size": 50, "total": 12,
+  "echoedAql": "project = ALM AND status != 완료 ORDER BY due ASC" }
+
+// POST /api/alm/issues/query/validate  → 문법·필드·연산자만 본다(값이 실재하는지는 실행 때 확인)
+{ "aql": "상태 = 완료 ORDER BY due" }
+{ "ok": true, "fields": ["status", "due"], "ast": { /* 위 shape */ } }
+{ "ok": false, "error": "괄호를 닫아야 합니다", "position": 14, "expected": [")"] }
+
+// GET /api/alm/issues/query/fields  → 자동완성 사전
+{ "fields": [ { "name": "status", "aliases": ["상태"], "kind": "ENUM",
+                "operators": ["=", "!=", "IN", "NOT IN"], "sortable": true, "emptyAllowed": false,
+                "values": [ { "id": "inprogress", "name": "진행 중" } ] } ],
+  "functions": [ { "name": "currentUser", "signature": "currentUser()",
+                   "fields": ["assignee", "reporter"], "description": "지금 로그인한 사람" } ],
+  "keywords": ["AND", "OR", "NOT", "IN", "NOT IN", "IS", "IS NOT", "EMPTY", "ORDER BY", "ASC", "DESC"] }
+```
+
+사용자 후보는 사전에 넣지 않는다 — 프론트가 `/api/org/members`로 따로 받는다.
+
+### 질의 상한
+
+되돌아오지 않는 재귀와 무한정 큰 질의를 파서 앞에서 막는다 — 안 막으면 `((((…`가 `StackOverflowError`로
+터져 500이 된다.
+
+| 상한 | 값 | 걸리면 |
+|---|---|---|
+| AQL 문자열 | 4000자 | 400 `AQL은 4000자 이하여야 합니다`(요청 검증이라 `position` 없음) |
+| 중첩 깊이(괄호·`NOT`) | 50단계 | 400 `너무 깊게 중첩됐습니다 (최대 50단계)` |
+| 절 개수 | 200개 | 400 `조건이 너무 많습니다 (최대 200개)` |
+| 페이지 크기 | 200 | 넘기면 200으로 깎는다 |
+
+`~` 검색에서 사용자가 친 `%`와 `_`는 **글자 그대로**다. LIKE 와일드카드로 새지 않게 이스케이프하므로
+`text ~ "%"`가 전체를 매치하지 않고 `_`가 아무 한 글자로 번지지 않는다.
+
+### 한계
+
+- **`resolved`(해결일)은 아직 없다.** 해결 시각을 저장하는 컬럼이 없어서, 쓰면 400
+  `아직 지원하지 않는 필드입니다: resolved`로 거절한다. 다른 값으로 대신 답하지 않는다.
+- `validate`는 값을 해석하지 않는다. `status = 없는상태`는 검증을 통과하고 실행에서 400이 난다.
+- 표시 이름 해석의 후보는 이슈에 등장하는 사용자 1000명까지다.
+- 보관함 검색을 위해 `issue` 테이블을 읽기 전용 엔티티(`AqlIssueRow`)로 한 번 더 매핑한다.
+  `Issue`에는 `@SQLRestriction("archived_at is null")`이 걸려 있어 Criteria가 보관된 행을 못 본다.
 
 ## OpenAPI
 
@@ -350,6 +552,7 @@ docker build -t alm-backend .
 src/main/java/com/platform/almbackend/
 ├─ project/      프로젝트 REST·서비스·DTO
 ├─ issue/        이슈 REST·서비스·DTO
+├─ search/aql/   AQL 렉서·파서·해석·Specification
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 AlmContentService
 ├─ event/        커밋 이후 Redis Streams 발행

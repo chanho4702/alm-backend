@@ -10,6 +10,9 @@ import java.util.List;
 
 public interface ComponentRepository extends JpaRepository<Component, Long> {
     List<Component> findByProjectIdOrderByNameAsc(long projectId);
+
+    /** AQL 이름 해석 — 컴포넌트 이름은 프로젝트 안에서만 유일하라 전 프로젝트에서 찾으면 여럿일 수 있다 */
+    List<Component> findByNameIgnoreCase(String name);
     boolean existsByProjectIdAndName(long projectId, String name);
     boolean existsByProjectIdAndNameAndIdNot(long projectId, String name, long id);
 

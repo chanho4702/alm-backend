@@ -100,6 +100,8 @@ public class TestConfig {
         private final Set<Long> globalAdmins = new HashSet<>();
         private boolean unavailable;
         private long grantedProjectId;
+        /** 볼 수 있는 프로젝트 — 기본은 전역이라 기존 테스트는 그대로다 */
+        private AccessScope scope = AccessScope.global();
 
         public void setAllowed(boolean allowed) { this.allowed = allowed; }
         /** 거부 사유 — 계정 상태(PENDING/SUSPENDED/DEACTIVATED)면 문구가 달라진다 */
@@ -109,6 +111,8 @@ public class TestConfig {
             globalAdmins.clear();
             for (long id : ids) globalAdmins.add(id);
         }
+        /** AQL·검색의 접근 범위를 좁힌다(전역이 아닌 사용자를 흉내 낸다) */
+        public void setAccessScope(AccessScope scope) { this.scope = scope; }
         /** org-service 불능 — 모든 판정이 503으로 올라간다 */
         public void setUnavailable(boolean unavailable) { this.unavailable = unavailable; }
         public long grantedProjectId() { return grantedProjectId; }
@@ -118,6 +122,7 @@ public class TestConfig {
             deniedReason = "NO_GRANT";
             globalAdmins.clear();
             unavailable = false;
+            scope = AccessScope.global();
         }
 
         @Override public PermissionDecision check(long userId, long projectId, AlmAction action) {
@@ -132,7 +137,7 @@ public class TestConfig {
                     : PermissionDecision.deny(deniedReason);
         }
 
-        @Override public AccessScope accessibleProjects(long userId) { return AccessScope.global(); }
+        @Override public AccessScope accessibleProjects(long userId) { return scope; }
         @Override public boolean grantProjectAdmin(long userId, long projectId) {
             grantedProjectId = projectId;
             return true;
@@ -173,6 +178,22 @@ public class TestConfig {
             calls.clear();
             unavailable = false;
             failed = false;
+        }
+
+        @Override public Map<String, DirectoryMember> lookupByEmail(Collection<String> queries) {
+            if (unavailable || failed) return Map.of();
+            Map<String, DirectoryMember> found = new HashMap<>();
+            for (String query : queries) {
+                for (DirectoryMember member : members.values()) {
+                    String email = member.email();
+                    int at = email.indexOf('@');
+                    String local = at > 0 ? email.substring(0, at) : email;
+                    if (email.equalsIgnoreCase(query) || (!local.isEmpty() && local.equalsIgnoreCase(query))) {
+                        found.put(query.toLowerCase(java.util.Locale.ROOT), member);
+                    }
+                }
+            }
+            return found;
         }
 
         @Override public Lookup lookup(Collection<Long> ids) {

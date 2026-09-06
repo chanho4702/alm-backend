@@ -34,6 +34,20 @@ public interface MemberDirectory {
     /** id → 사람 + 조회 결과. 못 찾았거나 조회가 실패한 id는 {@code members}에 없다. */
     Lookup lookup(Collection<Long> ids);
 
+    /**
+     * 이메일(또는 이메일 local-part)로 사람을 찾는다 — {@code LookupMembers}(0.15.0). {@code lookup}과
+     * 방향이 반대다. org에는 <b>표시 이름으로 찾는 창구가 없다</b>(이메일과 local-part만 본다) —
+     * 이름 해석은 호출측이 다른 방법으로 해야 한다.
+     *
+     * <p>후보가 둘 이상인 질의는 org가 아예 답을 주지 않는다(남의 이름으로 잘못 짝지으면 안 되므로).
+     * 못 찾았거나 조회가 실패한 질의는 결과에 없다 — 기본 구현은 이 창구를 안 쓰는 대역용으로 빈 결과다.
+     *
+     * @return 물어본 문자열(소문자) → 사람
+     */
+    default Map<String, DirectoryMember> lookupByEmail(Collection<String> emailsOrLocalParts) {
+        return Map.of();
+    }
+
     /** 실패를 구분할 필요가 없는 호출측용 — 못 읽었으면 빈 결과다 */
     default Map<Long, DirectoryMember> members(Collection<Long> ids) {
         return lookup(ids).members();

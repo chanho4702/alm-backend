@@ -13,6 +13,9 @@ import java.util.Optional;
 public interface ProjectVersionRepository extends JpaRepository<ProjectVersion, Long> {
     List<ProjectVersion> findByProjectIdOrderByCreatedAtAscIdAsc(long projectId);
 
+    /** AQL 이름 해석 — 버전 이름은 프로젝트 안에서만 유일하다 */
+    List<ProjectVersion> findByNameIgnoreCase(String name);
+
     boolean existsByProjectIdAndName(long projectId, String name);
 
     long deleteByProjectId(long projectId);

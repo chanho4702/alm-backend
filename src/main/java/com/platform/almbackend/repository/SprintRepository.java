@@ -14,6 +14,12 @@ import java.util.Optional;
 public interface SprintRepository extends JpaRepository<Sprint, Long> {
     List<Sprint> findByProjectIdOrderBySprintNumberAsc(long projectId);
 
+    /** AQL 이름 해석 — 스프린트 이름은 프로젝트 안에서만 유일하다 */
+    List<Sprint> findByNameIgnoreCase(String name);
+
+    /** AQL {@code openSprints()} — 진행 중인 스프린트 전부 */
+    List<Sprint> findByState(SprintState state);
+
     Optional<Sprint> findByProjectIdAndState(long projectId, SprintState state);
 
     long deleteByProjectId(long projectId);

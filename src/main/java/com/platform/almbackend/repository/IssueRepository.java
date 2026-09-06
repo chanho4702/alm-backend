@@ -48,6 +48,20 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @Query(value = "delete from issue where project_id = :projectId", nativeQuery = true)
     int purgeByProjectId(@Param("projectId") long projectId);
 
+    /**
+     * AQL이 사람 이름을 풀 때 쓰는 후보 id — org에는 "전원 조회" 창구가 없어서(GetMembers는 id로만 읽는다)
+     * 이슈에 실제로 등장하는 담당자·보고자를 후보로 삼는다. 어차피 이슈에 없는 사람은 검색 결과에도 없다.
+     * 보관된 행까지 보려고 네이티브로 읽는다.
+     */
+    @Query(value = """
+            select distinct u from (
+                select assignee_id as u from issue where assignee_id is not null
+                union
+                select reporter_id as u from issue
+            ) participants
+            """, nativeQuery = true)
+    List<Long> findParticipantUserIds();
+
     @Query("select coalesce(max(i.sortOrder), 0) from Issue i where i.projectId = :projectId")
     long findMaxSortOrderByProjectId(@Param("projectId") long projectId);
 

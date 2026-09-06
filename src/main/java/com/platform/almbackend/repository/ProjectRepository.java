@@ -14,6 +14,11 @@ import java.util.Optional;
 public interface ProjectRepository extends JpaRepository<Project, Long> {
     boolean existsByKey(String key);
     List<Project> findAllByOrderByNameAsc();
+
+    /** AQL 이름 해석 — 키는 유일하고 이름은 유일하지 않다 */
+    Optional<Project> findByKeyIgnoreCase(String key);
+
+    List<Project> findByNameIgnoreCase(String name);
     List<Project> findAllByIdInOrderByNameAsc(Collection<Long> ids);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -1,6 +1,9 @@
 package com.platform.almbackend.directory;
 
 import com.platform.proto.org.v1.GetMembersRequest;
+import com.platform.proto.org.v1.LookupMembersRequest;
+import com.platform.proto.org.v1.LookupMembersResponse;
+import com.platform.proto.org.v1.MemberMatch;
 import com.platform.proto.org.v1.GetMembersResponse;
 import com.platform.proto.org.v1.MemberInfo;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
@@ -71,6 +74,33 @@ public class GrpcMemberDirectory implements MemberDirectory {
             }
         }
         return new Lookup(outcome, found);
+    }
+
+    @Override
+    public Map<String, DirectoryMember> lookupByEmail(Collection<String> emailsOrLocalParts) {
+        if (emailsOrLocalParts == null || emailsOrLocalParts.isEmpty()) return Map.of();
+        List<String> unique = new ArrayList<>(new LinkedHashSet<>(emailsOrLocalParts));
+        Map<String, DirectoryMember> found = new LinkedHashMap<>();
+        for (int from = 0; from < unique.size(); from += MAX_IDS) {
+            List<String> chunk = unique.subList(from, Math.min(from + MAX_IDS, unique.size()));
+            // 이메일 자리와 local-part 자리 양쪽에 싣는다 — org가 "이메일 먼저" 규칙으로 중복을 정리한다
+            LookupMembersRequest request = LookupMembersRequest.newBuilder()
+                    .addAllEmails(chunk.stream().filter(v -> v.contains("@")).toList())
+                    .addAllUsernames(chunk.stream().filter(v -> !v.contains("@")).toList())
+                    .build();
+            try {
+                LookupMembersResponse response = stub.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS)
+                        .lookupMembers(request);
+                for (MemberMatch match : response.getMatchesList()) {
+                    found.put(match.getQuery().toLowerCase(java.util.Locale.ROOT),
+                            new DirectoryMember(match.getMemberId(), match.getDisplayName(), match.getEmail(), "", ""));
+                }
+            } catch (Exception e) {
+                // 여기서는 던지지 않는다 — 호출측이 "못 찾았다"로 이어서 처리한다
+                log.warn("사용자 이메일 조회 실패: queries={}", chunk, e);
+            }
+        }
+        return found;
     }
 
     private static boolean isUnavailable(Throwable e) {
