@@ -7,26 +7,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import static com.platform.almbackend.TestAuth.asUser;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.after;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 메일 서버가 없는 기본 설치 — 개인 설정이 그 사실을 알리고, 스위치를 켜도 발송을 시도하지 않는다 */
+/**
+ * 플랫폼 메일을 안 쓰는 기본 설치 — {@code ORG_INTERNAL_TOKEN}이 없어 허브를 부를 수 없다.
+ * 개인 설정이 그 사실을 알리고, 스위치를 켜도 발송을 시도하지 않는다.
+ */
 @SpringBootTest
 @ActiveProfiles("test")
 @Import(TestConfig.class)
@@ -34,7 +31,7 @@ class MailUnconfiguredTest {
 
     @Autowired WebApplicationContext context;
     @Autowired UserPreferenceRepository preferences;
-    @MockitoBean JavaMailSender mailSender;
+    @Autowired TestConfig.FakeOrgMailClient mail;
 
     MockMvc mvc;
 
@@ -42,10 +39,11 @@ class MailUnconfiguredTest {
     void reset() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         preferences.deleteAllInBatch();
+        mail.reset();
     }
 
     @Test
-    void 메일_서버가_없으면_mailConfigured가_false다() throws Exception {
+    void 메일_허브가_없으면_mailConfigured가_false다() throws Exception {
         mvc.perform(get("/api/alm/me/preferences").with(asUser(9, "Dan")))
                 .andExpect(jsonPath("$.mailConfigured").value(false))
                 .andExpect(jsonPath("$.emailEnabled").value(false));
@@ -55,6 +53,7 @@ class MailUnconfiguredTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailEnabled").value(true))
                 .andExpect(jsonPath("$.mailConfigured").value(false));
-        verify(mailSender, after(300).never()).send(any(SimpleMailMessage.class));
+        mail.awaitNothing();
+        assertThat(mail.sent()).isEmpty();
     }
 }

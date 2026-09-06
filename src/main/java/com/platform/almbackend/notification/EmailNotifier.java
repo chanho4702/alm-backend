@@ -9,8 +9,6 @@ import com.platform.almbackend.settings.SchemeQueries;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -30,13 +28,17 @@ import java.util.concurrent.Executors;
 /**
  * 이메일 알림 채널 — 알림함에 한 건이 새로 생길 때 같은 내용을 메일로도 보낸다(wiki-backend와 같은 방식).
  *
- * MinIO나 OpenSearch처럼 **선택 옵션**이다: {@code ALM_MAIL_HOST}가 비면 발송기가 없고 알림함만 남는다.
- * 개인 설정 응답의 {@code mailConfigured}가 그 사실을 먼저 알린다 — 스위치를 켰는데 아무것도 오지 않는
- * 것이 최악의 경험이다.
+ * <p>발송 자체는 <b>org-service가 한다</b>(2026-09-07 플랫폼 메일 설계). ALM은 SMTP를 모르고
+ * {@link OrgMailClient}로 "이 주소에 이 내용을" 넘길 뿐이다 — 메일 서버 설정·자격증명·재시도·발송 로그가
+ * 한 곳에 모이고, 관리자가 화면에서 끄면 세 서비스가 함께 꺼진다. 보낸 사람 주소도 org 설정이 정하므로
+ * 여기서 지정하지 않는다. 메일을 쓸 수 있는지는 {@code /internal/org/mail/status}가 알려 준다 —
+ * 개인 설정 응답의 {@code mailConfigured}가 그 값이다(스위치를 켰는데 아무것도 오지 않는 것이 최악의
+ * 경험이라 먼저 알린다). 그 조회는 <b>커밋 뒤 발송 스레드에서 배치당 한 번</b>만 한다 — 저장 경로에서
+ * 부르면 디렉터리 조회를 커밋 뒤로 뺀 이유(2026-09-05)를 그대로 되밟는다.
  *
- * 발송은 **커밋 뒤, 다른 스레드**에서 한다. 저장 트랜잭션 안에서 SMTP를 기다리면 이슈를 고친 사람의
- * 저장이 메일 서버 속도에 묶이고, 롤백된 저장의 메일이 먼저 나가 버린다. 실패는 warn 로그로만 남긴다 —
- * 메일은 알림함의 사본이지 원본이 아니다.
+ * 발송은 **커밋 뒤, 다른 스레드**에서 한다. 저장 트랜잭션 안에서 남의 서비스를 기다리면 이슈를 고친
+ * 사람의 저장이 메일 허브 속도에 묶이고, 롤백된 저장의 메일이 먼저 나가 버린다. 실패는 warn 로그로만
+ * 남긴다 — 메일은 알림함의 사본이지 원본이 아니다.
  *
  * <p>수신 주소를 org-service에서 읽는 gRPC 호출도 같은 이유로 커밋 뒤에 한다(2026-09-05). 트랜잭션 안에서
  * 부르면 DB 커넥션을 쥔 채 남의 서비스를 기다리게 되고, 워처가 많은 이슈일수록 그 대기가 배로 늘어난다.
@@ -69,12 +71,10 @@ public class EmailNotifier {
     /** 오른쪽 화살표 — 메일 클라이언트가 폰트를 갈아도 깨지지 않게 이스케이프로 둔다 */
     private static final String ARROW = "\u2192";
 
-    private final ObjectProvider<JavaMailSender> senders;
+    private final OrgMailClient mail;
     private final ObjectProvider<PreferenceService> preferences;
     private final ObjectProvider<MemberDirectory> directory;
     private final ObjectProvider<SchemeQueries> schemes;
-    private final String host;
-    private final String from;
     private final String publicUrl;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "alm-mail");
@@ -82,29 +82,34 @@ public class EmailNotifier {
         return t;
     });
 
-    public EmailNotifier(ObjectProvider<JavaMailSender> senders,
+    public EmailNotifier(OrgMailClient mail,
                          ObjectProvider<PreferenceService> preferences,
                          ObjectProvider<MemberDirectory> directory,
                          ObjectProvider<SchemeQueries> schemes,
-                         @Value("${spring.mail.host:}") String host,
-                         @Value("${platform.alm.mail.from:alm@localhost}") String from,
                          @Value("${platform.alm.mail.public-url:http://localhost/alm}") String publicUrl) {
-        this.senders = senders;
+        this.mail = mail;
         this.preferences = preferences;
         this.directory = directory;
         this.schemes = schemes;
-        this.host = host == null ? "" : host.trim();
-        this.from = from;
         this.publicUrl = publicUrl.endsWith("/") ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
     }
 
-    /** host가 비어 있어도 Boot는 빈 host의 발송기를 만들어 두므로 빈 존재만으로 판단하지 않는다. */
+    /**
+     * 플랫폼 메일이 켜져 있는가 — 판단은 org의 메일 설정이 하고 여기서는 캐시된 답을 읽을 뿐이다.
+     *
+     * <p>이 값은 개인 설정 화면({@code mailConfigured})이 쓴다. 허브에 물어보는 호출이므로
+     * <b>알림 저장 경로에서는 부르지 않는다</b> — 그 자리에서는 {@link #notify}가 I/O 없는
+     * {@link OrgMailClient#configured()}만 본다.
+     */
     public boolean configured() {
-        return !host.isEmpty() && senders.getIfAvailable() != null;
+        return mail.enabled();
     }
 
+    /** 수신 주소를 뺀 메일 한 통 — 주소는 커밋 뒤 디렉터리를 읽어 정한다 */
+    record MailContent(String subject, String text) {}
+
     /** 커밋 뒤에 보낼 한 통 — 주소는 아직 모른다(디렉터리 조회가 커밋 뒤에 일어난다) */
-    private record Pending(long userId, String snapshotEmail, SimpleMailMessage message) {}
+    private record Pending(long userId, String snapshotEmail, MailContent content) {}
 
     /** 한 트랜잭션이 만든 발송 대기 묶음을 담아 두는 자리 */
     private static final String PENDING_KEY = EmailNotifier.class.getName() + ".pending";
@@ -119,14 +124,18 @@ public class EmailNotifier {
 
     /** 상태 변경은 이전 상태까지 받아 본문에 "상태: 할 일 -> 완료" 한 줄을 싣는다 */
     public void notify(Notification saved, Issue issue, String previousStatusId) {
-        if (!configured()) return;
+        // 여기서 허브에 "메일 켜져 있냐"를 물으면 안 된다 — 이 메서드는 이슈 갱신의 비관적 락 트랜잭션
+        // 안에서, 수신자마다 한 번씩 불린다(NotificationService). 캐시가 비었거나 org가 무응답이면
+        // 락을 쥔 채 수신자 수만큼 5초를 기다리게 된다. 여기서는 주소·토큰이 있는지만 보고(순수 메모리),
+        // 실제 사용 여부는 커밋 뒤 dispatch()가 배치당 한 번 확인한다.
+        if (!mail.configured()) return;
         // 스위치와 스냅샷 주소는 지금 읽는다 — 이미 열려 있는 트랜잭션의 DB 조회이고, 메일 스레드에서
         // 다시 커넥션을 잡을 이유가 없다. 밖으로 미루는 것은 남의 서비스를 부르는 일뿐이다.
         PreferenceService.MailTarget target = preferences.getObject().mailTarget(saved.getUserId());
         if (!target.enabled()) return;
         // 본문도 여기서 만든다: 상태 이름을 읽는 SchemeQueries와 Issue 엔티티가 이 트랜잭션 것이다.
-        SimpleMailMessage message = compose(saved.getType(), issue, actorName(), previousStatusId);
-        enqueue(new Pending(saved.getUserId(), target.snapshotEmail(), message));
+        MailContent content = compose(saved.getType(), issue, actorName(), previousStatusId);
+        enqueue(new Pending(saved.getUserId(), target.snapshotEmail(), content));
     }
 
     /**
@@ -156,21 +165,25 @@ public class EmailNotifier {
     }
 
     /**
-     * 메일 스레드에서 주소를 정하고 보낸다. 여기서만 org-service를 부른다 — 트랜잭션은 이미 끝났고,
-     * 수신자가 여럿이어도 왕복은 한 번이다.
+     * 메일 스레드에서 주소를 정하고 허브에 넘긴다. 여기서만 org-service를 부른다 — 트랜잭션은 이미 끝났고,
+     * 수신자가 여럿이어도 디렉터리 왕복은 한 번이다.
      */
     private void dispatch(List<Pending> batch) {
-        JavaMailSender sender = senders.getIfAvailable();
-        if (sender == null || batch.isEmpty()) return;
+        if (batch.isEmpty()) return;
         executor.execute(() -> {
+            // 사용 여부는 여기서 배치당 한 번만 본다 — 트랜잭션은 이미 끝났고, 꺼져 있으면 주소 조회까지
+            // 통째로 건너뛴다(관리자가 끈 것은 정상 상태라 debug로만 남긴다).
+            if (!mail.enabled()) {
+                log.debug("플랫폼 메일이 꺼져 있어 알림 메일 {}통을 보내지 않는다", batch.size());
+                return;
+            }
             Set<Long> ids = new LinkedHashSet<>();
             for (Pending pending : batch) ids.add(pending.userId());
             Map<Long, DirectoryMember> found = directory.getObject().members(ids);
             for (Pending pending : batch) {
                 Optional<String> to = recipient(pending, found.get(pending.userId()));
                 if (to.isEmpty()) continue;
-                pending.message().setTo(to.get());
-                send(sender, pending.message());
+                send(to.get(), pending.content());
             }
         });
     }
@@ -181,12 +194,14 @@ public class EmailNotifier {
      *
      * <p>디렉터리가 답을 못 주면(org 불능 등) 스냅샷으로 폴백하고, 그것도 없으면 보내지 않는다 —
      * 주소를 모르는 것은 조용히 넘어갈 일이지 이슈 저장을 막을 일이 아니다. 다만 디렉터리가
-     * "이 계정은 비활성됐다"고 답하면 폴백하지 않는다: 떠난 사람에게 계속 보내지 않는다.
+     * "이 계정은 막혀 있다"고 답하면 폴백하지 않는다({@link DirectoryMember#blockedFromMail()}):
+     * 떠난 사람에게 계속 보내지 않고, 정지된 사람에게는 열지도 못하는 이슈의 제목을 흘리지 않는다.
      */
     private Optional<String> recipient(Pending pending, DirectoryMember member) {
         if (member != null) {
-            if (member.deactivated()) {
-                log.debug("비활성 계정이라 알림 메일을 보내지 않는다: user={}", pending.userId());
+            if (member.blockedFromMail()) {
+                log.debug("메일을 받지 않는 계정이라 알림 메일을 보내지 않는다: user={} status={}",
+                        pending.userId(), member.status());
                 return Optional.empty();
             }
             if (member.hasEmail()) return Optional.of(member.email());
@@ -199,21 +214,25 @@ public class EmailNotifier {
         return Optional.of(snapshot);
     }
 
-    private void send(JavaMailSender sender, SimpleMailMessage message) {
-        try {
-            sender.send(message);
-        } catch (Exception e) {
-            String to = message.getTo() == null ? "" : String.join(",", message.getTo());
-            log.warn("알림 메일 발송 실패: to={} subject={}", to, message.getSubject(), e);
+    /**
+     * 허브에 한 통을 넘긴다. "관리자가 메일을 꺼 뒀다"와 "허브가 답하지 않았다"를 가른다 — 앞은 정상
+     * 상태라 조용히 지나가고, 뒤만 사람이 볼 자리에 남긴다. 어느 쪽도 예외로 올리지 않는다.
+     */
+    private void send(String to, MailContent content) {
+        OrgMailClient.SendResult result = mail.send(List.of(to), content.subject(), content.text());
+        if (result.failed()) {
+            log.warn("알림 메일 발송 실패: to={} subject={}", to, content.subject());
+        } else if (result == OrgMailClient.SendResult.DISABLED) {
+            log.debug("플랫폼 메일이 꺼져 있어 알림 메일이 나가지 않았다: to={}", to);
         }
     }
 
     /** 수신 주소를 빼고 만든다 — 주소는 커밋 뒤 디렉터리를 읽어 {@link #dispatch} 가 채운다 */
-    SimpleMailMessage compose(Notification.Type type, Issue issue, String actor) {
+    MailContent compose(Notification.Type type, Issue issue, String actor) {
         return compose(type, issue, actor, null);
     }
 
-    SimpleMailMessage compose(Notification.Type type, Issue issue, String actor, String previousStatusId) {
+    MailContent compose(Notification.Type type, Issue issue, String actor, String previousStatusId) {
         String label = issue.getKey() + " " + issue.getTitle();
         String subject = switch (type) {
             case ASSIGNED -> actor + "님이 '" + label + "' 이슈를 나에게 배정했습니다";
@@ -231,12 +250,10 @@ public class EmailNotifier {
         body.append("이 메일은 ALM 개인 설정의 이메일 알림에 따라 보내졌습니다. 받지 않으려면: ")
                 .append(publicUrl).append("/settings/notifications\n");
 
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(from);
         String prefix = TYPE_EMOJI.getOrDefault(type, "");
-        message.setSubject("[ALM] " + (prefix.isEmpty() ? "" : prefix + " ") + subject);
-        message.setText(body.toString());
-        return message;
+        return new MailContent(
+                "[ALM] " + (prefix.isEmpty() ? "" : prefix + " ") + subject,
+                body.toString());
     }
 
     /**

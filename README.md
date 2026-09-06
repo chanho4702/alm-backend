@@ -506,7 +506,16 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
   (`GLOBAL`/`ADMIN`) 둘 다 org-service가 판정한다 — "전역 관리자 판정" 절을 볼 것.
 - 알림 메일 주소도 org-service가 원장이다(`GetMembers`). 조회는 **커밋 뒤 발송 스레드**에서 하고
   수신자가 여럿이면 한 번에 묻는다 — 쓰기 트랜잭션이 남의 서비스를 기다리지 않는다. 못 읽으면
-  개인 설정의 주소 스냅샷으로 폴백하고, 그것도 없으면 그 한 통을 생략한다.
+  개인 설정의 주소 스냅샷으로 폴백하고, 그것도 없으면 그 한 통을 생략한다. 비활성·정지된 계정에는
+  스냅샷 주소가 남아 있어도 보내지 않는다.
+- **메일 발송도 org-service가 한다**(2026-09-07 플랫폼 메일 설계). ALM은 SMTP를 모르고
+  `POST /internal/org/mail`(헤더 `X-Internal-Token`, 본문 `{to, subject, text, html?, source:"alm"}`)로
+  넘긴다. 202 `{accepted, disabled}`가 정상 응답이고, `disabled: true`(관리자가 메일을 끔)는 실패가
+  아니라 "나가지 않음"으로 따로 구분한다. 받는 사람은 한 요청에 100명까지이며 넘기면 400이라
+  소비자가 100건씩 나눠 부른다. 메일 서버 설정·자격증명·재시도·발송 로그·보낸 사람 주소는
+  전부 org의 메일 설정이 정본이고, 관리자가 화면에서 끄면 세 서비스가 함께 꺼진다. 채널이 살아
+  있는지는 `GET /internal/org/mail/status`(60초 캐시)가 알려 주며 개인 설정 응답의 `mailConfigured`가
+  그 값이다. 허브가 답하지 않아도 이슈 저장과 알림함은 그대로다.
 - 이벤트에는 이슈 본문을 싣지 않는다. 정본 트랜잭션 커밋 후 발행하며, 발행 실패가 정본을
   롤백하지는 않는다. 검색 색인은 관리자 재색인으로 복구한다.
 - gRPC `AlmContentService`는 search-service 전용이다. 컨테이너 배포에서는 호스트에 포트를
@@ -528,10 +537,8 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `ALM_TRASH_RETENTION_DAYS` | `60` | 휴지통 보존 기간 — 이 기간이 지난 프로젝트를 자동으로 영구 삭제 |
 | `ALM_TRASH_PURGE_CRON` / `ALM_TRASH_PURGE_ENABLED` | `0 0 3 * * *` / `true` | 자동 비우기 시각·스위치(인스턴스가 여럿이면 한 곳에서만) |
-| `ALM_MAIL_HOST` | (비어 있음) | SMTP 호스트. 비면 이메일 알림 채널이 꺼진다(알림함만 남음) |
-| `ALM_MAIL_PORT` / `ALM_MAIL_USERNAME` / `ALM_MAIL_PASSWORD` | `587` / (비어 있음) / (비어 있음) | SMTP 접속 |
-| `ALM_MAIL_SMTP_AUTH` / `ALM_MAIL_STARTTLS` | `true` / `true` | SMTP 인증·STARTTLS |
-| `ALM_MAIL_FROM` | `alm@localhost` | 알림 메일의 보낸 사람 |
+| `ORG_INTERNAL_URI` | `http://localhost:9130` | 플랫폼 메일 허브(org-service)의 내부 API 주소 |
+| `ORG_INTERNAL_TOKEN` | (비어 있음) | 내부 API 토큰(`X-Internal-Token`). 비면 이메일 알림 채널이 꺼진다(알림함만 남음) |
 | `ALM_PUBLIC_URL` | `http://localhost/alm` | 메일 본문 이슈 링크의 기본 주소 |
 
 ## 테스트와 배포

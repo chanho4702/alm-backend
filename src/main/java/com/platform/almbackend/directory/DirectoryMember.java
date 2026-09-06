@@ -7,6 +7,7 @@ package com.platform.almbackend.directory;
  */
 public record DirectoryMember(long id, String displayName, String email, String status, String kind) {
 
+    public static final String SUSPENDED = "SUSPENDED";
     public static final String DEACTIVATED = "DEACTIVATED";
 
     public DirectoryMember {
@@ -16,9 +17,16 @@ public record DirectoryMember(long id, String displayName, String email, String 
         kind = kind == null ? "" : kind;
     }
 
-    /** 이 계정은 떠났다 — 알림을 보낼 곳이 아니다 */
-    public boolean deactivated() {
-        return DEACTIVATED.equals(status);
+    /**
+     * 알림 메일을 보내지 않을 계정인가 — wiki-backend와 같은 규칙이다(2026-09-07).
+     *
+     * <p>비활성은 떠난 사람이라 보낼 곳이 없고, <b>정지된 계정도 보내지 않는다</b>: 메일 제목에 이슈 키와
+     * 제목이 그대로 실리는데({@code [ALM] MAIL-1 …}) 정지된 계정은 {@code AccountStatusInterceptor}가
+     * ALM 전체에서 막아 그 이슈를 열지도 못한다. 열지 못하는 이슈의 제목을 메일로 계속 흘리지 않는다.
+     * 승인 대기(PENDING)는 대상이 아니다 — 아직 아무것도 배정받지 못했으므로 보낼 알림 자체가 생기지 않는다.
+     */
+    public boolean blockedFromMail() {
+        return DEACTIVATED.equals(status) || SUSPENDED.equals(status);
     }
 
     public boolean hasEmail() {

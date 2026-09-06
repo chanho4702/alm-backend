@@ -4,17 +4,22 @@ import com.platform.almbackend.directory.DirectoryMember;
 import com.platform.almbackend.directory.MemberDirectory;
 import com.platform.almbackend.directory.MemberDirectory.Outcome;
 import com.platform.almbackend.event.EventPublisher;
+import com.platform.almbackend.notification.OrgMailClient;
+import com.platform.almbackend.notification.OrgMailClient.SendResult;
 import com.platform.almbackend.permission.AccessScope;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.permission.PermissionClient;
 import com.platform.almbackend.permission.PermissionDecision;
 import com.platform.common.error.ServiceUnavailableException;
 import com.platform.proto.events.v1.EventEnvelope;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -54,6 +59,18 @@ public class TestConfig {
     @Primary
     RecordingEventPublisher recordingEventPublisher() {
         return new RecordingEventPublisher();
+    }
+
+    /**
+     * 플랫폼 메일 허브 대역. {@code platform.test.mail.fake=false}를 주면 진짜 {@link OrgMailClient}가
+     * 쓰인다 — 내부 API 스텁까지 통째로 도는 검증({@code PlatformMailStubSmokeTest})용이다.
+     */
+    @Bean
+    @Primary
+    @ConditionalOnProperty(name = "platform.test.mail.fake", matchIfMissing = true)
+    FakeOrgMailClient fakeOrgMailClient(@Value("${platform.org.internal.uri:}") String uri,
+                                        @Value("${platform.org.internal.token:}") String token) {
+        return new FakeOrgMailClient(uri, token);
     }
 
     /** 테스트마다 레지스트리·스킴을 기본값으로 되돌린다 — H2 create-drop에는 V11 시드가 없다 */
@@ -207,6 +224,92 @@ public class TestConfig {
                 if (member != null) found.put(id, member);
             }
             return Lookup.ok(found);
+        }
+    }
+
+    /**
+     * org-service 메일 허브 대역 — HTTP를 타지 않고 넘어온 메일을 그대로 기록한다.
+     *
+     * <p>"메일을 쓸 수 있는가"는 {@link OrgMailClient#configured()} 그대로다: 내부 API 주소와 토큰이
+     * 있으면 켜진 것으로 본다. 그래서 기본 컨텍스트(토큰 없음)는 메일이 꺼진 기본 설치를 그대로 흉내 내고,
+     * 메일을 쓰는 테스트는 {@code platform.org.internal.*}를 주어 자기 컨텍스트를 갖는다.
+     */
+    public static final class FakeOrgMailClient extends OrgMailClient {
+
+        /** 허브가 받은 한 통 */
+        public record Sent(List<String> to, String subject, String text, String html) {}
+
+        private final List<Sent> sent = Collections.synchronizedList(new ArrayList<>());
+        /** 허브가 무엇을 돌려주는가 — 꺼짐(DISABLED)과 실패(FAILED)를 따로 흉내 낸다 */
+        private volatile SendResult result = SendResult.ACCEPTED;
+        /** 진짜 클라이언트에서 이 값은 HTTP 왕복이다 — 테스트가 직접 정하고, 호출을 센다 */
+        private final boolean configuredAtStartup;
+        private volatile boolean enabled;
+        private final List<Boolean> enabledCalls = Collections.synchronizedList(new ArrayList<>());
+
+        FakeOrgMailClient(String uri, String token) {
+            super(uri, token);
+            this.configuredAtStartup = configured();
+            this.enabled = configuredAtStartup;
+        }
+
+        /**
+         * 매번 기록한다 — <b>트랜잭션 안에서 불렸는지</b>가 핵심이다. 진짜 구현에서는 여기가 HTTP라
+         * 락을 쥔 트랜잭션 안에서 부르면 수신자마다 타임아웃을 기다리게 된다.
+         */
+        @Override
+        public boolean enabled() {
+            enabledCalls.add(TransactionSynchronizationManager.isActualTransactionActive());
+            return enabled;
+        }
+
+        @Override
+        public SendResult send(List<String> to, String subject, String text, String html) {
+            if (result.accepted()) sent.add(new Sent(List.copyOf(to), subject, text, html));
+            return result;
+        }
+
+        public void setResult(SendResult result) { this.result = result; }
+
+        /** 허브에서 관리자가 메일을 켜고 껐다 */
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        public List<Sent> sent() { return List.copyOf(sent); }
+
+        /** {@code enabled()} 호출들 — 값은 "그때 트랜잭션이 열려 있었는가" */
+        public List<Boolean> enabledCalls() { return List.copyOf(enabledCalls); }
+
+        public void reset() {
+            sent.clear();
+            enabledCalls.clear();
+            result = SendResult.ACCEPTED;
+            enabled = configuredAtStartup;
+        }
+
+        /** 발송은 커밋 뒤 다른 스레드에서 일어난다 — 이만큼은 기다려 준다 */
+        public List<Sent> awaitSent(int count) {
+            long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+            while (System.nanoTime() < deadline) {
+                List<Sent> snapshot = sent();
+                if (snapshot.size() >= count) return snapshot;
+                sleep();
+            }
+            return sent();
+        }
+
+        /** 이 시간 안에 아무것도 나가지 않아야 한다 */
+        public void awaitNothing() {
+            long deadline = System.nanoTime() + Duration.ofMillis(500).toNanos();
+            while (System.nanoTime() < deadline) sleep();
+        }
+
+        private static void sleep() {
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
         }
     }
 
