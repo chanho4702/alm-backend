@@ -186,6 +186,80 @@ class CollaborationControllerTest {
     }
 
     @Test
+    void 웹_링크는_생성되고_같은_URL이면_기존_것을_반환하며_최신순으로_나온다() throws Exception {
+        String created = mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://github.com/org/repo/pull/1\",\"title\":\"PR #1\",\"kind\":\"PR\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.issueId").value(issueA))
+                .andExpect(jsonPath("$.url").value("https://github.com/org/repo/pull/1"))
+                .andExpect(jsonPath("$.title").value("PR #1"))
+                .andExpect(jsonPath("$.kind").value("PR"))
+                .andExpect(jsonPath("$.createdBy").value(1))
+                .andReturn().getResponse().getContentAsString();
+        long linkId = JSON.readTree(created).get("id").asLong();
+
+        // 같은 URL로 다시 POST — 멱등(커밋 파서 재실행 대비), 같은 id를 200으로 반환
+        mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://github.com/org/repo/pull/1\",\"kind\":\"pr\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(linkId));
+
+        String secondCreated = mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://github.com/org/repo/commit/abc123\",\"kind\":\"COMMIT\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long secondId = JSON.readTree(secondCreated).get("id").asLong();
+
+        // 최신순(방금 만든 커밋 링크가 먼저)
+        mvc.perform(get("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(secondId))
+                .andExpect(jsonPath("$[1].id").value(linkId));
+
+        mvc.perform(get("/api/alm/issues/{id}/activity", issueA).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.length()").value(3)); // created + 2번 실제 생성(중복 POST는 활동 안 남김)
+
+        mvc.perform(delete("/api/alm/web-links/{id}", linkId).with(asUser(1, "Alice")))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(secondId));
+    }
+
+    @Test
+    void 웹_링크는_URL과_종류_형식을_검증한다() throws Exception {
+        mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"not-a-url\",\"kind\":\"PR\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"\",\"kind\":\"PR\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://github.com/org/repo/pull/1\",\"kind\":\"BOGUS\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 웹_링크_추가는_EDIT_권한이_필요하고_보관된_프로젝트는_거부한다() throws Exception {
+        mvc.perform(post("/api/alm/projects/{id}/archive", projectId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        // VIEW는 여전히 되지만 EDIT(생성)은 막힌다
+        mvc.perform(get("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice")))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/alm/issues/{id}/web-links", issueA).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://github.com/org/repo/pull/1\",\"kind\":\"PR\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("보관된 프로젝트는 읽기만 할 수 있습니다"));
+    }
+
+    @Test
     void 보드는_프로젝트마다_기본_하나가_생기고_마지막은_못_지운다() throws Exception {
         String list = mvc.perform(get("/api/alm/projects/{id}/boards", projectId).with(asUser(1, "Alice")))
                 .andExpect(jsonPath("$.length()").value(1))

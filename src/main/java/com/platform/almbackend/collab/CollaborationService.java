@@ -6,6 +6,7 @@ import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssueActivity;
 import com.platform.almbackend.domain.IssueComment;
 import com.platform.almbackend.domain.IssueLink;
+import com.platform.almbackend.domain.IssueWebLink;
 import com.platform.almbackend.domain.Notification;
 import com.platform.almbackend.domain.Worklog;
 import com.platform.almbackend.issue.dto.IssueResponse;
@@ -16,6 +17,7 @@ import com.platform.almbackend.repository.IssueActivityRepository;
 import com.platform.almbackend.repository.IssueCommentRepository;
 import com.platform.almbackend.repository.IssueLinkRepository;
 import com.platform.almbackend.repository.IssueRepository;
+import com.platform.almbackend.repository.IssueWebLinkRepository;
 import com.platform.almbackend.repository.WorklogRepository;
 import com.platform.almbackend.settings.SchemeService;
 import com.platform.almbackend.domain.LinkTypeDef;
@@ -25,12 +27,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * 코멘트·워크로그·이슈 링크·활동 기록 — 프론트 목업과 같은 규칙(본인 것만 수정·삭제, 링크 중복 금지,
@@ -45,6 +51,7 @@ public class CollaborationService {
     private final IssueCommentRepository comments;
     private final WorklogRepository worklogs;
     private final IssueLinkRepository links;
+    private final IssueWebLinkRepository webLinks;
     private final IssueActivityRepository activities;
     private final ProjectService projectService;
     private final NotificationService notifications;
@@ -64,6 +71,13 @@ public class CollaborationService {
     public record LinkResponse(long id, long sourceId, long targetId, String type) {
         static LinkResponse from(IssueLink l) { return new LinkResponse(l.getId(), l.getSourceId(), l.getTargetId(), l.getType()); }
     }
+    public record WebLinkResponse(long id, long issueId, String url, String title, String kind, long createdBy, Instant createdAt) {
+        static WebLinkResponse from(IssueWebLink w) {
+            return new WebLinkResponse(w.getId(), w.getIssueId(), w.getUrl(), w.getTitle(), w.getKind(), w.getCreatedBy(), w.getCreatedAt());
+        }
+    }
+    /** created=false면 이미 있던 링크를 그대로 돌려준 것(멱등) — 컨트롤러가 200/201을 가른다 */
+    public record WebLinkOutcome(WebLinkResponse link, boolean created) {}
     /** blocks: outward=차단함, inward=차단됨 / relates: 항상 outward */
     public record LinkView(LinkResponse link, IssueResponse other, String direction) {}
     public record ActivityResponse(long id, long issueId, long actorId, String type, String detail, Instant occurredAt) {
@@ -195,6 +209,69 @@ public class CollaborationService {
         IssueLink link = links.findById(linkId).orElseThrow(() -> new NotFoundException("링크를 찾을 수 없습니다"));
         require(userId, link.getSourceId(), AlmAction.EDIT);
         links.delete(link);
+    }
+
+    // ── 외부(웹) 링크 — 에이전트 git 연결(P2a): PR·커밋·웹 URL을 이슈에 붙인다 ──
+
+    private static final Set<String> WEB_LINK_KINDS = Set.of("PR", "COMMIT", "WEB");
+
+    @Transactional(readOnly = true)
+    public List<WebLinkResponse> webLinks(long userId, long issueId) {
+        require(userId, issueId, AlmAction.VIEW);
+        return webLinks.findByIssueIdOrderByIdDesc(issueId).stream().map(WebLinkResponse::from).toList();
+    }
+
+    /** 같은 issue+url이면 새로 만들지 않고 기존 것을 돌려준다 — 커밋 파서 재실행에도 중복이 안 쌓인다 */
+    public WebLinkOutcome addWebLink(long userId, long issueId, String url, String title, String kind) {
+        Issue issue = require(userId, issueId, AlmAction.EDIT);
+        String normalizedUrl = requireUrl(url);
+        String normalizedKind = requireKind(kind);
+        Optional<IssueWebLink> existing = webLinks.findByIssueIdAndUrl(issueId, normalizedUrl);
+        if (existing.isPresent()) {
+            return new WebLinkOutcome(WebLinkResponse.from(existing.get()), false);
+        }
+        String normalizedTitle = normalizeTitle(title);
+        Instant now = now();
+        IssueWebLink saved = webLinks.save(IssueWebLink.of(issueId, normalizedUrl, normalizedTitle, normalizedKind, userId, now));
+        String detail = normalizedKind + ": " + (normalizedTitle != null ? normalizedTitle : normalizedUrl);
+        record(issue.getId(), userId, "web_link_added", detail.length() > 500 ? detail.substring(0, 500) : detail, now);
+        return new WebLinkOutcome(WebLinkResponse.from(saved), true);
+    }
+
+    public void removeWebLink(long userId, long id) {
+        IssueWebLink link = webLinks.findById(id).orElseThrow(() -> new NotFoundException("웹 링크를 찾을 수 없습니다"));
+        require(userId, link.getIssueId(), AlmAction.EDIT);
+        webLinks.delete(link);
+    }
+
+    private static String requireUrl(String value) {
+        String trimmed = requireText(value, "URL을 입력하세요");
+        if (trimmed.length() > 500) throw new IllegalArgumentException("URL이 너무 깁니다");
+        URI uri;
+        try {
+            uri = URI.create(trimmed);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("URL 형식이 올바르지 않습니다");
+        }
+        String scheme = uri.getScheme();
+        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https")) || uri.getHost() == null) {
+            throw new IllegalArgumentException("URL 형식이 올바르지 않습니다");
+        }
+        return trimmed;
+    }
+
+    private static String requireKind(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        if (!WEB_LINK_KINDS.contains(normalized)) throw new IllegalArgumentException("없는 링크 종류입니다: " + value);
+        return normalized;
+    }
+
+    private static String normalizeTitle(String title) {
+        if (title == null) return null;
+        String trimmed = title.trim();
+        if (trimmed.isEmpty()) return null;
+        if (trimmed.length() > 200) throw new IllegalArgumentException("제목이 너무 깁니다");
+        return trimmed;
     }
 
     // ── 활동 ──

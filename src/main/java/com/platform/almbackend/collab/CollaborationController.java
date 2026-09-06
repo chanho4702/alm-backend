@@ -4,9 +4,12 @@ import com.platform.almbackend.collab.CollaborationService.ActivityResponse;
 import com.platform.almbackend.collab.CollaborationService.CommentResponse;
 import com.platform.almbackend.collab.CollaborationService.LinkResponse;
 import com.platform.almbackend.collab.CollaborationService.LinkView;
+import com.platform.almbackend.collab.CollaborationService.WebLinkOutcome;
+import com.platform.almbackend.collab.CollaborationService.WebLinkResponse;
 import com.platform.almbackend.collab.CollaborationService.WorklogResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,6 +38,7 @@ public class CollaborationController {
     public record CommentRequest(String body, List<Long> mentionedUserIds) {}
     public record WorklogRequest(BigDecimal hours, String comment, LocalDate workedOn) {}
     public record LinkRequest(long targetId, String type) {}
+    public record WebLinkRequest(String url, String title, String kind) {}
 
     @Tag(name = "Comments")
     @Operation(summary = "이슈의 댓글을 조회한다")
@@ -124,6 +128,30 @@ public class CollaborationController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void removeLink(@Parameter(description = "이슈 연결 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         service.removeLink(userId(jwt), id);
+    }
+
+    @Tag(name = "Web Links")
+    @Operation(summary = "이슈에 걸린 외부 링크(PR·커밋·웹)를 최신순으로 조회한다")
+    @GetMapping("/api/alm/issues/{issueId}/web-links")
+    public List<WebLinkResponse> webLinks(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+        return service.webLinks(userId(jwt), issueId);
+    }
+
+    /** 같은 issueId+url이면 새로 만들지 않고 기존 링크를 200으로 돌려준다(멱등, 커밋 파서 재실행 대비) */
+    @Tag(name = "Web Links")
+    @Operation(summary = "이슈에 외부 링크(PR·커밋·웹)를 붙인다")
+    @PostMapping("/api/alm/issues/{issueId}/web-links")
+    public ResponseEntity<WebLinkResponse> addWebLink(@Parameter(description = "이슈 ID") @PathVariable long issueId, @RequestBody WebLinkRequest request, @AuthenticationPrincipal Jwt jwt) {
+        WebLinkOutcome outcome = service.addWebLink(userId(jwt), issueId, request.url(), request.title(), request.kind());
+        return ResponseEntity.status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK).body(outcome.link());
+    }
+
+    @Tag(name = "Web Links")
+    @Operation(summary = "외부 링크를 삭제한다")
+    @DeleteMapping("/api/alm/web-links/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeWebLink(@Parameter(description = "외부 링크 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+        service.removeWebLink(userId(jwt), id);
     }
 
     @Tag(name = "Issue History")

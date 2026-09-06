@@ -208,6 +208,7 @@ public class OpenApiConfig {
                 tag("Comments", "이슈 댓글과 멘션"),
                 tag("Worklogs", "작업 시간 기록과 프로젝트 집계"),
                 tag("Issue Links", "이슈 사이의 연결(차단·복제 등)"),
+                tag("Web Links", "이슈에 붙는 외부 링크(PR·커밋·웹) — 에이전트 git 연결"),
                 tag("Status Categories", "상태 카테고리 레지스트리"),
                 tag("Statuses", "상태 레지스트리와 사용량"),
                 tag("Issue Types", "이슈 타입 레지스트리와 사용량"),
