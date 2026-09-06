@@ -1,6 +1,12 @@
 server:
   port: 9120
 spring:
+  cloud:
+    discovery:
+      client:
+        # 서비스 health는 자기 상태(db)만 본다 — 유레카 상태는 게이트웨이 대시보드가 eureka 컴포넌트로 따로 프로브한다(설계 §3).
+        health-indicator:
+          enabled: false
   application:
     name: alm-backend
   datasource:
@@ -58,6 +64,8 @@ management:
     health:
       show-details: always
   health:
+    eureka:
+      enabled: false         # 유레카는 대시보드가 따로 본다(설계 §3)
     mail:
       enabled: false
   info:
