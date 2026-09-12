@@ -3,10 +3,8 @@ package com.platform.almbackend.personal;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.platform.almbackend.domain.UserPreference;
-import com.platform.almbackend.notification.EmailNotifier;
 import com.platform.almbackend.repository.UserPreferenceRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,8 +25,6 @@ public class PreferenceService {
 
     private final UserPreferenceRepository preferences;
     private final ObjectMapper json;
-    /** EmailNotifier가 이 서비스를 쓴다(수신 주소) — 순환을 끊으려고 지연 주입 */
-    private final ObjectProvider<EmailNotifier> email;
 
     /** 알림 종류별 제품 내 알림 수신 여부 */
     public record NotificationPrefs(Boolean assigned, Boolean statusChanged, Boolean commented, Boolean mentioned) {
@@ -91,17 +87,23 @@ public class PreferenceService {
         return preferences.findById(userId).map(p -> parse(p.getBody())).orElse(PreferenceBody.defaults());
     }
 
-    /** 설정 화면 — 여는 김에 주소 스냅샷을 갱신한다(설정을 한 번도 저장하지 않은 사람도 메일을 받게) */
-    public PreferenceView view(long userId, String jwtEmail) {
+    /**
+     * 설정 화면 — 여는 김에 주소 스냅샷을 갱신한다(설정을 한 번도 저장하지 않은 사람도 메일을 받게).
+     *
+     * <p>{@code mailConfigured}를 인자로 받는 이유: 그 값은 메일 허브에 묻는 HTTP 왕복이라
+     * 트랜잭션 안에서 부르면 커넥션을 쥔 채 네트워크를 기다린다. 컨트롤러가 트랜잭션 밖에서 읽어 넘긴다.
+     */
+    public PreferenceView view(long userId, String jwtEmail, boolean mailConfigured) {
         UserPreference stored = preferences.findById(userId).orElse(null);
         if (stored != null) {
             stored.rememberEmail(jwtEmail);
-            return toView(parse(stored.getBody()), stored.isEmailEnabled());
+            return toView(parse(stored.getBody()), stored.isEmailEnabled(), mailConfigured);
         }
-        return toView(PreferenceBody.defaults(), false);
+        return toView(PreferenceBody.defaults(), false, mailConfigured);
     }
 
-    public PreferenceView save(long userId, String jwtEmail, PreferenceUpdate request) {
+    /** {@code mailConfigured}는 {@link #view}와 같은 이유로 트랜잭션 밖에서 읽어 넘긴다 */
+    public PreferenceView save(long userId, String jwtEmail, PreferenceUpdate request, boolean mailConfigured) {
         PreferenceUpdate req = request == null
                 ? new PreferenceUpdate(null, null, null, null)
                 : request;
@@ -117,7 +119,7 @@ public class PreferenceService {
         stored.rememberEmail(jwtEmail);
         // 필드를 안 보내면 기존 값을 유지한다 — 기존 프론트 요청(emailEnabled 없음)이 스위치를 끄지 않게
         if (req.emailEnabled() != null) stored.setEmailEnabled(req.emailEnabled());
-        return toView(filled, stored.isEmailEnabled());
+        return toView(filled, stored.isEmailEnabled(), mailConfigured);
     }
 
     /**
@@ -148,10 +150,9 @@ public class PreferenceService {
                 .orElse(MailTarget.OFF);
     }
 
-    private PreferenceView toView(PreferenceBody body, boolean emailEnabled) {
+    private static PreferenceView toView(PreferenceBody body, boolean emailEnabled, boolean mailConfigured) {
         return new PreferenceView(
-                body.notifications(), body.autoWatch(), body.startPage(), emailEnabled,
-                email.getObject().configured());
+                body.notifications(), body.autoWatch(), body.startPage(), emailEnabled, mailConfigured);
     }
 
     private PreferenceBody parse(String body) {

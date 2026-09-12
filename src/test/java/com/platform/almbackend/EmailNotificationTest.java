@@ -119,6 +119,28 @@ class EmailNotificationTest {
                 .andExpect(jsonPath("$.emailEnabled").value(true));
     }
 
+    /**
+     * {@code mailConfigured}는 허브에 묻는 HTTP 왕복이다 — 읽기 트랜잭션 안에서 부르면 커넥션을 쥔 채
+     * 네트워크를 기다린다. 컨트롤러가 트랜잭션 밖에서 읽어 서비스에 넘긴다.
+     */
+    @Test
+    void 메일_구성_조회는_개인_설정_트랜잭션_밖에서_일어난다() throws Exception {
+        mail.reset();
+
+        mvc.perform(get("/api/alm/me/preferences").with(asUser(2, "Bob")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mailConfigured").value(true));
+        mvc.perform(put("/api/alm/me/preferences").with(asUser(2, "Bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"startPage\":\"projects\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mailConfigured").value(true));
+
+        assertThat(mail.enabledCalls())
+                .as("조회·저장 각각 한 번이고, 둘 다 트랜잭션이 열리지 않은 자리에서다")
+                .containsExactly(false, false);
+    }
+
     @Test
     void 스위치를_켠_수신자에게_커밋_뒤_한_통_나간다() throws Exception {
         mvc.perform(put("/api/alm/me/preferences").with(asUser(2, "Bob"))

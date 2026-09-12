@@ -136,7 +136,7 @@ public class AqlSearchService {
     }
 
     private static List<String> dateFields() {
-        return List.of("created", "updated", "due");
+        return List.of("created", "updated", "due", "resolved");
     }
 
     /** 볼 수 있는 프로젝트 id. {@code null}이면 제한 없음 */

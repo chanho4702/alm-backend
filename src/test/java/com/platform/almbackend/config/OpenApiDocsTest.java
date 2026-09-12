@@ -186,6 +186,9 @@ class OpenApiDocsTest {
                 "delete /api/alm/dashboards/{id}",
                 // 개인 설정·공지 배너 읽기
                 "get /api/alm/me/preferences", "put /api/alm/me/preferences", "get /api/alm/banner",
+                // 내 저장 필터 — 소유자 본인 것만 다룬다(질의 실행은 검색이 따로 범위를 좁힌다)
+                "get /api/alm/me/filters", "post /api/alm/me/filters",
+                "put /api/alm/me/filters/{id}", "delete /api/alm/me/filters/{id}",
                 // 내 알림 — 프로젝트 권한을 묻지 않는다
                 "get /api/alm/notifications", "post /api/alm/notifications/{id}/read",
                 "post /api/alm/notifications/read-all",
@@ -200,7 +203,7 @@ class OpenApiDocsTest {
 
     /**
      * {@code ConflictException}을 던지는 서비스 코드 전수와 그것이 나가는 엔드포인트.
-     * {@code grep -rn "new ConflictException(" src/main/java} 결과와 1:1로 맞춘다(2026-09-05 기준 14곳).
+     * {@code grep -rn "new ConflictException(" src/main/java} 결과와 1:1로 맞춘다(2026-09-12 기준 18곳).
      * 새 충돌을 만들면 여기 한 줄을 넣어야 하고, 그 엔드포인트가 409를 문서화하지 않으면 테스트가 깨진다.
      * 소스를 스캔하지 않고 목록을 고정하는 이유는, 스캔이 조용히 0건을 세도 초록으로 보이기 때문이다.
      */
@@ -218,21 +221,29 @@ class OpenApiDocsTest {
             Map.entry("VersionService:70 버전 이름 중복(수정)", "put /api/alm/versions/{versionId}"),
             Map.entry("VersionService:82 이미 릴리스됨", "post /api/alm/versions/{versionId}/release"),
             Map.entry("VersionService:85 보관된 버전", "post /api/alm/versions/{versionId}/release"),
-            Map.entry("VersionService:123 이미 보관됨", "post /api/alm/versions/{versionId}/archive"));
+            Map.entry("VersionService:123 이미 보관됨", "post /api/alm/versions/{versionId}/archive"),
+            Map.entry("SavedFilterService:56 필터 이름 중복(생성)", "post /api/alm/me/filters"),
+            Map.entry("SavedFilterService:91 필터 이름 중복(생성·DB 유니크)", "post /api/alm/me/filters"),
+            Map.entry("SavedFilterService:69 필터 이름 중복(수정)", "put /api/alm/me/filters/{id}"),
+            Map.entry("SavedFilterService:99 필터 이름 중복(수정·DB 유니크)", "put /api/alm/me/filters/{id}"));
 
     /** 엔드포인트별 409 사유 — 서비스가 던지는 메시지와 같게 적는다. 둘 이상이면 " / "로 잇는다. */
-    private static final Map<String, String> EXPECTED_409 = Map.of(
-            "put /api/alm/issues/{issueId}", "버전 충돌 — expectedVersion 불일치",
-            "put /api/alm/projects/{projectId}", "버전 충돌 — expectedVersion 불일치",
-            "put /api/alm/sprints/{sprintId}", "버전 충돌 — expectedVersion 불일치",
-            "put /api/alm/versions/{versionId}", "버전 충돌 — expectedVersion 불일치 / 이미 있는 버전 이름입니다",
-            "post /api/alm/projects", "이미 존재하는 프로젝트 키입니다",
-            "post /api/alm/sprints/{sprintId}/start",
-            "계획 상태의 스프린트만 시작할 수 있습니다 / 이미 진행 중인 스프린트가 있습니다",
-            "post /api/alm/sprints/{sprintId}/complete", "진행 중인 스프린트만 완료할 수 있습니다",
-            "post /api/alm/projects/{projectId}/versions", "이미 있는 버전 이름입니다",
-            "post /api/alm/versions/{versionId}/release", "이미 릴리스된 버전입니다 / 보관된 버전은 릴리스할 수 없습니다",
-            "post /api/alm/versions/{versionId}/archive", "이미 보관된 버전입니다");
+    private static final Map<String, String> EXPECTED_409 = Map.ofEntries(
+            Map.entry("put /api/alm/issues/{issueId}", "버전 충돌 — expectedVersion 불일치"),
+            Map.entry("put /api/alm/projects/{projectId}", "버전 충돌 — expectedVersion 불일치"),
+            Map.entry("put /api/alm/sprints/{sprintId}", "버전 충돌 — expectedVersion 불일치"),
+            Map.entry("put /api/alm/versions/{versionId}",
+                    "버전 충돌 — expectedVersion 불일치 / 이미 있는 버전 이름입니다"),
+            Map.entry("post /api/alm/projects", "이미 존재하는 프로젝트 키입니다"),
+            Map.entry("post /api/alm/sprints/{sprintId}/start",
+                    "계획 상태의 스프린트만 시작할 수 있습니다 / 이미 진행 중인 스프린트가 있습니다"),
+            Map.entry("post /api/alm/sprints/{sprintId}/complete", "진행 중인 스프린트만 완료할 수 있습니다"),
+            Map.entry("post /api/alm/projects/{projectId}/versions", "이미 있는 버전 이름입니다"),
+            Map.entry("post /api/alm/versions/{versionId}/release",
+                    "이미 릴리스된 버전입니다 / 보관된 버전은 릴리스할 수 없습니다"),
+            Map.entry("post /api/alm/versions/{versionId}/archive", "이미 보관된 버전입니다"),
+            Map.entry("post /api/alm/me/filters", "같은 이름의 필터가 있습니다"),
+            Map.entry("put /api/alm/me/filters/{id}", "같은 이름의 필터가 있습니다"));
 
     @Test
     void ConflictException을_던지는_엔드포인트는_전부_409를_문서화한다() {

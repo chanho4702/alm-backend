@@ -339,10 +339,12 @@ class AqlQueryControllerTest {
                 .andExpect(jsonPath("$.error").value("날짜 형식이 아닙니다: yesterday"))
                 .andExpect(jsonPath("$.position").value(6));
 
+        // resolved는 이제 실재하는 날짜 필드다 — 틀린 건 값 쪽이라 밑줄도 값 자리에 그어진다
         mvc.perform(post("/api/alm/issues/query").with(asUser(1, "테스터"))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"aql\":\"resolved > -7d\"}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"aql\":\"resolved > 어제\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("아직 지원하지 않는 필드입니다: resolved"));
+                .andExpect(jsonPath("$.error").value("날짜 형식이 아닙니다: 어제"))
+                .andExpect(jsonPath("$.position").value(11));
     }
 
     // ── 검증·자동완성 ──
@@ -383,8 +385,65 @@ class AqlQueryControllerTest {
         assertThat(status).isNotNull();
         assertThat(status.get("aliases").get(0).asText()).isEqualTo("상태");
         assertThat(status.get("values").toString()).contains("진행 중");
-        // 지원하지 않는 필드는 사전에 없다
-        assertThat(body).doesNotContain("\"resolved\"");
+
+        // 해결일은 지원 필드라 사전에 실린다 — 정렬·IS EMPTY까지 쓸 수 있다고 알린다
+        JsonNode resolved = null;
+        for (JsonNode field : fields) if ("resolved".equals(field.get("name").asText())) resolved = field;
+        assertThat(resolved).isNotNull();
+        assertThat(resolved.get("aliases").get(0).asText()).isEqualTo("해결일");
+        assertThat(resolved.get("kind").asText()).isEqualTo("DATE");
+        assertThat(resolved.get("sortable").asBoolean()).isTrue();
+        assertThat(resolved.get("emptyAllowed").asBoolean()).isTrue();
+        // 날짜 함수는 해결일에도 쓸 수 있다고 사전이 말한다
+        assertThat(JSON.readTree(body).get("functions").toString()).contains("resolved");
+    }
+
+    // ── 해결일(resolved) ──
+
+    @Test
+    void 해결일은_해결이_붙은_이슈에만_있고_비교와_IS_EMPTY가_된다() throws Exception {
+        // 픽스처에서 해결이 붙은 건 ALM-3 하나뿐이고, 그 순간이 해결일이다
+        assertThat(titles(query("resolved >= -7d", 1))).containsExactly("결제 문서 정리");
+        assertThat(titles(query("resolved IS NOT EMPTY", 1))).containsExactly("결제 문서 정리");
+        assertThat(titles(query("project = ALM AND resolved IS EMPTY", 1)))
+                .containsExactlyInAnyOrder("로그인 버그", "보드 개선", "검색 느림", "권한 정리");
+        // 상태가 완료여도 해결 사유가 없으면 해결일이 없다 — 상태와 해결은 다른 축이다
+        assertThat(titles(query("status = 완료 AND resolved IS EMPTY", 1))).containsExactly("권한 정리");
+        // 미래로 밀면 아무것도 안 남는다(빈 값이 조용히 섞이지 않는다)
+        assertThat(query("resolved > +1d", 1).get("total").asLong()).isZero();
+    }
+
+    @Test
+    void 해결일_정렬은_해결된_순서를_따른다() throws Exception {
+        // ALM-5에도 해결을 붙인다 — ALM-3보다 나중이다
+        resolve(5, "권한 정리", "task", "done", "medium", 4L);
+        JsonNode desc = query("resolved IS NOT EMPTY ORDER BY resolved DESC", 1);
+        assertThat(titles(desc)).containsExactly("권한 정리", "결제 문서 정리");
+        JsonNode asc = query("resolved IS NOT EMPTY ORDER BY resolved ASC", 1);
+        assertThat(titles(asc)).containsExactly("결제 문서 정리", "권한 정리");
+    }
+
+    @Test
+    void 해결을_풀면_해결일도_사라지고_다시_붙이면_새로_찍힌다() throws Exception {
+        JsonNode first = one("결제 문서 정리");
+        String firstResolvedAt = first.get("resolvedAt").asText();
+        assertThat(firstResolvedAt).isNotBlank();
+
+        // 해결을 푼다 — 해결일도 같이 비워진다
+        long id = first.get("id").asLong();
+        int version = first.get("version").asInt();
+        edit(id, version, "결제 문서 정리", "task", "done", "low", 2L, "");
+        assertThat(query("resolved IS NOT EMPTY", 1).get("total").asLong()).isZero();
+        assertThat(one("결제 문서 정리").get("resolvedAt").isNull()).isTrue();
+
+        // 다시 붙이면 그때 시각으로 새로 적힌다(옛 값이 되살아나지 않는다)
+        edit(id, version + 1, "결제 문서 정리", "task", "done", "low", 2L, "\"resolution\":\"DONE\"");
+        String again = one("결제 문서 정리").get("resolvedAt").asText();
+        assertThat(again).isNotBlank().isNotEqualTo(firstResolvedAt);
+
+        // 사유만 바꾸는 것은 다시 해결한 것이 아니다 — 해결일은 그대로다
+        edit(id, version + 2, "결제 문서 정리", "task", "done", "low", 2L, "\"resolution\":\"DUPLICATE\"");
+        assertThat(one("결제 문서 정리").get("resolvedAt").asText()).isEqualTo(again);
     }
 
     // ── 도우미 ──
@@ -400,6 +459,33 @@ class AqlQueryControllerTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return JSON.readTree(body);
+    }
+
+    /** 이슈 한 건을 제목으로 집어 온다 — 응답 shape(resolvedAt 포함)을 그대로 본다 */
+    private JsonNode one(String title) throws Exception {
+        JsonNode result = query("summary = \"" + title + "\"", 1);
+        assertThat(result.get("total").asLong()).isEqualTo(1);
+        return result.get("items").get(0);
+    }
+
+    /** 이슈 번호로 찾아 해결을 붙인다 */
+    private void resolve(int issueNumber, String title, String type, String status,
+                         String priority, Long assignee) throws Exception {
+        JsonNode issue = one(title);
+        assertThat(issue.get("key").asText()).endsWith("-" + issueNumber);
+        edit(issue.get("id").asLong(), issue.get("version").asInt(), title, type, status, priority, assignee,
+                "\"resolution\":\"DONE\"");
+    }
+
+    private void edit(long id, int expectedVersion, String title, String type, String status,
+                      String priority, Long assignee, String details) throws Exception {
+        mvc.perform(put("/api/alm/issues/{id}", id).with(asUser(1, "테스터"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"" + title + "\",\"description\":\"설명\",\"type\":\"" + type
+                                + "\",\"status\":\"" + status + "\",\"priority\":\"" + priority
+                                + "\",\"assigneeId\":" + assignee + ",\"details\":{" + details
+                                + "},\"expectedVersion\":" + expectedVersion + "}"))
+                .andExpect(status().isOk());
     }
 
     private record Body(String aql, int page, int size) {}

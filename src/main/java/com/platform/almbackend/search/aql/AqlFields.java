@@ -86,8 +86,8 @@ public final class AqlFields {
             new Field("created", List.of("생성일"), Kind.DATE, DATE_OPS, true, false, true),
             new Field("updated", List.of("수정일"), Kind.DATE, DATE_OPS, true, false, true),
             new Field("due", List.of("마감일"), Kind.DATE, DATE_OPS, true, true, true),
-            // 해결 시각을 저장하는 컬럼이 아직 없다 — 있는 척하고 다른 값으로 답하지 않는다
-            new Field("resolved", List.of("해결일"), Kind.DATE, DATE_OPS, false, false, false),
+            // 해결일은 resolution이 처음 붙은 시각(issue.resolved_at, V23) — 미해결이면 비어 있다
+            new Field("resolved", List.of("해결일"), Kind.DATE, DATE_OPS, true, true, true),
             new Field("estimate", List.of("예상시간"), Kind.NUMBER, NUMBER_OPS, true, true, true),
             new Field("text", List.of("텍스트", "내용"), Kind.TEXT, MATCH_ONLY, false, false, true),
             new Field("summary", List.of("요약", "제목"), Kind.TEXT, TEXT_OPS, true, false, true),

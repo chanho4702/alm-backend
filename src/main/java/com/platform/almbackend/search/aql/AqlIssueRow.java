@@ -90,6 +90,9 @@ public class AqlIssueRow {
     @Column(length = 24, insertable = false, updatable = false)
     private IssueResolution resolution;
 
+    @Column(name = "resolved_at", insertable = false, updatable = false)
+    private Instant resolvedAt;
+
     @Column(name = "fix_version_id", insertable = false, updatable = false)
     private Long fixVersionId;
 
@@ -124,6 +127,7 @@ public class AqlIssueRow {
     public IssueResponse toResponse() {
         return new IssueResponse(id, key, projectId, title, description, type, status, priority,
                 assigneeId, reporterId, parentId, sprintId, dueDate, estimateHours, resolution, fixVersionId,
-                List.copyOf(labels), List.copyOf(componentIds), sortOrder, version, createdAt, updatedAt, archivedAt);
+                List.copyOf(labels), List.copyOf(componentIds), sortOrder, version, createdAt, updatedAt, archivedAt,
+                resolvedAt);
     }
 }

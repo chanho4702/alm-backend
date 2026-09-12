@@ -1,5 +1,6 @@
 package com.platform.almbackend.personal;
 
+import com.platform.almbackend.notification.EmailNotifier;
 import com.platform.almbackend.personal.PreferenceService.PreferenceUpdate;
 import com.platform.almbackend.personal.PreferenceService.PreferenceView;
 import com.platform.almbackend.personal.ProjectShortcutService.ShortcutRequest;
@@ -35,19 +36,21 @@ public class PersonalizationController {
     private final PreferenceService preferences;
     private final ProjectShortcutService shortcuts;
     private final SystemSettingService systemSettings;
+    /** 메일 허브 상태(HTTP 왕복) — 개인 설정 트랜잭션 밖에서 읽는다 */
+    private final EmailNotifier email;
 
     @NoOrgDependency
     @Operation(summary = "내 개인 설정을 조회한다")
     @GetMapping("/api/alm/me/preferences")
     public PreferenceView myPreferences(@AuthenticationPrincipal Jwt jwt) {
-        return preferences.view(userId(jwt), jwt.getClaimAsString("email"));
+        return preferences.view(userId(jwt), jwt.getClaimAsString("email"), email.configured());
     }
 
     @NoOrgDependency
     @Operation(summary = "내 개인 설정을 저장한다")
     @PutMapping("/api/alm/me/preferences")
     public PreferenceView savePreferences(@RequestBody PreferenceUpdate body, @AuthenticationPrincipal Jwt jwt) {
-        return preferences.save(userId(jwt), jwt.getClaimAsString("email"), body);
+        return preferences.save(userId(jwt), jwt.getClaimAsString("email"), body, email.configured());
     }
 
     @Operation(summary = "프로젝트 바로 가기를 조회한다")

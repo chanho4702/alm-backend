@@ -159,6 +159,9 @@ final class AqlSpecification {
             case "estimate" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("estimateHours")),
                     cb.equal(root.<BigDecimal>get("estimateHours"), session.number(v))));
             case "created", "updated" -> anyOf(values, v -> instantWindow(instantPath(field), session.moment(v)));
+            // 해결일은 비어 있을 수 있다 — NULL을 남기면 NOT(…)이 정확한 여집합이 못 된다(클래스 주석)
+            case "resolved" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("resolvedAt")),
+                    instantWindow(root.get("resolvedAt"), session.moment(v))));
             default -> throw AqlException.at(position, "'='를 쓸 수 없는 필드입니다: " + field.name());
         };
     }
@@ -218,10 +221,10 @@ final class AqlSpecification {
                     default -> cb.greaterThan(rank, target.getSortOrder());
                 };
             }
-            case "created", "updated" -> {
+            case "created", "updated", "resolved" -> {
                 Path<Instant> path = instantPath(field);
                 AqlResolver.Moment moment = session.moment(value);
-                return switch (operator) {
+                Predicate compared = switch (operator) {
                     case "<" -> cb.lessThan(path, moment.start());
                     case "<=" -> moment.dateOnly()
                             ? cb.lessThan(path, moment.endExclusive())
@@ -231,6 +234,8 @@ final class AqlSpecification {
                             : cb.greaterThan(path, moment.start());
                     default -> cb.greaterThanOrEqualTo(path, moment.start());
                 };
+                // 생성·수정 시각은 비지 않지만 해결일은 빈다 — due처럼 값이 있는 것만 비교에 넣는다
+                return "resolved".equals(field.name()) ? cb.and(cb.isNotNull(path), compared) : compared;
             }
             case "due" -> {
                 LocalDate date = session.moment(value).date();
@@ -268,6 +273,7 @@ final class AqlSpecification {
             case "resolution" -> cb.isNull(root.get("resolution"));
             case "parent" -> cb.isNull(root.get("parentId"));
             case "due" -> cb.isNull(root.get("dueDate"));
+            case "resolved" -> cb.isNull(root.get("resolvedAt"));
             case "estimate" -> cb.isNull(root.get("estimateHours"));
             case "labels" -> cb.isEmpty(root.get("labels"));
             case "component" -> cb.isEmpty(root.get("componentIds"));
@@ -302,6 +308,7 @@ final class AqlSpecification {
             case "created" -> List.of(root.get("createdAt"));
             case "updated" -> List.of(root.get("updatedAt"));
             case "due" -> List.of(root.get("dueDate"));
+            case "resolved" -> List.of(root.get("resolvedAt"));
             case "priority" -> List.of(priorityRank());
             case "status" -> List.of(statusRank());
             case "summary" -> List.of(root.get("title"));
@@ -359,6 +366,7 @@ final class AqlSpecification {
             case "resolution" -> cb.isNotNull(root.get("resolution"));
             case "parent" -> cb.isNotNull(root.get("parentId"));
             case "due" -> cb.isNotNull(root.get("dueDate"));
+            case "resolved" -> cb.isNotNull(root.get("resolvedAt"));
             case "estimate" -> cb.isNotNull(root.get("estimateHours"));
             case "labels" -> cb.isNotEmpty(root.get("labels"));
             case "component" -> cb.isNotEmpty(root.get("componentIds"));
@@ -392,7 +400,11 @@ final class AqlSpecification {
     }
 
     private Path<Instant> instantPath(AqlFields.Field field) {
-        return root.get("created".equals(field.name()) ? "createdAt" : "updatedAt");
+        return root.get(switch (field.name()) {
+            case "created" -> "createdAt";
+            case "resolved" -> "resolvedAt";
+            default -> "updatedAt";
+        });
     }
 
     private static List<Object> flat(List<Value> values, java.util.function.Function<Value, List<?>> mapper) {

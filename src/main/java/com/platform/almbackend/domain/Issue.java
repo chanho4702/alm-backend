@@ -11,6 +11,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -75,6 +76,15 @@ public class Issue {
     @Enumerated(EnumType.STRING)
     @Column(length = 24)
     private IssueResolution resolution;
+
+    /**
+     * 해결일 — {@code resolution}이 <b>비어 있다가 채워지는 순간</b>의 시각이다. 해결이 풀리면 다시 null이 된다.
+     * 값을 직접 넣지 않는다: 쓰는 길은 {@link #applyResolution}뿐이라 규칙이 한 곳에만 있다.
+     *
+     * <p>해결 사유를 다른 사유로 바꾸는 것(완료 → 중복)은 다시 해결한 것이 아니므로 시각을 건드리지 않는다.
+     */
+    @Column(name = "resolved_at")
+    private Instant resolvedAt;
 
     /** 수정 버전(fix version). null = 미지정 */
     @Column(name = "fix_version_id")
@@ -209,12 +219,32 @@ public class Issue {
         this.sprintId = sprintId;
         this.dueDate = dueDate;
         this.estimateHours = estimateHours;
-        this.resolution = resolution;
+        applyResolution(resolution);
         this.fixVersionId = fixVersionId;
         this.labels.clear();
         this.labels.addAll(labels);
         this.sortOrder = sortOrder;
         this.version += 1;
+    }
+
+    /**
+     * 해결 사유를 바꾸는 유일한 길 — 해결일이 사유와 따로 놀지 않게 한 곳에 묶어 둔다.
+     *
+     * <ul>
+     *   <li>미해결 → 해결: 지금을 해결일로 적는다.</li>
+     *   <li>해결 → 미해결: 해결일을 지운다. 다시 해결하면 그때 시각으로 새로 적힌다.</li>
+     *   <li>해결 → 다른 사유: 해결일은 그대로다(처음 해결한 때가 해결일이다).</li>
+     * </ul>
+     */
+    private void applyResolution(IssueResolution next) {
+        if (next == null) {
+            this.resolvedAt = null;
+        } else if (this.resolution == null) {
+            // 저장 정밀도(Postgres timestamptz = 마이크로초)에 맞춰 잘라 둔다 — 안 그러면 저장 전후로
+            // 값이 달라져 "방금 읽은 값과 다시 읽은 값이 다르다"가 된다
+            this.resolvedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        }
+        this.resolution = next;
     }
 
     /**

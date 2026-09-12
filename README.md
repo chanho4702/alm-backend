@@ -80,6 +80,10 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/issues/query` | 접근 가능한 프로젝트 | **AQL** 검색 — 아래 "AQL" 절 |
 | `POST` | `/api/alm/issues/query/validate` | 인증 | AQL 문법 검사(에디터 실시간) |
 | `GET` | `/api/alm/issues/query/fields` | 접근 가능한 프로젝트 | AQL 자동완성 사전(필드·별칭·연산자·값 후보) |
+| `GET` | `/api/alm/me/filters` | 인증(본인) | 저장 필터 목록(이름 순) — 아래 "저장 필터" 절 |
+| `POST` | `/api/alm/me/filters` | 인증(본인) | 저장 필터 생성(이름 중복 409, `kind=aql`이면 문법 검사) |
+| `PUT` | `/api/alm/me/filters/{id}` | 인증(본인) | 저장 필터 수정(보낸 항목만) |
+| `DELETE` | `/api/alm/me/filters/{id}` | 인증(본인) | 저장 필터 삭제 |
 | `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 |
 | `POST` | `/api/alm/issues/{issueId}/rank` | EDIT | 백로그/스프린트 랭크 이동 |
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |
@@ -233,12 +237,13 @@ order   := field ("ASC" | "DESC")?
 | `resolution` | 해결 | enum | `DONE`/`WONT_DO`/`DUPLICATE`/`CANNOT_REPRODUCE`(완료·하지않음·중복·재현불가), `EMPTY`(미해결) |
 | `parent` | 상위, 상위항목 | key | `ALM-3` 또는 id, `EMPTY` |
 | `created` / `updated` / `due` | 생성일 / 수정일 / 마감일 | date | 절대·상대·함수 |
+| `resolved` | 해결일 | date | 절대·상대·함수, `EMPTY`(미해결). 해결 사유가 **처음** 붙은 시각(V23) |
 | `estimate` | 예상시간 | number | 시간(h) |
 | `text` | 텍스트, 내용 | text | `~`만 — 제목+설명 |
 | `summary` | 요약, 제목 | text | `~` 포함, `=` 정확(대소문자 무시) |
 | `archived` | 보관 | bool | 기본 false. `archived = true`로 보관함 검색 |
 
-정렬 가능: `created` `updated` `due` `priority` `key` `status` `summary` `assignee` `estimate`.
+정렬 가능: `created` `updated` `due` `resolved` `priority` `key` `status` `summary` `assignee` `estimate`.
 `key`는 문자열이 아니라 프로젝트+이슈 번호로 센다(`ALM-9`가 `ALM-10`보다 앞).
 
 ### 항상 걸리는 세 가지
@@ -378,12 +383,38 @@ order   := field ("ASC" | "DESC")?
 
 ### 한계
 
-- **`resolved`(해결일)은 아직 없다.** 해결 시각을 저장하는 컬럼이 없어서, 쓰면 400
-  `아직 지원하지 않는 필드입니다: resolved`로 거절한다. 다른 값으로 대신 답하지 않는다.
+- 해결일(`resolved`)은 **해결 사유가 처음 붙은 시각**이다. 사유를 다른 사유로 바꾸는 것(완료 → 중복)은
+  다시 해결한 것이 아니라 시각을 건드리지 않고, 해결을 풀면 비워진다. V23 이전부터 해결돼 있던 이슈는
+  마지막 수정 시각으로 백필했으므로 그만큼 근사치다.
+- 비어 있을 수 있는 정렬 키(`resolved`·`due`·`assignee`·`estimate`)에서 빈 값이 앞에 오는지 뒤에 오는지는
+  DB가 정한다 — AQL이 따로 고정하지 않는다.
 - `validate`는 값을 해석하지 않는다. `status = 없는상태`는 검증을 통과하고 실행에서 400이 난다.
 - 표시 이름 해석의 후보는 이슈에 등장하는 사용자 1000명까지다.
 - 보관함 검색을 위해 `issue` 테이블을 읽기 전용 엔티티(`AqlIssueRow`)로 한 번 더 매핑한다.
   `Issue`에는 `@SQLRestriction("archived_at is null")`이 걸려 있어 Criteria가 보관된 행을 못 본다.
+
+## 저장 필터
+
+사이드바에 꽂아 두는 내 검색. 스마트 검색 문자열이거나 AQL이며 무엇을 저장했는지는 `kind`가 말한다.
+정본은 서버(`saved_filter`, V24)이고 소유자 본인만 보고 고친다 — 공유 필터는 없다.
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET` | `/api/alm/me/filters` | 내 필터 목록(이름 순) |
+| `POST` | `/api/alm/me/filters` | 생성 — `{name, kind, query}` → 201 |
+| `PUT` | `/api/alm/me/filters/{id}` | 수정 — `{name?, kind?, query?}`, 보낸 항목만 바뀐다 |
+| `DELETE` | `/api/alm/me/filters/{id}` | 삭제 → 204 |
+
+응답은 `{id, name, kind, query, createdAt, updatedAt}`이다(`ownerId`는 내보내지 않는다).
+
+- **소유 격리**: 남의 필터를 지목하면 403이 아니라 **404**다 — 있다는 사실 자체를 알리지 않는다.
+- **이름**: 1~60자, 한 사람 안에서 유일하다. 겹치면 409 `{"error": "같은 이름의 필터가 있습니다"}`.
+  DB 유니크(`owner_id`, `name`)가 같은 문장으로 뒤를 받친다.
+- **종류**: `smart` 또는 `aql`. 그 밖이면 400 `필터 종류는 smart 또는 aql입니다`.
+- **질의**: 1~4000자. `kind`가 `aql`이면 저장할 때 문법을 검사해 틀리면 400
+  `{error, position, expected}`로 거절한다(검색과 같은 오류 계약) — 못 여는 필터를 꽂아 두고 누를 때마다
+  400을 보느니 저장을 막는다. 값 해석(그런 상태가 실재하는가)은 검색과 마찬가지로 실행할 때 한다.
+  `kind`만 `aql`로 바꿔도 이미 저장돼 있던 문자열이 검사 대상이다.
 
 ## OpenAPI
 
@@ -418,7 +449,7 @@ order   := field ("ASC" | "DESC")?
 
   503은 `GrpcPermissionClient`가 org 불능(UNAVAILABLE·DEADLINE_EXCEEDED)에서 던지는
   `ServiceUnavailableException`이다. alm은 프로젝트 권한이든 전역 관리자 판정이든 같은 클라이언트를 타므로
-  503이 기본이고, org를 부르지 않는 22개(대시보드·개인 설정·배너 읽기·내 알림·레지스트리 읽기)만
+  503이 기본이고, org를 부르지 않는 26개(대시보드·개인 설정·배너 읽기·내 알림·저장 필터·레지스트리 읽기)만
   `@NoOrgDependency`로 표시해 뺀다. 이 표식은 문서 전용이며 보안 통제가 아니다.
 
   springdoc은 기본값으로 예외 핸들러가 다루는 상태를 모든 오퍼레이션에 복사하므로(GET에도 404·409가 달린다)
