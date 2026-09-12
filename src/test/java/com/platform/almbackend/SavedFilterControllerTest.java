@@ -73,16 +73,28 @@ class SavedFilterControllerTest {
                 .andExpect(jsonPath("$.length()").value(0));
     }
 
+    /**
+     * 순서는 DB 콜레이션이 아니라 한국어 {@code Collator}(PRIMARY)가 정한다 — 숫자 → 영문 → 한글이고
+     * 대소문자는 가리지 않는다. H2로 돌든 Postgres로 돌든 같은 순서여야 사이드바가 흔들리지 않는다.
+     */
     @Test
-    void 목록은_이름_순이다() throws Exception {
-        create(1, "하나", "smart", "a");
-        create(1, "가나", "smart", "b");
-        create(1, "나다", "smart", "c");
+    void 목록은_한글과_영문이_섞여도_같은_이름_순이다() throws Exception {
+        long banana = create(1, "banana", "smart", "a");
+        long hangulLast = create(1, "하나", "smart", "b");
+        long apple = create(1, "Apple", "smart", "c");
+        long hangulFirst = create(1, "가나", "smart", "d");
+        long digit = create(1, "1순위", "smart", "e");
+        // 대소문자만 다른 이름은 동률 — id 오름차순으로 끊는다(Apple이 먼저 생겼다)
+        long appleLower = create(1, "apple", "smart", "f");
 
         mvc.perform(get("/api/alm/me/filters").with(asUser(1, "Alice")))
-                .andExpect(jsonPath("$[0].name").value("가나"))
-                .andExpect(jsonPath("$[1].name").value("나다"))
-                .andExpect(jsonPath("$[2].name").value("하나"));
+                .andExpect(jsonPath("$.length()").value(6))
+                .andExpect(jsonPath("$[0].id").value(digit))
+                .andExpect(jsonPath("$[1].id").value(apple))
+                .andExpect(jsonPath("$[2].id").value(appleLower))
+                .andExpect(jsonPath("$[3].id").value(banana))
+                .andExpect(jsonPath("$[4].id").value(hangulFirst))
+                .andExpect(jsonPath("$[5].id").value(hangulLast));
     }
 
     @Test

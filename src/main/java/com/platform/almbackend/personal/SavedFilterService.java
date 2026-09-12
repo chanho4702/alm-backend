@@ -10,9 +10,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.text.Collator;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 내 저장 필터 — 사이드바에 꽂아 두는 검색. 프로젝트 권한을 묻지 않는다(질의를 <b>실행</b>할 때
@@ -44,9 +47,27 @@ public class SavedFilterService {
     /** 고칠 때는 보낸 것만 바뀐다 — null은 "그대로 두라"는 뜻이다 */
     public record FilterUpdateRequest(String name, String kind, String query) {}
 
+    /**
+     * 이름 순. 정렬은 DB가 아니라 여기서 한다 — {@code ORDER BY name}은 콜레이션을 타서 한글·영문이
+     * 섞이면 H2와 Postgres가, 같은 Postgres라도 로케일이 다르면 순서가 갈린다. 사이드바 순서가
+     * 환경 따라 달라지면 안 되므로 한국어 {@link Collator}로 못 박는다.
+     *
+     * <p>강도는 PRIMARY라 대소문자를 가리지 않는다({@code apple}과 {@code Apple}이 동률). 동률은
+     * id 오름차순으로 끊어 페이지마다 순서가 흔들리지 않게 한다.
+     */
     @Transactional(readOnly = true)
     public List<FilterResponse> list(long userId) {
-        return filters.findByOwnerIdOrderByNameAscIdAsc(userId).stream().map(FilterResponse::from).toList();
+        return filters.findByOwnerId(userId).stream()
+                .map(FilterResponse::from)
+                .sorted(byName())
+                .toList();
+    }
+
+    /** {@code Collator}는 스레드 안전이 아니다 — 공유 상수로 두지 않고 호출마다 만든다 */
+    private static Comparator<FilterResponse> byName() {
+        Collator collator = Collator.getInstance(Locale.KOREAN);
+        collator.setStrength(Collator.PRIMARY);
+        return Comparator.comparing(FilterResponse::name, collator).thenComparingLong(FilterResponse::id);
     }
 
     public FilterResponse create(long userId, FilterCreateRequest request) {
