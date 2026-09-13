@@ -5,6 +5,9 @@ spring:
   data:
     redis:
       database: 1
+      # 도커 Redis의 호스트 게시 포트(기본 16379). 127.0.0.1:6379는 호스트의 Windows Redis 3.2(Streams 없음)라
+      # 그리로 붙으면 안 된다(2026-09-13). compose REDIS_HOST_PORT와 같은 값으로.
+      port: ${REDIS_PORT:16379}
   security:
     oauth2:
       resourceserver:
