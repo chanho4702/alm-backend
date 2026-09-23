@@ -183,6 +183,45 @@ class AqlQueryControllerTest {
         assertThat(query("key ~ alm", 1).get("total").asLong()).isEqualTo(5);
     }
 
+    @Test
+    void openSprints는_진행_중인_스프린트만_본다() throws Exception {
+        // 시드 스프린트는 PLANNED — 진행 중이 없으면 0건이어야 한다(빈 IN 목록이 500이 되면 안 된다)
+        assertThat(query("sprint IN openSprints()", 1).get("total").asLong()).isZero();
+
+        long sprintId = sprints.findByNameIgnoreCase("스프린트 1").get(0).getId();
+        mvc.perform(post("/api/alm/sprints/{id}/start", sprintId).with(asUser(1, "테스터")))
+                .andExpect(status().isOk());
+        assertThat(titles(query("sprint IN openSprints()", 1))).containsExactly("보드 개선");
+        assertThat(titles(query("sprint = openSprints()", 1))).containsExactly("보드 개선");
+
+        // 완료하면 다시 빠진다 — "열린" 스프린트의 의미가 상태 전이를 따라간다
+        mvc.perform(post("/api/alm/sprints/{id}/complete", sprintId).with(asUser(1, "테스터")))
+                .andExpect(status().isOk());
+        assertThat(query("sprint IN openSprints()", 1).get("total").asLong()).isZero();
+    }
+
+    @Test
+    void 컴포넌트는_이름과_한국어_별칭으로_찾고_모르는_이름은_400이다() throws Exception {
+        String created = mvc.perform(post("/api/alm/projects/{id}/components", almId).with(asUser(1, "테스터"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"백엔드\",\"description\":\"\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long componentId = JSON.readTree(created).get("id").asLong();
+        create(almId, "컴포넌트 달린 이슈", "설명", "task", "todo", "medium", null,
+                "\"componentIds\":[" + componentId + "]");
+
+        // 이름은 대소문자 무시로 해석되고, 숫자면 id로도 잡는다
+        assertThat(titles(query("component = 백엔드", 1))).containsExactly("컴포넌트 달린 이슈");
+        assertThat(titles(query("컴포넌트 = 백엔드", 1))).containsExactly("컴포넌트 달린 이슈");
+        assertThat(titles(query("component = " + componentId, 1))).containsExactly("컴포넌트 달린 이슈");
+
+        mvc.perform(post("/api/alm/issues/query").with(asUser(1, "테스터"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"aql\":\"component = 없는이름\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("컴포넌트를 찾을 수 없습니다: 없는이름"));
+    }
+
     // ── 범위·보관 ──
 
     @Test

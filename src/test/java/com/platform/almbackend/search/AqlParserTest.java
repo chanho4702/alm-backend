@@ -60,6 +60,17 @@ class AqlParserTest {
     }
 
     @Test
+    void IN_뒤에는_괄호_목록_대신_함수_하나가_올_수_있다() {
+        assertThat(ast("sprint IN openSprints()")).isEqualTo(
+                "{\"where\":{\"kind\":\"in\",\"field\":\"sprint\",\"negated\":false,\"values\":["
+                        + "{\"type\":\"function\",\"name\":\"openSprints\",\"args\":[]}]},\"orderBy\":[]}");
+        // 함수가 아니면 여전히 괄호 목록이 필요하다
+        assertThatThrownBy(() -> AqlParser.parse("sprint IN backend"))
+                .isInstanceOf(AqlException.class)
+                .hasMessageContaining("여는 괄호가 필요합니다");
+    }
+
+    @Test
     void 벡터4_IS_EMPTY와_부등() {
         assertThat(ast("sprint IS EMPTY AND statusCategory != complete")).isEqualTo("""
                 {"where":{"kind":"and","children":[\

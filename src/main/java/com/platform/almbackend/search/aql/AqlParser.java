@@ -23,7 +23,7 @@ import java.util.Set;
  * and     := term ("AND" term)*          -- AND가 OR보다 강하게 묶인다(JQL과 같음)
  * term    := "NOT" term | "(" clause ")" | cond
  * cond    := field op value
- *          | field ("IN" | "NOT" "IN") "(" value ("," value)* ")"
+ *          | field ("IN" | "NOT" "IN") ( "(" value ("," value)* ")" | function )
  *          | field ("IS" | "IS" "NOT") "EMPTY"
  * value   := string | number | ident | ident "(" arg? ("," arg)* ")"
  * order   := field ("ASC" | "DESC")?
@@ -165,6 +165,12 @@ public final class AqlParser {
 
     private List<Value> valueList() {
         if (!peek().is(Type.LPAREN)) {
+            // JQL 관례 — 목록을 돌려주는 함수는 괄호 목록 없이 바로 온다: sprint IN openSprints()
+            if (peek().is(Type.IDENT) && peekAhead(1).is(Type.LPAREN)) {
+                Value single = value();
+                if (single.kind() == ValueKind.FUNCTION) return List.of(single);
+                throw AqlException.at(single.position(), "여는 괄호가 필요합니다", "(");
+            }
             throw AqlException.at(peek().position(), "여는 괄호가 필요합니다", "(");
         }
         next();
