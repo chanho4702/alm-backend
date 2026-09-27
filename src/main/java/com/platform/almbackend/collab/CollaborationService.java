@@ -221,7 +221,10 @@ public class CollaborationService {
         return webLinks.findByIssueIdOrderByIdDesc(issueId).stream().map(WebLinkResponse::from).toList();
     }
 
-    /** 같은 issue+url이면 새로 만들지 않고 기존 것을 돌려준다 — 커밋 파서 재실행에도 중복이 안 쌓인다 */
+    /**
+     * 같은 issue+url이면 새로 만들지 않고 기존 것을 돌려준다 — 커밋 파서 재실행에도 중복이 안 쌓인다.
+     * 동시 요청이 조회를 함께 통과해도 유니크 제약(V25)에 걸린 쪽은 먼저 들어간 행을 돌려받는다.
+     */
     public WebLinkOutcome addWebLink(long userId, long issueId, String url, String title, String kind) {
         Issue issue = require(userId, issueId, AlmAction.EDIT);
         String normalizedUrl = requireUrl(url);
@@ -232,7 +235,12 @@ public class CollaborationService {
         }
         String normalizedTitle = normalizeTitle(title);
         Instant now = now();
-        IssueWebLink saved = webLinks.save(IssueWebLink.of(issueId, normalizedUrl, normalizedTitle, normalizedKind, userId, now));
+        boolean inserted = webLinks.insertIfAbsent(issueId, normalizedUrl, normalizedTitle, normalizedKind, userId, now) == 1;
+        IssueWebLink saved = webLinks.findByIssueIdAndUrl(issueId, normalizedUrl)
+                .orElseThrow(() -> new IllegalStateException("웹 링크 저장 직후 조회에 실패했습니다"));
+        if (!inserted) {
+            return new WebLinkOutcome(WebLinkResponse.from(saved), false);
+        }
         String detail = normalizedKind + ": " + (normalizedTitle != null ? normalizedTitle : normalizedUrl);
         record(issue.getId(), userId, "web_link_added", detail.length() > 500 ? detail.substring(0, 500) : detail, now);
         return new WebLinkOutcome(WebLinkResponse.from(saved), true);

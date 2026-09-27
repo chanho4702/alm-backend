@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -14,7 +15,8 @@ import java.time.Instant;
 
 /** 이슈 외부 링크(PR·커밋·웹) — 에이전트 git 연결(P2a). 이슈↔이슈 링크({@link IssueLink})와 별개. */
 @Entity
-@Table(name = "issue_web_link")
+@Table(name = "issue_web_link",
+        uniqueConstraints = @UniqueConstraint(name = "uk_issue_web_link_issue_url", columnNames = {"issue_id", "url"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class IssueWebLink {
