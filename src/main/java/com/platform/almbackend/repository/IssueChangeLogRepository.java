@@ -13,7 +13,8 @@ public interface IssueChangeLogRepository extends JpaRepository<IssueChangeLog, 
 
     /**
      * 시간순 이력. 같은 트랜잭션에서 만든 줄은 시각이 같을 수 있어 id를 2차 키로 쓴다.
-     * 필터는 전부 선택이다 — null이면 걸지 않는다.
+     * 필터는 전부 선택이다 — null이면 걸지 않는다. 시각 필터는 `:since is null` 대신 coalesce로 쓴다 —
+     * PostgreSQL JDBC는 시각 null을 타입 미지정으로 보내 `? is null`의 타입을 못 정한다(H2는 통과).
      *
      * 스프린트 필터는 **전이의 양쪽**을 잡는다. 스프린트를 떠난 줄은 `sprint_id`가 이동한 뒤 값이라
      * 소속만 비교하면 원래 스프린트 리포트가 "시작 후 빠진 이슈"를 못 본다.
@@ -26,7 +27,7 @@ public interface IssueChangeLogRepository extends JpaRepository<IssueChangeLog, 
                    or l.sprintId = :sprintId
                    or (l.field = com.platform.almbackend.domain.ChangeField.SPRINT
                        and (l.fromValue = :sprintText or l.toValue = :sprintText)))
-              and (:since is null or l.changedAt >= :since)
+              and l.changedAt >= coalesce(:since, l.changedAt)
             order by l.changedAt asc, l.id asc
             """)
     List<IssueChangeLog> findHistory(
