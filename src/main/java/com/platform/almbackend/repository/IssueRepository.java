@@ -143,4 +143,23 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     /** 키 점유 확인 — 보관된 이슈도 키를 쥐고 있어 @SQLRestriction 밖까지 본다(가져오기의 키 보존 검사) */
     @Query(value = "select count(*) > 0 from issue where issue_key = :key", nativeQuery = true)
     boolean existsKeyIncludingArchived(@Param("key") String key);
+
+    // ── 목록 응답의 컬렉션 일괄 읽기(N+1 방지) — 보관 행(보관함·AQL archived)도 읽어야 해서 네이티브 ──
+
+    /** [issue_id, label] — 이슈별 라벨 순서(label_order) 그대로 */
+    @Query(value = "select issue_id, label from issue_label where issue_id in (:ids) order by issue_id, label_order",
+            nativeQuery = true)
+    List<Object[]> findLabelRows(@Param("ids") java.util.Collection<Long> ids);
+
+    /** [issue_id, component_id] — 이슈별 컴포넌트 순서(component_order) 그대로 */
+    @Query(value = "select issue_id, component_id from issue_component where issue_id in (:ids) order by issue_id, component_order",
+            nativeQuery = true)
+    List<Object[]> findComponentRows(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * 프로젝트 라벨 후보 — 보관되지 않은 이슈의 라벨만. JPQL이라 Issue의 @SQLRestriction(archived_at is null)이
+     * 그대로 걸린다. 정렬은 대소문자 무시 규칙이라 서비스가 한다.
+     */
+    @Query("select distinct l from Issue i join i.labels l where i.projectId = :projectId")
+    List<String> findDistinctLabelsByProjectId(@Param("projectId") long projectId);
 }

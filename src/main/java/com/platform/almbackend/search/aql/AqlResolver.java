@@ -20,6 +20,7 @@ import com.platform.almbackend.repository.ProjectRepository;
 import com.platform.almbackend.repository.ProjectVersionRepository;
 import com.platform.almbackend.repository.SprintRepository;
 import com.platform.almbackend.repository.StatusCategoryRepository;
+import com.platform.almbackend.settings.StatusCategories;
 import com.platform.almbackend.repository.StatusDefRepository;
 import com.platform.almbackend.search.aql.AqlAst.Value;
 import com.platform.almbackend.search.aql.AqlAst.ValueKind;
@@ -185,20 +186,14 @@ public class AqlResolver {
         /** 상태 분류(new/active/complete·이름·id) → 그 분류에 속한 상태 id 목록 */
         public List<String> statusIdsOfCategory(Value value) {
             String text = text(value);
-            List<String> categoryIds = categories().stream()
-                    .filter(c -> c.getKind().equalsIgnoreCase(text)
-                            || c.getId().equalsIgnoreCase(text)
-                            || c.getName().equalsIgnoreCase(text))
-                    .map(StatusCategory::getId).toList();
+            // 해석 규칙은 서버 검색(statusCategories)과 한 벌이다 — StatusCategories
+            List<String> categoryIds = StatusCategories.matchingCategoryIds(categories(), text);
             if (categoryIds.isEmpty()) {
                 throw AqlException.at(value.position(), "상태분류를 모릅니다: " + text,
                         "new", "active", "complete");
             }
-            List<String> ids = statusDefs().stream()
-                    .filter(def -> categoryIds.contains(def.getCategoryId()))
-                    .map(StatusDef::getId).toList();
             // 분류는 있는데 상태가 하나도 없으면 "아무것도 아님"이다 — 조건이 전부 걸러내도록 둔다
-            return ids;
+            return StatusCategories.statusIdsIn(statusDefs(), categoryIds);
         }
 
         public List<String> typeIds(Value value) {

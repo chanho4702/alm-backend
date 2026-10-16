@@ -8,6 +8,7 @@ import com.platform.almbackend.domain.Board;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.Sprint;
 import com.platform.almbackend.domain.SprintState;
+import com.platform.almbackend.issue.IssueResponses;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
@@ -42,6 +43,7 @@ public class BoardService {
     private final SprintRepository sprints;
     private final ProjectService projectService;
     private final ObjectMapper json;
+    private final IssueResponses issueResponses;
 
     public record Filter(List<String> assigneeIds, List<String> types, List<String> labels) {
         public static Filter empty() { return new Filter(List.of(), List.of(), List.of()); }
@@ -146,7 +148,7 @@ public class BoardService {
             Set<String> labels = new HashSet<>(filter.labels());
             all = all.stream().filter(i -> i.getLabels().stream().anyMatch(labels::contains)).toList();
         }
-        return all.stream().map(IssueResponse::from).toList();
+        return issueResponses.of(all);
     }
 
     private static void validateColumns(List<Column> columns) {

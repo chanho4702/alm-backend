@@ -38,13 +38,14 @@ public class IssueArchiveController {
     private final IssueRepository issues;
     private final ProjectService projectService;
     private final EventRelay events;
+    private final IssueResponses responses;
 
     @Operation(summary = "프로젝트 보관함의 이슈를 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues/archived")
     @Transactional(readOnly = true)
     public List<IssueResponse> archived(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
         projectService.require(userId(jwt), projectId, AlmAction.VIEW);
-        return issues.findArchivedByProject(projectId).stream().map(IssueResponse::from).toList();
+        return responses.of(issues.findArchivedByProject(projectId));
     }
 
     @Operation(summary = "이슈를 보관함으로 옮긴다")
