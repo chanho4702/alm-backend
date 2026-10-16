@@ -72,7 +72,7 @@ class EventOutboxRelayTest {
                 "고친 제목", "", "task", "todo", "medium", null, null, 1, null));
 
         assertThat(published.events()).isEmpty();
-        List<EventOutbox> rows = outbox.findAll();
+        List<EventOutbox> rows = outbox.findAll(org.springframework.data.domain.Sort.by("id"));
         assertThat(rows).extracting(EventOutbox::getEventType).containsExactly("ISSUE_CREATED", "ISSUE_UPDATED");
 
         assertThat(relay.publishPending()).isEqualTo(2);
@@ -106,7 +106,7 @@ class EventOutboxRelayTest {
         published.setFailing(true);
 
         assertThat(relay.publishPending()).isZero();
-        List<EventOutbox> rows = outbox.findAll();
+        List<EventOutbox> rows = outbox.findAll(org.springframework.data.domain.Sort.by("id"));
         // 첫 행에서 멈춘다 — 뒤 행은 시도하지 않아 순서가 뒤집히지 않는다
         assertThat(rows.get(0).getAttempts()).isEqualTo(1);
         assertThat(rows.get(0).getLastError()).contains("redis down");
@@ -132,7 +132,7 @@ class EventOutboxRelayTest {
         createIssue("포기될 이슈");
         createIssue("다음 이슈");
         // 최대 시도(기본 20) 직전까지 실패한 것으로 만든다
-        long headId = outbox.findAll().get(0).getId();
+        long headId = outbox.findAll(org.springframework.data.domain.Sort.by("id")).get(0).getId();
         jdbc.update("update event_outbox set attempts = 19 where id = ?", headId);
         published.setFailing(true);
         relay.publishPending();
@@ -153,7 +153,7 @@ class EventOutboxRelayTest {
     void 보존_기간이_지난_발행분만_정리한다() {
         createIssue("오래된 이슈");
         createIssue("미발행 이슈");
-        long oldId = outbox.findAll().get(0).getId();
+        long oldId = outbox.findAll(org.springframework.data.domain.Sort.by("id")).get(0).getId();
         relay.publishPending();
         jdbc.update("update event_outbox set published_at = ? where id = ?",
                 java.sql.Timestamp.from(Instant.now().minus(Duration.ofDays(8))), oldId);
