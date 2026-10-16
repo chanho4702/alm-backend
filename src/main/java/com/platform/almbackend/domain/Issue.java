@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -93,7 +94,10 @@ public class Issue {
     @Column(name = "estimate_hours", precision = 10, scale = 2)
     private BigDecimal estimateHours;
 
+    // 목록 응답은 IssueResponses가 페이지 단위로 따로 읽는다. 그 밖의 경로(IssueService.list 등)에서
+    // 이슈마다 지연 로딩되더라도 한 번에 최대 100건씩 묶어 읽게 하는 안전망이다
     @ElementCollection
+    @BatchSize(size = 100)
     @CollectionTable(name = "issue_label", joinColumns = @JoinColumn(name = "issue_id"))
     @OrderColumn(name = "label_order")
     @Column(name = "label", nullable = false, length = 80)
@@ -101,6 +105,7 @@ public class Issue {
 
     /** 컴포넌트 id 목록(순서 유지) — 검증은 ComponentService가 한다 */
     @ElementCollection
+    @BatchSize(size = 100)
     @CollectionTable(name = "issue_component", joinColumns = @JoinColumn(name = "issue_id"))
     @OrderColumn(name = "component_order")
     @Column(name = "component_id", nullable = false)

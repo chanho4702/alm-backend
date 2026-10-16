@@ -4,6 +4,7 @@ import com.platform.almbackend.domain.IssueResolution;
 import com.platform.almbackend.domain.IssueTypeDef;
 import com.platform.almbackend.domain.PriorityDef;
 import com.platform.almbackend.domain.Project;
+import com.platform.almbackend.issue.IssueResponses;
 import com.platform.almbackend.domain.StatusCategory;
 import com.platform.almbackend.domain.StatusDef;
 import com.platform.almbackend.permission.AccessScope;
@@ -42,6 +43,7 @@ public class AqlSearchService {
     private final AqlResolver resolver;
     private final PermissionClient permissions;
     private final ProjectRepository projects;
+    private final IssueResponses responses;
 
     public QueryResponse query(long userId, String aql, Integer page, Integer size) {
         int safeSize = Math.max(1, Math.min(size == null ? DEFAULT_SIZE : size, MAX_SIZE));
@@ -60,7 +62,8 @@ public class AqlSearchService {
         Specification<AqlIssueRow> spec = new AqlSpecification(session, scopeIds).build(parsed);
         Page<AqlIssueRow> result = rows.findAll(spec, PageRequest.of(safePage, safeSize));
         return new QueryResponse(
-                result.getContent().stream().map(AqlIssueRow::toResponse).toList(),
+                responses.map(result.getContent(), AqlIssueRow::getId,
+                        (row, c) -> row.toResponse(c.labels(), c.componentIds())),
                 safePage, safeSize, result.getTotalElements(), text);
     }
 

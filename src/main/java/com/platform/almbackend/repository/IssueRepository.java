@@ -139,4 +139,23 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
     @org.springframework.data.jpa.repository.Query(value = "delete from issue_component where issue_id in (select id from issue where project_id = :projectId)", nativeQuery = true)
     int purgeComponentsByProjectId(@Param("projectId") long projectId);
+
+    // ── 목록 응답의 컬렉션 일괄 읽기(N+1 방지) — 보관 행(보관함·AQL archived)도 읽어야 해서 네이티브 ──
+
+    /** [issue_id, label] — 이슈별 라벨 순서(label_order) 그대로 */
+    @Query(value = "select issue_id, label from issue_label where issue_id in (:ids) order by issue_id, label_order",
+            nativeQuery = true)
+    List<Object[]> findLabelRows(@Param("ids") java.util.Collection<Long> ids);
+
+    /** [issue_id, component_id] — 이슈별 컴포넌트 순서(component_order) 그대로 */
+    @Query(value = "select issue_id, component_id from issue_component where issue_id in (:ids) order by issue_id, component_order",
+            nativeQuery = true)
+    List<Object[]> findComponentRows(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * 프로젝트 라벨 후보 — 보관되지 않은 이슈의 라벨만. JPQL이라 Issue의 @SQLRestriction(archived_at is null)이
+     * 그대로 걸린다. 정렬은 대소문자 무시 규칙이라 서비스가 한다.
+     */
+    @Query("select distinct l from Issue i join i.labels l where i.projectId = :projectId")
+    List<String> findDistinctLabelsByProjectId(@Param("projectId") long projectId);
 }

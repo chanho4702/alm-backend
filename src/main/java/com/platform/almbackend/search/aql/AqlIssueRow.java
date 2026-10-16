@@ -125,6 +125,11 @@ public class AqlIssueRow {
 
     /** 검색 응답은 기존 이슈 shape 그대로 — 프론트 어댑터가 하나만 있으면 되게 한다 */
     public IssueResponse toResponse() {
+        return toResponse(labels, componentIds);
+    }
+
+    /** 컬렉션을 페이지 단위로 따로 읽어 둔 경우 — 이 행의 지연 컬렉션은 건드리지 않는다 */
+    public IssueResponse toResponse(List<String> labels, List<Long> componentIds) {
         return new IssueResponse(id, key, projectId, title, description, type, status, priority,
                 assigneeId, reporterId, parentId, sprintId, dueDate, estimateHours, resolution, fixVersionId,
                 List.copyOf(labels), List.copyOf(componentIds), sortOrder, version, createdAt, updatedAt, archivedAt,

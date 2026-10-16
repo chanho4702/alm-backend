@@ -63,11 +63,19 @@ public record IssueResponse(
         Instant resolvedAt
 ) {
     public static IssueResponse from(Issue issue) {
+        return of(issue, issue.getLabels(), issue.getComponentIds());
+    }
+
+    /**
+     * 컬렉션을 따로 읽어 둔 경우 — 목록 응답은 라벨·컴포넌트를 페이지 단위 IN 질의로 한 번에 읽어
+     * 여기 넘긴다(이슈마다 지연 로딩하는 N+1을 피한다). {@code issue}의 컬렉션은 건드리지 않는다.
+     */
+    public static IssueResponse of(Issue issue, List<String> labels, List<Long> componentIds) {
         return new IssueResponse(issue.getId(), issue.getKey(), issue.getProjectId(), issue.getTitle(),
                 issue.getDescription(), issue.getType(), issue.getStatus(), issue.getPriority(),
                 issue.getAssigneeId(), issue.getReporterId(), issue.getParentId(), issue.getSprintId(),
                 issue.getDueDate(),
-                issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(), List.copyOf(issue.getLabels()), List.copyOf(issue.getComponentIds()), issue.getSortOrder(),
+                issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(), List.copyOf(labels), List.copyOf(componentIds), issue.getSortOrder(),
                 issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt(), issue.getArchivedAt(),
                 issue.getResolvedAt());
     }
