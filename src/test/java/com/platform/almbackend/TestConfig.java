@@ -317,15 +317,34 @@ public class TestConfig {
         private final List<EventEnvelope> events = new ArrayList<>();
         /** Redis 장애 흉내 — 켜 두면 XADD 실패처럼 던진다(아웃박스 재시도 검증) */
         private volatile boolean failing;
+        /** 다음 발행 한 번을 붙든다 — 발행 중인 워커가 소유권을 쥔 상태를 만든다(entered: 들어옴, release: 놓아줌) */
+        private volatile java.util.concurrent.CountDownLatch[] holdNext;
         @Override public void publish(EventEnvelope event) {
             if (failing) throw new IllegalStateException("redis down");
-            events.add(event);
+            java.util.concurrent.CountDownLatch[] hold = holdNext;
+            if (hold != null) {
+                holdNext = null;
+                hold[0].countDown();
+                try {
+                    if (!hold[1].await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("hold timeout");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
+            synchronized (events) { events.add(event); }
         }
         public void setFailing(boolean failing) { this.failing = failing; }
-        public List<EventEnvelope> events() { return List.copyOf(events); }
+        public void holdNext(java.util.concurrent.CountDownLatch entered, java.util.concurrent.CountDownLatch release) {
+            this.holdNext = new java.util.concurrent.CountDownLatch[] {entered, release};
+        }
+        public List<EventEnvelope> events() {
+            synchronized (events) { return List.copyOf(events); }
+        }
         public void clear() {
-            events.clear();
+            synchronized (events) { events.clear(); }
             failing = false;
+            holdNext = null;
         }
     }
 }

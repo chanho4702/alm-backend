@@ -1,11 +1,16 @@
 package com.platform.almbackend.event;
 
 import com.platform.almbackend.domain.EventOutbox;
+import com.platform.almbackend.domain.EventOutboxLock;
+import com.platform.almbackend.repository.EventOutboxLockRepository;
 import com.platform.almbackend.repository.EventOutboxRepository;
 import com.platform.proto.events.v1.EventEnvelope;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,7 +25,9 @@ import java.util.List;
  * 아웃박스 워커 — 커밋된 이벤트를 id 순으로 Redis Streams에 내보낸다(at-least-once).
  *
  * <ul>
- *   <li>한 배치 = 한 트랜잭션: 미발행 행을 SKIP LOCKED로 잠가 가져와 발행·표시한다. 인스턴스가 여럿이어도 같은 행을 동시에 내보내지 않는다.</li>
+ *   <li>한 배치 = 한 트랜잭션: 먼저 소유권 행(event_outbox_lock)을 SKIP LOCKED로 잡는다. 못 잡으면 다른 인스턴스가
+ *       비우는 중이라 이 주기는 건너뛴다 — 한 번에 한 워커만 id 순으로 내보내야 뒤 배치가 앞 배치를 앞지르지 않는다
+ *       (보관의 ISSUE_DELETED와 복원의 ISSUE_CREATED가 뒤집히는 식). 잡으면 미발행 행을 가져와 발행·표시한다.</li>
  *   <li>순서: 앞 행이 실패하거나 아직 대기 중이면 그 배치는 거기서 멈춘다 — Redis 장애는 보통 전체 장애라 큐 전체가 함께 물러난다.</li>
  *   <li>재시도: 지수 백오프(base × 2^(시도-1), 상한 max). 최대 시도를 넘기면 큐에서 빠지고 last_error와 함께 남는다(오류 로그).</li>
  *   <li>정리: 보존 기간이 지난 발행분만 지운다.</li>
@@ -33,6 +40,7 @@ public class EventOutboxRelay {
     private static final int MAX_BATCHES_PER_POLL = 10;
 
     private final EventOutboxRepository outbox;
+    private final EventOutboxLockRepository locks;
     private final ObjectProvider<EventPublisher> publisher;
     private final TransactionTemplate transaction;
     private final boolean pollingEnabled;
@@ -44,6 +52,7 @@ public class EventOutboxRelay {
 
     public EventOutboxRelay(
             EventOutboxRepository outbox,
+            EventOutboxLockRepository locks,
             ObjectProvider<EventPublisher> publisher,
             PlatformTransactionManager transactionManager,
             @Value("${platform.events.outbox.polling-enabled:true}") boolean pollingEnabled,
@@ -53,6 +62,7 @@ public class EventOutboxRelay {
             @Value("${platform.events.outbox.max-backoff:5m}") Duration maxBackoff,
             @Value("${platform.events.outbox.retention:7d}") Duration retention) {
         this.outbox = outbox;
+        this.locks = locks;
         this.publisher = publisher;
         this.transaction = new TransactionTemplate(transactionManager);
         this.pollingEnabled = pollingEnabled;
@@ -61,6 +71,23 @@ public class EventOutboxRelay {
         this.baseBackoff = baseBackoff;
         this.maxBackoff = maxBackoff;
         this.retention = retention;
+    }
+
+    /**
+     * 소유권 행 보장 — 운영은 V26이 넣어 두지만, Flyway 없이 스키마를 만드는 환경(H2 테스트)이나 행이 지워진
+     * 경우를 위해 기동 때 없으면 넣는다. 인스턴스가 동시에 넣어도 PK 충돌 한쪽만 실패한다.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void ensureOwnerRow() {
+        try {
+            transaction.executeWithoutResult(status -> {
+                if (!locks.existsById(EventOutboxLock.OWNER_ROW)) locks.save(EventOutboxLock.owner());
+            });
+        } catch (DataIntegrityViolationException e) {
+            // 다른 인스턴스가 먼저 넣었다
+        } catch (RuntimeException e) {
+            log.warn("ALM 이벤트 아웃박스 소유권 행 확인 실패(발행 주기는 계속 시도)", e);
+        }
     }
 
     @Scheduled(fixedDelayString = "${platform.events.outbox.poll-delay:1s}",
@@ -92,6 +119,8 @@ public class EventOutboxRelay {
     private record BatchResult(int published, boolean stopped) {}
 
     private BatchResult publishBatch(EventPublisher target) {
+        // 다른 워커가 소유 중이면 기다리지 않고 이 주기를 넘긴다 — 그 워커가 id 순으로 계속 비운다
+        if (locks.tryLock(EventOutboxLock.OWNER_ROW).isEmpty()) return new BatchResult(0, true);
         List<EventOutbox> rows = outbox.lockPending(maxAttempts, Limit.of(batchSize));
         Instant now = Instant.now();
         int published = 0;

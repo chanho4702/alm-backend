@@ -174,4 +174,41 @@ class EventOutboxRelayTest {
         assertThat(relay.backoff(100)).isEqualTo(Duration.ofMinutes(5));
     }
 
+
+    @Test
+    void 다른_워커가_발행_중이면_두_번째_워커는_내보내지_않고_순서를_지킨다() throws Exception {
+        createIssue("첫 이슈");
+        createIssue("둘째 이슈");
+        createIssue("셋째 이슈");
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        published.holdNext(entered, release);
+
+        java.util.concurrent.ExecutorService first = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            // A: 소유권을 잡고 첫 행을 발행하다 붙들린다
+            java.util.concurrent.Future<Integer> a = first.submit(relay::publishPending);
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            // A가 잠근 배치 밖의 새 행 — 행 단위 SKIP LOCKED만 있으면 B가 이것을 A의 앞 행들보다 먼저 내보낸다
+            createIssue("넷째 이슈");
+
+            // B: 소유권을 못 잡으므로 기다리지 않고 아무것도 내보내지 않는다(뒤 행이 앞지르지 않는다)
+            long started = System.nanoTime();
+            assertThat(relay.publishPending()).isZero();
+            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(5));
+            assertThat(published.events()).isEmpty();
+
+            release.countDown();
+            assertThat(a.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(3);
+        } finally {
+            release.countDown();
+            first.shutdownNow();
+        }
+        assertThat(relay.publishPending()).isEqualTo(1);
+        List<String> expected = outbox.findAll(org.springframework.data.domain.Sort.by("id")).stream()
+                .map(EventOutbox::getEventId).toList();
+        assertThat(expected).hasSize(4);
+        assertThat(published.events()).extracting(EventEnvelope::getEventId).containsExactlyElementsOf(expected);
+        assertThat(relay.pendingCount()).isZero();
+    }
 }

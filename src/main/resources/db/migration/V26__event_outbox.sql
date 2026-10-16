@@ -18,3 +18,11 @@ CREATE TABLE event_outbox (
 CREATE INDEX idx_event_outbox_pending ON event_outbox (id) WHERE published_at IS NULL;
 -- 보존 기간이 지난 발행분 정리
 CREATE INDEX idx_event_outbox_published ON event_outbox (published_at) WHERE published_at IS NOT NULL;
+
+-- 발행 소유권: 한 번에 한 워커만 큐를 id 순으로 비운다. 배치 트랜잭션이 이 한 줄을 SKIP LOCKED로 잡고,
+-- 못 잡으면(다른 인스턴스가 비우는 중) 그 주기는 건너뛴다 — 행 단위 SKIP LOCKED만으로는 뒤 배치가
+-- 앞 배치보다 먼저 나가 삭제/복원 같은 이벤트 순서가 뒤집힐 수 있다.
+CREATE TABLE event_outbox_lock (
+    id INTEGER PRIMARY KEY
+);
+INSERT INTO event_outbox_lock (id) VALUES (1);
