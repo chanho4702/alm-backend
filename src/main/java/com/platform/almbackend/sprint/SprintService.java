@@ -16,6 +16,9 @@ import com.platform.almbackend.sprint.dto.SprintCompleteRequest;
 import com.platform.almbackend.sprint.dto.SprintCreateRequest;
 import com.platform.almbackend.sprint.dto.SprintUpdateRequest;
 import com.platform.almbackend.sprint.dto.SprintResponse;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.LockModeType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -41,6 +44,7 @@ public class SprintService {
     private final ProjectService projectService;
     private final IssueChangeLogService changeLog;
     private final com.platform.almbackend.settings.SchemeService settings;
+    private final EntityManager entityManager;
 
     @Transactional(readOnly = true)
     public List<SprintResponse> list(long userId, long projectId) {
@@ -189,9 +193,20 @@ public class SprintService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /**
+     * 스프린트 행 잠금 — 잠근 뒤 DB 값으로 다시 읽는다. start/complete는 권한 확인용으로 스프린트를 먼저 읽어
+     * 1차 캐시에 올려 두므로, 잠금 조회만으로는 앞선 트랜잭션이 커밋한 상태(ACTIVE→CLOSED 등)를 못 보고
+     * 같은 완료를 두 번 처리할 수 있다.
+     */
     private Sprint lockSprint(long sprintId) {
-        return sprints.findByIdForUpdate(sprintId)
+        Sprint sprint = sprints.findById(sprintId)
                 .orElseThrow(() -> new NotFoundException("스프린트를 찾을 수 없습니다: " + sprintId));
+        try {
+            entityManager.refresh(sprint, LockModeType.PESSIMISTIC_WRITE);
+        } catch (EntityNotFoundException e) {
+            throw new NotFoundException("스프린트를 찾을 수 없습니다: " + sprintId);
+        }
+        return sprint;
     }
 
     private Project lockProject(long projectId) {

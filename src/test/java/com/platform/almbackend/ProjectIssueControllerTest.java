@@ -29,6 +29,8 @@ class ProjectIssueControllerTest {
     @Autowired IssueRepository issues;
     @Autowired TestConfig.FakePermissionClient permissions;
     @Autowired TestConfig.RecordingEventPublisher events;
+    @Autowired com.platform.almbackend.repository.EventOutboxRepository outbox;
+    @Autowired com.platform.almbackend.event.EventOutboxRelay outboxRelay;
 
     @BeforeEach
     void reset() {
@@ -36,6 +38,7 @@ class ProjectIssueControllerTest {
         issues.deleteAllInBatch();
         projects.deleteAllInBatch();
         permissions.setAllowed(true);
+        outbox.deleteAllInBatch();
         events.clear();
     }
 
@@ -72,9 +75,13 @@ class ProjectIssueControllerTest {
                 .andExpect(jsonPath("$.version").value(1));
 
         org.assertj.core.api.Assertions.assertThat(permissions.grantedProjectId()).isEqualTo(projectId);
+        // 요청 경로는 Redis를 부르지 않는다 — 커밋된 아웃박스를 워커가 id 순으로 내보낸다
+        org.assertj.core.api.Assertions.assertThat(events.events()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(outboxRelay.publishPending()).isEqualTo(2);
         org.assertj.core.api.Assertions.assertThat(events.events())
                 .extracting(EventEnvelope -> EventEnvelope.getPayloadCase().name())
                 .containsExactly("PROJECT_CREATED", "ISSUE_CREATED");
+        org.assertj.core.api.Assertions.assertThat(outboxRelay.pendingCount()).isZero();
     }
 
     @Test

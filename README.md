@@ -547,8 +547,12 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
   전부 org의 메일 설정이 정본이고, 관리자가 화면에서 끄면 세 서비스가 함께 꺼진다. 채널이 살아
   있는지는 `GET /internal/org/mail/status`(60초 캐시)가 알려 주며 개인 설정 응답의 `mailConfigured`가
   그 값이다. 허브가 답하지 않아도 이슈 저장과 알림함은 그대로다.
-- 이벤트에는 이슈 본문을 싣지 않는다. 정본 트랜잭션 커밋 후 발행하며, 발행 실패가 정본을
-  롤백하지는 않는다. 검색 색인은 관리자 재색인으로 복구한다.
+- 이벤트에는 이슈 본문을 싣지 않는다. 변경과 같은 트랜잭션에서 아웃박스(`event_outbox`, V26)에
+  한 줄 적고, 커밋 뒤 워커가 id 순으로 XADD한다(at-least-once, 같은 eventId로 재시도). 요청 경로는
+  Redis를 기다리지 않고, Redis 장애 중 커밋된 이벤트도 지수 백오프로 재시도된다. 최대 시도를 넘긴 행은
+  `last_error`와 함께 남고(오류 로그), 그때의 색인은 관리자 재색인으로 복구한다.
+- 첨부 한도는 `ALM_MAX_ATTACHMENT_MB` 하나다. 요청 한도는 multipart 경계·헤더 몫 1MB를 더해 파생되고,
+  초과는 413 `{"error": "첨부 파일은 20MB까지 올릴 수 있습니다"}`다.
 - gRPC `AlmContentService`는 search-service 전용이다. 컨테이너 배포에서는 호스트에 포트를
   공개하지 않는다.
 - 없는 이슈의 gRPC 응답은 `NOT_FOUND`, 참조가 깨진 고아 이슈는 `FAILED_PRECONDITION`이다.
@@ -565,6 +569,9 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `ALM_GRPC_ENABLED` / `ALM_GRPC_PORT` | `true` / `9121` | 콘텐츠 조달 gRPC |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | `localhost` / `6379` / `0` | 이벤트 스트림 |
 | `EVENTS_ENABLED` / `EVENTS_STREAM` | `true` / `platform:events:v1` | 이벤트 발행 설정 |
+| `EVENTS_OUTBOX_POLL_DELAY` / `EVENTS_OUTBOX_BATCH_SIZE` | `1s` / `100` | 아웃박스 워커 주기·배치 |
+| `EVENTS_OUTBOX_MAX_ATTEMPTS` / `EVENTS_OUTBOX_BASE_BACKOFF` / `EVENTS_OUTBOX_MAX_BACKOFF` | `20` / `1s` / `5m` | 발행 재시도(지수 백오프) |
+| `EVENTS_OUTBOX_RETENTION` | `7d` | 발행된 아웃박스 행 보존 기간 |
 | `EUREKA_URI` | `http://localhost:8761/eureka` | 로컬 서비스 등록 |
 | `ALM_TRASH_RETENTION_DAYS` | `60` | 휴지통 보존 기간 — 이 기간이 지난 프로젝트를 자동으로 영구 삭제 |
 | `ALM_TRASH_PURGE_CRON` / `ALM_TRASH_PURGE_ENABLED` | `0 0 3 * * *` / `true` | 자동 비우기 시각·스위치(인스턴스가 여럿이면 한 곳에서만) |
@@ -593,7 +600,7 @@ src/main/java/com/platform/almbackend/
 ├─ search/aql/   AQL 렉서·파서·해석·Specification
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 AlmContentService
-├─ event/        커밋 이후 Redis Streams 발행
+├─ event/        이벤트 아웃박스 + 커밋 이후 Redis Streams 발행 워커
 ├─ domain/       Project·Issue 엔티티와 값 타입
 ├─ repository/   JPA 저장소
 ├─ security/     JWT audience 검증

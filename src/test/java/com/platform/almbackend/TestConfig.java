@@ -315,9 +315,18 @@ public class TestConfig {
 
     public static final class RecordingEventPublisher implements EventPublisher {
         private final List<EventEnvelope> events = new ArrayList<>();
-        @Override public void publish(EventEnvelope event) { events.add(event); }
+        /** Redis 장애 흉내 — 켜 두면 XADD 실패처럼 던진다(아웃박스 재시도 검증) */
+        private volatile boolean failing;
+        @Override public void publish(EventEnvelope event) {
+            if (failing) throw new IllegalStateException("redis down");
+            events.add(event);
+        }
+        public void setFailing(boolean failing) { this.failing = failing; }
         public List<EventEnvelope> events() { return List.copyOf(events); }
-        public void clear() { events.clear(); }
+        public void clear() {
+            events.clear();
+            failing = false;
+        }
     }
 }
 

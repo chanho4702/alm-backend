@@ -28,9 +28,16 @@ import com.platform.almbackend.version.VersionService;
 import com.platform.almbackend.attachment.AttachmentService;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.LockModeType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -62,6 +69,8 @@ public class IssueService {
     private final SchemeService settings;
     private final CollaborationService collaboration;
     private final ComponentService componentService;
+    private final EntityManager entityManager;
+    private final PlatformTransactionManager transactionManager;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -81,53 +90,67 @@ public class IssueService {
 
     public IssueResponse create(long userId, long projectId, IssueCreateRequest request) {
         projectService.require(userId, projectId, AlmAction.EDIT);
-        Project project = projects.findByIdForUpdate(projectId)
-                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
+        Project project = lockProject(projectId);
         return createNumbered(userId, project, project.nextIssueNumber(), request);
     }
 
     /**
      * 이관·CSV 가져오기 — 항목마다 만들고 실패는 사유와 함께 분리한다(전부 롤백 없음). 키가 있으면
-     * 보존하고 카운터를 그 번호 이상으로 앞당긴다. 검증(형식·중복·제목)은 저장 전에 끝나므로 실패한
-     * 항목이 트랜잭션을 더럽히지 않는다.
+     * 보존하고 카운터를 그 번호 이상으로 앞당긴다.
+     *
+     * <p>행마다 자기 트랜잭션이다: 프로젝트 잠금 → 번호 할당 → 저장 → 커밋. 한 트랜잭션으로 돌리면 다른
+     * {@code @Transactional} 빈(SchemeService 검증 등)이 던진 예외가 트랜잭션을 rollback-only로 만들어, 잡고
+     * 넘어가도 마지막 커밋이 UnexpectedRollbackException으로 성공한 행까지 지운다. 그래서 이 메서드 자체는
+     * 트랜잭션을 열지 않는다(NOT_SUPPORTED — 바깥 트랜잭션이 있어도 잠금을 쥔 채 행 트랜잭션을 기다리지 않게).
+     * 권한은 처음에 한 번만 본다. 잠금은 행 트랜잭션 안에서만 잡으므로 같은 프로젝트의 동시 생성과 번호가 겹치지 않는다.
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public IssueImportResponse importIssues(long userId, long projectId, IssueImportRequest request) {
         projectService.require(userId, projectId, AlmAction.EDIT);
-        Project project = projects.findByIdForUpdate(projectId)
-                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
-        Pattern keyPattern = Pattern.compile("^" + Pattern.quote(project.getKey()) + "-(\\d+)$");
+        String projectKey = projects.findById(projectId)
+                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId))
+                .getKey();
+        Pattern keyPattern = Pattern.compile("^" + Pattern.quote(projectKey) + "-(\\d+)$");
+        TransactionTemplate rowTransaction = new TransactionTemplate(transactionManager);
+        rowTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         int created = 0;
         List<IssueImportResponse.Failure> failed = new ArrayList<>();
-        Set<String> seenKeys = new HashSet<>();
         for (int i = 0; i < request.items().size(); i++) {
             IssueImportRequest.Item item = request.items().get(i);
             String label = item.key() != null && !item.key().isBlank() ? item.key() : String.valueOf(item.title());
             try {
-                if (item.title() == null || item.title().isBlank()) {
-                    throw new IllegalArgumentException("이슈 제목을 입력하세요");
-                }
-                long number;
-                if (item.key() != null && !item.key().isBlank()) {
-                    String key = item.key().trim().toUpperCase(Locale.ROOT);
-                    Matcher matcher = keyPattern.matcher(key);
-                    if (!matcher.matches()) {
-                        throw new IllegalArgumentException("키는 " + project.getKey() + "-번호 형식이어야 합니다: " + item.key());
-                    }
-                    if (!seenKeys.add(key) || issues.findByKey(key).isPresent()) {
-                        throw new IllegalArgumentException("이미 있는 키입니다: " + key);
-                    }
-                    number = Long.parseLong(matcher.group(1));
-                    project.reserveIssueNumber(number);
-                } else {
-                    number = project.nextIssueNumber();
-                }
-                createNumbered(userId, project, number, item.toCreate());
+                rowTransaction.executeWithoutResult(status -> importRow(userId, projectId, keyPattern, item));
                 created++;
             } catch (RuntimeException e) {
                 failed.add(new IssueImportResponse.Failure(i + 1, label, e.getMessage()));
             }
         }
         return new IssueImportResponse(created, failed);
+    }
+
+    /** 가져오기 한 행 — 행 트랜잭션 안에서 돈다. 키 중복은 프로젝트 잠금 아래에서 DB로 확인한다(앞 행은 이미 커밋됐다) */
+    private void importRow(long userId, long projectId, Pattern keyPattern, IssueImportRequest.Item item) {
+        if (item.title() == null || item.title().isBlank()) {
+            throw new IllegalArgumentException("이슈 제목을 입력하세요");
+        }
+        Project project = lockProject(projectId);
+        long number;
+        if (item.key() != null && !item.key().isBlank()) {
+            String key = item.key().trim().toUpperCase(Locale.ROOT);
+            Matcher matcher = keyPattern.matcher(key);
+            if (!matcher.matches()) {
+                throw new IllegalArgumentException("키는 " + project.getKey() + "-번호 형식이어야 합니다: " + item.key());
+            }
+            // 보관된 이슈도 키를 쥐고 있다 — @SQLRestriction 밖까지 본다
+            if (issues.existsKeyIncludingArchived(key)) {
+                throw new IllegalArgumentException("이미 있는 키입니다: " + key);
+            }
+            number = Long.parseLong(matcher.group(1));
+            project.reserveIssueNumber(number);
+        } else {
+            number = project.nextIssueNumber();
+        }
+        createNumbered(userId, project, number, item.toCreate());
     }
 
     private IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request) {
@@ -211,8 +234,7 @@ public class IssueService {
         Issue snapshot = requireIssue(issueId);
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
         lockProject(snapshot.getProjectId());
-        Issue issue = issues.findByIdForUpdate(issueId)
-                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
+        Issue issue = lockIssue(issueId);
         if (!issue.getVersion().equals(request.expectedVersion())) {
             throw new ConflictException("다른 사용자가 먼저 이슈를 수정했습니다. 현재 "
                     + issue.getVersion() + ", 요청 " + request.expectedVersion());
@@ -286,8 +308,7 @@ public class IssueService {
         Issue snapshot = requireIssue(issueId);
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
         lockProject(snapshot.getProjectId());
-        Issue issue = issues.findByIdForUpdate(issueId)
-                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
+        Issue issue = lockIssue(issueId);
         events.afterCommit(AlmEvents.issueDeleted(userId, issue));
         issues.clearParentByParentId(issueId);
         attachmentService.deleteAllForIssue(issueId);
@@ -303,8 +324,7 @@ public class IssueService {
         Issue snapshot = requireIssue(issueId);
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
         lockProject(snapshot.getProjectId());
-        Issue issue = issues.findByIdForUpdate(issueId)
-                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
+        Issue issue = lockIssue(issueId);
         String status = requireStatus(issue.getProjectId(), request.status());
         settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
         String previousStatus = issue.getStatus();
@@ -317,6 +337,11 @@ public class IssueService {
         resequence(group);
         changeLog.recordChanges(userId, issue, previousStatus, issue.getSprintId());
         collaboration.recordUpdate(userId, moveSnapshot, issue);
+        // 상태가 실제로 바뀐 이동만 편집과 같은 알림을 탄다. 같은 컬럼 안의 순서 변경은 알리지 않는다.
+        // 담당자는 이동으로 바뀌지 않으므로 현재 값을 '이전 담당자'로 넘겨 배정 알림이 나가지 않게 한다.
+        if (!Objects.equals(previousStatus, status)) {
+            notifications.onIssueUpdated(userId, issue, previousStatus, issue.getAssigneeId());
+        }
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         return IssueResponse.from(issue);
     }
@@ -329,8 +354,7 @@ public class IssueService {
         Issue snapshot = requireIssue(issueId);
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
         lockProject(snapshot.getProjectId());
-        Issue issue = issues.findByIdForUpdate(issueId)
-                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
+        Issue issue = lockIssue(issueId);
         Long sprintId = request == null ? null : request.sprintId();
         if (sprintId != null) sprintService.requireSprintInProject(sprintId, issue.getProjectId());
         Long previousSprintId = issue.getSprintId();
@@ -397,9 +421,34 @@ public class IssueService {
                 .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
     }
 
+    /**
+     * 프로젝트 행 잠금(이슈 번호 카운터·그룹 재정렬의 직렬화 지점). 권한 확인이 이미 같은 영속성 컨텍스트에
+     * 프로젝트를 올려 두므로 {@code select ... for update}만으로는 낡은 카운터를 그대로 돌려받는다 —
+     * 잠근 뒤 DB 값으로 다시 읽는다({@link #refreshForUpdate}).
+     */
     private Project lockProject(long projectId) {
-        return projects.findByIdForUpdate(projectId)
+        Project project = projects.findById(projectId)
                 .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
+        return refreshForUpdate(project, "프로젝트를 찾을 수 없습니다: " + projectId);
+    }
+
+    /** 이슈 행 잠금 — 버전 비교는 반드시 잠근 뒤 다시 읽은 값으로 한다 */
+    private Issue lockIssue(long issueId) {
+        return refreshForUpdate(requireIssue(issueId), "이슈를 찾을 수 없습니다: " + issueId);
+    }
+
+    /**
+     * 행을 PESSIMISTIC_WRITE로 잠그면서 DB의 현재 값으로 다시 읽는다. 이미 관리 중인 엔티티는 잠금 조회
+     * ({@code findByIdForUpdate})가 잠금만 잡고 상태는 1차 캐시 것을 돌려준다 — 그 사이 다른 트랜잭션이
+     * 커밋한 version·카운터를 못 보고 expectedVersion 검사를 통과시키거나(남의 저장 덮어쓰기) 번호를 겹치게 한다.
+     */
+    private <T> T refreshForUpdate(T entity, String notFoundMessage) {
+        try {
+            entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
+        } catch (EntityNotFoundException e) {
+            throw new NotFoundException(notFoundMessage);
+        }
+        return entity;
     }
 
     private static String normalizeDescription(String value) {

@@ -139,4 +139,8 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
     @org.springframework.data.jpa.repository.Query(value = "delete from issue_component where issue_id in (select id from issue where project_id = :projectId)", nativeQuery = true)
     int purgeComponentsByProjectId(@Param("projectId") long projectId);
+
+    /** 키 점유 확인 — 보관된 이슈도 키를 쥐고 있어 @SQLRestriction 밖까지 본다(가져오기의 키 보존 검사) */
+    @Query(value = "select count(*) > 0 from issue where issue_key = :key", nativeQuery = true)
+    boolean existsKeyIncludingArchived(@Param("key") String key);
 }

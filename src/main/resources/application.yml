@@ -26,8 +26,9 @@ spring:
       database: ${REDIS_DB:0}
   servlet:
     multipart:
+      # 파일 한도는 ALM_MAX_ATTACHMENT_MB 하나로 정한다. 요청 한도는 multipart 경계·헤더 몫으로 1MB를 더한다 —
+      # 같게 두면 한도와 딱 맞는 파일이 파일 한도가 아니라 요청 한도에 먼저 걸린다. 초과는 413 {"error"}.
       max-file-size: ${ALM_MAX_ATTACHMENT_MB:20}MB
-      max-request-size: ${ALM_MAX_ATTACHMENT_MB:20}MB
   security:
     oauth2:
       resourceserver:
@@ -86,6 +87,17 @@ platform:
   events:
     enabled: ${EVENTS_ENABLED:true}
     stream: ${EVENTS_STREAM:platform:events:v1}
+    # 아웃박스(V26) — 이벤트는 변경과 같은 트랜잭션에 적히고 이 워커가 커밋 뒤 Redis Streams로 내보낸다.
+    # 인스턴스가 여럿이어도 SKIP LOCKED라 같은 행을 겹쳐 내보내지 않는다.
+    outbox:
+      poll-delay: ${EVENTS_OUTBOX_POLL_DELAY:1s}
+      batch-size: ${EVENTS_OUTBOX_BATCH_SIZE:100}
+      # 실패 대기 = base × 2^(시도-1), 상한 max-backoff. 20회면 약 1시간 반 동안 재시도한다
+      max-attempts: ${EVENTS_OUTBOX_MAX_ATTEMPTS:20}
+      base-backoff: ${EVENTS_OUTBOX_BASE_BACKOFF:1s}
+      max-backoff: ${EVENTS_OUTBOX_MAX_BACKOFF:5m}
+      # 발행된 행 보존 기간(장애 분석용). 미발행·포기한 행은 지우지 않는다
+      retention: ${EVENTS_OUTBOX_RETENTION:7d}
   alm:
     mail:
       # 보낸 사람 주소·SMTP 설정은 org-service의 메일 설정이 정본이다(2026-09-07). 여기 남은 것은
