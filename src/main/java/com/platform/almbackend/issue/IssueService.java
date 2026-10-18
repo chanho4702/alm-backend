@@ -11,14 +11,10 @@ import com.platform.almbackend.history.IssueChangeLogService;
 import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.settings.SchemeService;
 import com.platform.almbackend.settings.SettingsBody;
-import com.platform.almbackend.collab.CollaborationService;
+import com.platform.almbackend.collab.IssueActivityService;
 import com.platform.almbackend.component.ComponentService;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
-import com.platform.almbackend.issue.dto.IssueImportRequest;
-import com.platform.almbackend.issue.dto.IssueImportResponse;
 import com.platform.almbackend.issue.dto.IssueDetailsRequest;
-import com.platform.almbackend.issue.dto.IssueMoveRequest;
-import com.platform.almbackend.issue.dto.IssueRankRequest;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.issue.dto.IssueUpdateRequest;
 import com.platform.almbackend.permission.AlmAction;
@@ -27,17 +23,9 @@ import com.platform.almbackend.sprint.SprintService;
 import com.platform.almbackend.version.VersionService;
 import com.platform.almbackend.attachment.AttachmentService;
 import com.platform.almbackend.repository.IssueRepository;
-import com.platform.almbackend.repository.ProjectRepository;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.EntityNotFoundException;
-import jakarta.persistence.LockModeType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -46,18 +34,18 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
 import java.util.Set;
-import java.util.Locale;
 import java.util.Objects;
 
+/**
+ * 이슈 생성·조회·수정·삭제. 보드 이동·랭크는 {@link IssueRankService}, CSV 가져오기는 {@link IssueImportService},
+ * 일괄 편집은 {@link IssueBulkService}, 행 잠금은 {@link IssueLocks}가 맡는다(2026-10-18 분할 — 동작 불변).
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class IssueService {
     private final IssueRepository issues;
-    private final ProjectRepository projects;
     private final ProjectService projectService;
     private final SprintService sprintService;
     private final VersionService versionService;
@@ -66,10 +54,10 @@ public class IssueService {
     private final IssueChangeLogService changeLog;
     private final NotificationService notifications;
     private final SchemeService settings;
-    private final CollaborationService collaboration;
+    private final IssueActivityService activityLog;
     private final ComponentService componentService;
-    private final EntityManager entityManager;
-    private final PlatformTransactionManager transactionManager;
+    private final IssueLocks locks;
+    private final IssueRankGroups rankGroups;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -82,77 +70,22 @@ public class IssueService {
 
     @Transactional(readOnly = true)
     public IssueResponse get(long userId, long issueId) {
-        Issue issue = requireIssue(issueId);
+        Issue issue = locks.requireIssue(issueId);
         projectService.require(userId, issue.getProjectId(), AlmAction.VIEW);
         return IssueResponse.from(issue);
     }
 
     public IssueResponse create(long userId, long projectId, IssueCreateRequest request) {
         projectService.require(userId, projectId, AlmAction.EDIT);
-        Project project = lockProject(projectId);
+        Project project = locks.lockProject(projectId);
         return createNumbered(userId, project, project.nextIssueNumber(), request);
     }
 
     /**
-     * 이관·CSV 가져오기 — 항목마다 만들고 실패는 사유와 함께 분리한다(전부 롤백 없음). 키가 있으면
-     * 보존하고 카운터를 그 번호 이상으로 앞당긴다.
-     *
-     * <p>행마다 자기 트랜잭션이다: 프로젝트 잠금 → 번호 할당 → 저장 → 커밋. 한 트랜잭션으로 돌리면 다른
-     * {@code @Transactional} 빈(SchemeService 검증 등)이 던진 예외가 트랜잭션을 rollback-only로 만들어, 잡고
-     * 넘어가도 마지막 커밋이 UnexpectedRollbackException으로 성공한 행까지 지운다. 그래서 이 메서드 자체는
-     * 트랜잭션을 열지 않는다(NOT_SUPPORTED — 바깥 트랜잭션이 있어도 잠금을 쥔 채 행 트랜잭션을 기다리지 않게).
-     * 권한은 처음에 한 번만 본다. 잠금은 행 트랜잭션 안에서만 잡으므로 같은 프로젝트의 동시 생성과 번호가 겹치지 않는다.
+     * 번호가 정해진 생성 — {@link #create}와 CSV 가져오기({@link IssueImportService})가 함께 쓴다. 호출자가 프로젝트
+     * 행을 잠근 트랜잭션 안에서 불러야 한다(번호 카운터의 직렬화 지점).
      */
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public IssueImportResponse importIssues(long userId, long projectId, IssueImportRequest request) {
-        projectService.require(userId, projectId, AlmAction.EDIT);
-        String projectKey = projects.findById(projectId)
-                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId))
-                .getKey();
-        Pattern keyPattern = Pattern.compile("^" + Pattern.quote(projectKey) + "-(\\d+)$");
-        TransactionTemplate rowTransaction = new TransactionTemplate(transactionManager);
-        rowTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        int created = 0;
-        List<IssueImportResponse.Failure> failed = new ArrayList<>();
-        for (int i = 0; i < request.items().size(); i++) {
-            IssueImportRequest.Item item = request.items().get(i);
-            String label = item.key() != null && !item.key().isBlank() ? item.key() : String.valueOf(item.title());
-            try {
-                rowTransaction.executeWithoutResult(status -> importRow(userId, projectId, keyPattern, item));
-                created++;
-            } catch (RuntimeException e) {
-                failed.add(new IssueImportResponse.Failure(i + 1, label, e.getMessage()));
-            }
-        }
-        return new IssueImportResponse(created, failed);
-    }
-
-    /** 가져오기 한 행 — 행 트랜잭션 안에서 돈다. 키 중복은 프로젝트 잠금 아래에서 DB로 확인한다(앞 행은 이미 커밋됐다) */
-    private void importRow(long userId, long projectId, Pattern keyPattern, IssueImportRequest.Item item) {
-        if (item.title() == null || item.title().isBlank()) {
-            throw new IllegalArgumentException("이슈 제목을 입력하세요");
-        }
-        Project project = lockProject(projectId);
-        long number;
-        if (item.key() != null && !item.key().isBlank()) {
-            String key = item.key().trim().toUpperCase(Locale.ROOT);
-            Matcher matcher = keyPattern.matcher(key);
-            if (!matcher.matches()) {
-                throw new IllegalArgumentException("키는 " + project.getKey() + "-번호 형식이어야 합니다: " + item.key());
-            }
-            // 보관된 이슈도 키를 쥐고 있다 — @SQLRestriction 밖까지 본다
-            if (issues.existsKeyIncludingArchived(key)) {
-                throw new IllegalArgumentException("이미 있는 키입니다: " + key);
-            }
-            number = Long.parseLong(matcher.group(1));
-            project.reserveIssueNumber(number);
-        } else {
-            number = project.nextIssueNumber();
-        }
-        createNumbered(userId, project, number, item.toCreate());
-    }
-
-    private IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request) {
+    public IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request) {
         long projectId = project.getId();
         String type = normalizeType(request.type() == null ? settings.defaultType(projectId) : request.type());
         settings.assertTypeEnabled(projectId, type);
@@ -189,7 +122,7 @@ public class IssueService {
         }
         Issue issue = issues.save(fresh);
         changeLog.recordCreated(userId, issue);
-        collaboration.recordCreated(userId, issue);
+        activityLog.recordCreated(userId, issue);
         notifications.onIssueCreated(userId, issue);
         notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
@@ -230,10 +163,10 @@ public class IssueService {
     }
 
     public IssueResponse update(long userId, long issueId, IssueUpdateRequest request) {
-        Issue snapshot = requireIssue(issueId);
+        Issue snapshot = locks.requireIssue(issueId);
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
-        lockProject(snapshot.getProjectId());
-        Issue issue = lockIssue(issueId);
+        locks.lockProject(snapshot.getProjectId());
+        Issue issue = locks.lockIssue(issueId);
         if (!issue.getVersion().equals(request.expectedVersion())) {
             throw new ConflictException("다른 사용자가 먼저 이슈를 수정했습니다. 현재 "
                     + issue.getVersion() + ", 요청 " + request.expectedVersion());
@@ -266,7 +199,7 @@ public class IssueService {
         Long previousSprintId = issue.getSprintId();
         String previousStatus = issue.getStatus();
         Long previousAssigneeId = issue.getAssigneeId();
-        CollaborationService.Snapshot snapshotBefore = CollaborationService.Snapshot.of(issue);
+        IssueActivityService.Snapshot snapshotBefore = IssueActivityService.Snapshot.of(issue);
         boolean regrouped = !Objects.equals(status, issue.getStatus())
                 || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
@@ -289,14 +222,14 @@ public class IssueService {
         if (regrouped) {
             List<Issue> source = Objects.equals(previousSprintId, sprintId)
                     ? List.of()
-                    : rankGroupWithout(issue, previousSprintId);
-            List<Issue> group = rankGroupWithout(issue, sprintId);
-            group.add(afterLastOfStatus(group, status), issue);
-            resequence(group);
-            resequence(source);
+                    : rankGroups.without(issue, previousSprintId);
+            List<Issue> group = rankGroups.without(issue, sprintId);
+            group.add(IssueRankGroups.afterLastOfStatus(group, status), issue);
+            IssueRankGroups.resequence(group);
+            IssueRankGroups.resequence(source);
         }
         changeLog.recordChanges(userId, issue, previousStatus, previousSprintId);
-        collaboration.recordUpdate(userId, snapshotBefore, issue);
+        activityLog.recordUpdate(userId, snapshotBefore, issue);
         notifications.onIssueUpdated(userId, issue, previousStatus, previousAssigneeId);
         notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
@@ -304,150 +237,14 @@ public class IssueService {
     }
 
     public void delete(long userId, long issueId) {
-        Issue snapshot = requireIssue(issueId);
+        Issue snapshot = locks.requireIssue(issueId);
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
-        lockProject(snapshot.getProjectId());
-        Issue issue = lockIssue(issueId);
+        locks.lockProject(snapshot.getProjectId());
+        Issue issue = locks.lockIssue(issueId);
         events.afterCommit(AlmEvents.issueDeleted(userId, issue));
         issues.clearParentByParentId(issueId);
         attachmentService.deleteAllForIssue(issueId);
         issues.delete(issue);
-    }
-
-    /**
-     * 보드 컬럼 이동. `sortOrder`는 랭크 그룹(프로젝트+스프린트) 하나에만 존재하는 단일 순서열이고
-     * 보드 컬럼은 그 순서열을 상태로 거른 결과다 — 컬럼마다 따로 1부터 매기면 같은 그룹 안에서
-     * 번호가 충돌한다. 그래서 컬럼 기준으로 자리를 찾은 뒤 그룹 전체를 다시 매긴다.
-     */
-    public IssueResponse move(long userId, long issueId, IssueMoveRequest request) {
-        Issue snapshot = requireIssue(issueId);
-        projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
-        lockProject(snapshot.getProjectId());
-        Issue issue = lockIssue(issueId);
-        String status = requireStatus(issue.getProjectId(), request.status());
-        settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
-        String previousStatus = issue.getStatus();
-        CollaborationService.Snapshot moveSnapshot = CollaborationService.Snapshot.of(issue);
-        issue.moveTo(status, issue.getSortOrder());
-        List<Issue> group = rankGroupWithout(issue, issue.getSprintId());
-        int insertAt = indexOfInColumn(group, request.beforeId(), status);
-        if (insertAt < 0) insertAt = afterLastOfStatus(group, status);
-        group.add(insertAt, issue);
-        resequence(group);
-        changeLog.recordChanges(userId, issue, previousStatus, issue.getSprintId());
-        collaboration.recordUpdate(userId, moveSnapshot, issue);
-        // 상태가 실제로 바뀐 이동만 편집과 같은 알림을 탄다. 같은 컬럼 안의 순서 변경은 알리지 않는다.
-        // 담당자는 이동으로 바뀌지 않으므로 현재 값을 '이전 담당자'로 넘겨 배정 알림이 나가지 않게 한다.
-        if (!Objects.equals(previousStatus, status)) {
-            notifications.onIssueUpdated(userId, issue, previousStatus, issue.getAssigneeId());
-        }
-        events.afterCommit(AlmEvents.issueUpdated(userId, issue));
-        return IssueResponse.from(issue);
-    }
-
-    /**
-     * 백로그/스프린트 랭크 이동 — 대상 그룹(프로젝트+스프린트, 상태 무관) 안에서 자리를 잡는다.
-     * 요청 본문이 없으면 백로그 맨 뒤로 본다.
-     */
-    public IssueResponse rank(long userId, long issueId, IssueRankRequest request) {
-        Issue snapshot = requireIssue(issueId);
-        projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
-        lockProject(snapshot.getProjectId());
-        Issue issue = lockIssue(issueId);
-        Long sprintId = request == null ? null : request.sprintId();
-        if (sprintId != null) sprintService.requireSprintInProject(sprintId, issue.getProjectId());
-        Long previousSprintId = issue.getSprintId();
-        List<Issue> source = Objects.equals(previousSprintId, sprintId)
-                ? List.of()
-                : rankGroupWithout(issue, previousSprintId);
-        issue.rankTo(sprintId, issue.getSortOrder());
-        List<Issue> group = rankGroupWithout(issue, sprintId);
-        int insertAt = indexOf(group, request == null ? null : request.beforeId());
-        if (insertAt < 0) insertAt = group.size();
-        group.add(insertAt, issue);
-        resequence(group);
-        // 떠난 그룹도 다시 조밀하게 만든다 — 그룹이 항상 1..n이면 이후 삽입 위치 계산이 단순하다.
-        resequence(source);
-        changeLog.recordChanges(userId, issue, issue.getStatus(), previousSprintId);
-        events.afterCommit(AlmEvents.issueUpdated(userId, issue));
-        return IssueResponse.from(issue);
-    }
-
-    private List<Issue> rankGroupWithout(Issue issue, Long sprintId) {
-        List<Issue> group = new ArrayList<>(issues.findRankGroup(issue.getProjectId(), sprintId));
-        group.removeIf(entry -> entry.getId().equals(issue.getId()));
-        return group;
-    }
-
-    /**
-     * beforeId는 대상 컬럼 안의 이슈여야 한다. 다른 컬럼의 이슈거나 이미 사라졌으면 -1이다 —
-     * 드래그 도중 다른 사용자가 그 이슈를 옮겼을 수 있고, 화면은 이동 후 항상 재조회한다.
-     */
-    private static int indexOfInColumn(List<Issue> group, Long beforeId, String status) {
-        if (beforeId == null) return -1;
-        for (int i = 0; i < group.size(); i++) {
-            Issue entry = group.get(i);
-            if (entry.getId().equals(beforeId) && Objects.equals(entry.getStatus(), status)) return i;
-        }
-        return -1;
-    }
-
-    private static int indexOf(List<Issue> group, Long beforeId) {
-        if (beforeId == null) return -1;
-        for (int i = 0; i < group.size(); i++) {
-            if (group.get(i).getId().equals(beforeId)) return i;
-        }
-        return -1;
-    }
-
-    /** 대상 컬럼의 마지막 다음 자리. 컬럼이 비었으면 그룹 맨 뒤다. */
-    private static int afterLastOfStatus(List<Issue> group, String status) {
-        int last = -1;
-        for (int i = 0; i < group.size(); i++) {
-            if (Objects.equals(group.get(i).getStatus(), status)) last = i;
-        }
-        return last < 0 ? group.size() : last + 1;
-    }
-
-    private static void resequence(List<Issue> group) {
-        for (int i = 0; i < group.size(); i++) {
-            group.get(i).resequence(i + 1L);
-        }
-    }
-
-    private Issue requireIssue(long issueId) {
-        return issues.findById(issueId)
-                .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + issueId));
-    }
-
-    /**
-     * 프로젝트 행 잠금(이슈 번호 카운터·그룹 재정렬의 직렬화 지점). 권한 확인이 이미 같은 영속성 컨텍스트에
-     * 프로젝트를 올려 두므로 {@code select ... for update}만으로는 낡은 카운터를 그대로 돌려받는다 —
-     * 잠근 뒤 DB 값으로 다시 읽는다({@link #refreshForUpdate}).
-     */
-    private Project lockProject(long projectId) {
-        Project project = projects.findById(projectId)
-                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
-        return refreshForUpdate(project, "프로젝트를 찾을 수 없습니다: " + projectId);
-    }
-
-    /** 이슈 행 잠금 — 버전 비교는 반드시 잠근 뒤 다시 읽은 값으로 한다 */
-    private Issue lockIssue(long issueId) {
-        return refreshForUpdate(requireIssue(issueId), "이슈를 찾을 수 없습니다: " + issueId);
-    }
-
-    /**
-     * 행을 PESSIMISTIC_WRITE로 잠그면서 DB의 현재 값으로 다시 읽는다. 이미 관리 중인 엔티티는 잠금 조회
-     * ({@code findByIdForUpdate})가 잠금만 잡고 상태는 1차 캐시 것을 돌려준다 — 그 사이 다른 트랜잭션이
-     * 커밋한 version·카운터를 못 보고 expectedVersion 검사를 통과시키거나(남의 저장 덮어쓰기) 번호를 겹치게 한다.
-     */
-    private <T> T refreshForUpdate(T entity, String notFoundMessage) {
-        try {
-            entityManager.refresh(entity, LockModeType.PESSIMISTIC_WRITE);
-        } catch (EntityNotFoundException e) {
-            throw new NotFoundException(notFoundMessage);
-        }
-        return entity;
     }
 
     private static String normalizeDescription(String value) {
@@ -455,7 +252,7 @@ public class IssueService {
     }
 
     /** 상태 id는 프로젝트 워크플로에 있어야 한다. 비면 워크플로의 첫 '할 일' 상태 */
-    private String requireStatus(long projectId, String value) {
+    public String requireStatus(long projectId, String value) {
         String status = value == null || value.isBlank() ? settings.defaultStatus(projectId) : value.trim();
         settings.assertValidStatus(projectId, status);
         return status;

@@ -47,6 +47,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class IssueIntegrityTest {
 
     @Autowired IssueService service;
+    @Autowired com.platform.almbackend.issue.IssueImportService imports;
+    @Autowired com.platform.almbackend.issue.IssueRankService ranking;
     @Autowired ProjectService projectService;
     @Autowired NotificationService notificationService;
     @Autowired IssueRepository issues;
@@ -135,7 +137,7 @@ class IssueIntegrityTest {
     @Test
     void 가져오기는_다른_빈이_거부한_행만_실패시키고_나머지는_남긴다() {
         long before = issues.count();
-        IssueImportResponse result = service.importIssues(1, projectId, new IssueImportRequest(List.of(
+        IssueImportResponse result = imports.importIssues(1, projectId, new IssueImportRequest(List.of(
                 new IssueImportRequest.Item(null, "정상 1", "", "task", "todo", "medium", null, null),
                 new IssueImportRequest.Item(null, "없는 타입", "", "does-not-exist", "todo", "medium", null, null),
                 new IssueImportRequest.Item(null, "정상 2", "", "task", "todo", "medium", null, null))));
@@ -157,7 +159,7 @@ class IssueIntegrityTest {
         tx.executeWithoutResult(status ->
                 issues.findById(archived.id()).orElseThrow().archive(1, java.time.Instant.now()));
 
-        IssueImportResponse result = service.importIssues(1, projectId, new IssueImportRequest(List.of(
+        IssueImportResponse result = imports.importIssues(1, projectId, new IssueImportRequest(List.of(
                 new IssueImportRequest.Item("INT-1", "키 충돌", "", "task", "todo", "medium", null, null),
                 new IssueImportRequest.Item("INT-7", "키 보존", "", "task", "todo", "medium", null, null))));
 
@@ -172,10 +174,10 @@ class IssueIntegrityTest {
         IssueResponse issue = service.create(1, projectId, create("이동할 이슈"));
         IssueResponse neighbour = service.create(1, projectId, create("옆 이슈"));
         notificationService.watch(2, issue.id());
-        service.move(1, neighbour.id(), new IssueMoveRequest("done", null));
+        ranking.move(1, neighbour.id(), new IssueMoveRequest("done", null));
         notifications.deleteAllInBatch();
 
-        service.move(1, issue.id(), new IssueMoveRequest("done", null));
+        ranking.move(1, issue.id(), new IssueMoveRequest("done", null));
         List<Notification> afterMove = notifications.findAll().stream()
                 .filter(n -> n.getUserId() == 2L).toList();
         assertThat(afterMove).singleElement().satisfies(n -> {
@@ -185,7 +187,7 @@ class IssueIntegrityTest {
         });
 
         // 같은 컬럼(done) 안에서 옆 이슈 앞으로 — 상태는 그대로다
-        service.move(1, issue.id(), new IssueMoveRequest("done", neighbour.id()));
+        ranking.move(1, issue.id(), new IssueMoveRequest("done", neighbour.id()));
         assertThat(notifications.count()).isEqualTo(afterMove.size());
     }
 

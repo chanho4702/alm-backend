@@ -27,6 +27,8 @@ import io.swagger.v3.oas.annotations.Parameter;
 public class IssueController {
     private final IssueService issues;
     private final IssueBulkService bulk;
+    private final IssueImportService imports;
+    private final IssueRankService ranking;
 
     @Operation(summary = "프로젝트의 이슈 목록을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues")
@@ -51,7 +53,7 @@ public class IssueController {
             @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Valid @RequestBody IssueImportRequest request,
             @AuthenticationPrincipal Jwt jwt) {
-        return issues.importIssues(userId(jwt), projectId, request);
+        return imports.importIssues(userId(jwt), projectId, request);
     }
 
     /**
@@ -90,7 +92,7 @@ public class IssueController {
             @Parameter(description = "이슈 ID") @PathVariable long issueId,
             @Valid @RequestBody IssueMoveRequest request,
             @AuthenticationPrincipal Jwt jwt) {
-        return issues.move(userId(jwt), issueId, request);
+        return ranking.move(userId(jwt), issueId, request);
     }
 
     @Operation(summary = "백로그·스프린트 안에서 이슈 순서를 바꾼다")
@@ -99,7 +101,7 @@ public class IssueController {
             @Parameter(description = "이슈 ID") @PathVariable long issueId,
             @Valid @RequestBody(required = false) IssueRankRequest request,
             @AuthenticationPrincipal Jwt jwt) {
-        return issues.rank(userId(jwt), issueId, request);
+        return ranking.rank(userId(jwt), issueId, request);
     }
 
     @Operation(summary = "이슈를 삭제한다")

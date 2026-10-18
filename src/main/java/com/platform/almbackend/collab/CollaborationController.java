@@ -1,11 +1,11 @@
 package com.platform.almbackend.collab;
 
-import com.platform.almbackend.collab.CollaborationService.ActivityResponse;
+import com.platform.almbackend.collab.IssueActivityService.ActivityResponse;
 import com.platform.almbackend.collab.CollaborationService.CommentResponse;
-import com.platform.almbackend.collab.CollaborationService.LinkResponse;
-import com.platform.almbackend.collab.CollaborationService.LinkView;
-import com.platform.almbackend.collab.CollaborationService.WebLinkOutcome;
-import com.platform.almbackend.collab.CollaborationService.WebLinkResponse;
+import com.platform.almbackend.collab.IssueLinkService.LinkResponse;
+import com.platform.almbackend.collab.IssueLinkService.LinkView;
+import com.platform.almbackend.collab.IssueLinkService.WebLinkOutcome;
+import com.platform.almbackend.collab.IssueLinkService.WebLinkResponse;
 import com.platform.almbackend.collab.CollaborationService.WorklogResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -34,6 +34,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @RequiredArgsConstructor
 public class CollaborationController {
     private final CollaborationService service;
+    private final IssueLinkService linkService;
+    private final IssueActivityService activityLog;
 
     public record CommentRequest(String body, List<Long> mentionedUserIds) {}
     public record WorklogRequest(BigDecimal hours, String comment, LocalDate workedOn) {}
@@ -110,7 +112,7 @@ public class CollaborationController {
     @Operation(summary = "이슈에 걸린 연결을 조회한다")
     @GetMapping("/api/alm/issues/{issueId}/links")
     public List<LinkView> links(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
-        return service.links(userId(jwt), issueId);
+        return linkService.links(userId(jwt), issueId);
     }
 
     /** 경로의 이슈가 source — blocks면 "이 이슈가 target을 차단" */
@@ -119,7 +121,7 @@ public class CollaborationController {
     @PostMapping("/api/alm/issues/{issueId}/links")
     @ResponseStatus(HttpStatus.CREATED)
     public LinkResponse addLink(@Parameter(description = "이슈 ID") @PathVariable long issueId, @RequestBody LinkRequest request, @AuthenticationPrincipal Jwt jwt) {
-        return service.addLink(userId(jwt), issueId, request.targetId(), request.type());
+        return linkService.addLink(userId(jwt), issueId, request.targetId(), request.type());
     }
 
     @Tag(name = "Issue Links")
@@ -127,14 +129,14 @@ public class CollaborationController {
     @DeleteMapping("/api/alm/links/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void removeLink(@Parameter(description = "이슈 연결 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
-        service.removeLink(userId(jwt), id);
+        linkService.removeLink(userId(jwt), id);
     }
 
     @Tag(name = "Web Links")
     @Operation(summary = "이슈에 걸린 외부 링크(PR·커밋·웹)를 최신순으로 조회한다")
     @GetMapping("/api/alm/issues/{issueId}/web-links")
     public List<WebLinkResponse> webLinks(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
-        return service.webLinks(userId(jwt), issueId);
+        return linkService.webLinks(userId(jwt), issueId);
     }
 
     /** 같은 issueId+url이면 새로 만들지 않고 기존 링크를 200으로 돌려준다(멱등, 커밋 파서 재실행 대비) */
@@ -142,7 +144,7 @@ public class CollaborationController {
     @Operation(summary = "이슈에 외부 링크(PR·커밋·웹)를 붙인다")
     @PostMapping("/api/alm/issues/{issueId}/web-links")
     public ResponseEntity<WebLinkResponse> addWebLink(@Parameter(description = "이슈 ID") @PathVariable long issueId, @RequestBody WebLinkRequest request, @AuthenticationPrincipal Jwt jwt) {
-        WebLinkOutcome outcome = service.addWebLink(userId(jwt), issueId, request.url(), request.title(), request.kind());
+        WebLinkOutcome outcome = linkService.addWebLink(userId(jwt), issueId, request.url(), request.title(), request.kind());
         return ResponseEntity.status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK).body(outcome.link());
     }
 
@@ -151,13 +153,13 @@ public class CollaborationController {
     @DeleteMapping("/api/alm/web-links/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void removeWebLink(@Parameter(description = "외부 링크 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
-        service.removeWebLink(userId(jwt), id);
+        linkService.removeWebLink(userId(jwt), id);
     }
 
     @Tag(name = "Issue History")
     @Operation(summary = "이슈의 활동 피드를 조회한다")
     @GetMapping("/api/alm/issues/{issueId}/activity")
     public List<ActivityResponse> activity(@Parameter(description = "이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
-        return service.activity(userId(jwt), issueId);
+        return activityLog.activity(userId(jwt), issueId);
     }
 }

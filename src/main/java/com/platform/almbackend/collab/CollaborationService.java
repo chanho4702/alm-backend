@@ -3,46 +3,28 @@ package com.platform.almbackend.collab;
 import com.platform.common.error.ForbiddenException;
 import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
-import com.platform.almbackend.domain.IssueActivity;
 import com.platform.almbackend.domain.IssueComment;
-import com.platform.almbackend.domain.IssueLink;
-import com.platform.almbackend.domain.IssueWebLink;
-import com.platform.almbackend.domain.Notification;
 import com.platform.almbackend.domain.Worklog;
-import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.notification.NotificationService;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
-import com.platform.almbackend.repository.IssueActivityRepository;
 import com.platform.almbackend.repository.IssueCommentRepository;
-import com.platform.almbackend.repository.IssueLinkRepository;
 import com.platform.almbackend.repository.IssueRepository;
-import com.platform.almbackend.repository.IssueWebLinkRepository;
 import com.platform.almbackend.repository.WorklogRepository;
-import com.platform.almbackend.settings.SchemeService;
-import com.platform.almbackend.domain.LinkTypeDef;
-import com.platform.almbackend.repository.LinkTypeDefRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Locale;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
 
 /**
- * 코멘트·워크로그·이슈 링크·활동 기록 — 프론트 목업과 같은 규칙(본인 것만 수정·삭제, 링크 중복 금지,
- * 활동은 추가만). 문구의 사용자는 id로 남긴다(디렉터리 연동 전).
+ * 코멘트·워크로그 — 작성자 본인이 고치고, 삭제는 작성자 또는 프로젝트 관리자. 이슈 링크·웹 링크는
+ * {@link IssueLinkService}, 활동 기록은 {@link IssueActivityService}(2026-10-18 분할 — 동작 불변).
  */
 @Service
 @RequiredArgsConstructor
@@ -52,13 +34,9 @@ public class CollaborationService {
     private final IssueRepository issues;
     private final IssueCommentRepository comments;
     private final WorklogRepository worklogs;
-    private final IssueLinkRepository links;
-    private final IssueWebLinkRepository webLinks;
-    private final IssueActivityRepository activities;
     private final ProjectService projectService;
     private final NotificationService notifications;
-    private final SchemeService settings;
-    private final LinkTypeDefRepository linkTypes;
+    private final IssueActivityService activityLog;
 
     public record CommentResponse(long id, long issueId, long authorId, String body, Instant createdAt, Instant updatedAt) {
         static CommentResponse from(IssueComment c) {
@@ -70,31 +48,6 @@ public class CollaborationService {
             return new WorklogResponse(w.getId(), w.getIssueId(), w.getAuthorId(), w.getHours(), w.getComment(), w.getWorkedOn(), w.getCreatedAt());
         }
     }
-    public record LinkResponse(long id, long sourceId, long targetId, String type) {
-        static LinkResponse from(IssueLink l) { return new LinkResponse(l.getId(), l.getSourceId(), l.getTargetId(), l.getType()); }
-    }
-    public record WebLinkResponse(long id, long issueId, String url, String title, String kind, long createdBy, Instant createdAt) {
-        static WebLinkResponse from(IssueWebLink w) {
-            return new WebLinkResponse(w.getId(), w.getIssueId(), w.getUrl(), w.getTitle(), w.getKind(), w.getCreatedBy(), w.getCreatedAt());
-        }
-    }
-    /** created=false면 이미 있던 링크를 그대로 돌려준 것(멱등) — 컨트롤러가 200/201을 가른다 */
-    public record WebLinkOutcome(WebLinkResponse link, boolean created) {}
-    /**
-     * blocks: outward=차단함, inward=차단됨 / relates: 항상 outward.
-     * {@code restricted}면 반대편 프로젝트를 볼 수 없어 {@code other}가 키·id·타입·상태만 남은 축약본이다
-     * (제목은 "볼 수 없는 이슈", 설명·담당자·라벨 등은 비운다 — 감사 A-01, 2026-10-18 필드 추가).
-     */
-    public record LinkView(LinkResponse link, IssueResponse other, String direction, boolean restricted) {}
-
-    /** 링크 반대편을 볼 권한이 없을 때 제목 대신 보이는 문구 */
-    public static final String RESTRICTED_TITLE = "볼 수 없는 이슈";
-    public record ActivityResponse(long id, long issueId, long actorId, String type, String detail, Instant occurredAt) {
-        static ActivityResponse from(IssueActivity a) {
-            return new ActivityResponse(a.getId(), a.getIssueId(), a.getActorId(), a.getType(), a.getDetail(), a.getOccurredAt());
-        }
-    }
-
     // ── 코멘트 ──
 
     @Transactional(readOnly = true)
@@ -149,7 +102,7 @@ public class CollaborationService {
         if (workedOn == null) throw new IllegalArgumentException("작업일을 입력하세요");
         Instant now = now();
         Worklog worklog = worklogs.save(Worklog.of(issueId, userId, hours, comment == null ? "" : comment.trim(), workedOn, now));
-        record(issueId, userId, "worklog", hours.stripTrailingZeros().toPlainString() + "시간 기록", now);
+        activityLog.record(issueId, userId, "worklog", hours.stripTrailingZeros().toPlainString() + "시간 기록", now);
         return WorklogResponse.from(worklog);
     }
 
@@ -178,217 +131,7 @@ public class CollaborationService {
                 .toList();
     }
 
-    // ── 링크 ──
-
-    @Transactional(readOnly = true)
-    public List<LinkView> links(long userId, long issueId) {
-        Issue self = require(userId, issueId, AlmAction.VIEW);
-        List<IssueLink> rows = links.findBySourceIdOrTargetId(issueId, issueId);
-        if (rows.isEmpty()) return List.of();
-        // 반대편 이슈는 한 번에, 링크 타입은 맵 하나로 — 링크마다 두 번씩 읽던 N+1(감사 A-20)
-        List<Long> otherIds = rows.stream()
-                .map(l -> l.getSourceId() == issueId ? l.getTargetId() : l.getSourceId()).distinct().toList();
-        Map<Long, Issue> others = new HashMap<>();
-        for (Issue other : issues.findAllById(otherIds)) others.put(other.getId(), other);
-        Map<String, Boolean> symmetricByType = new HashMap<>();
-        for (LinkTypeDef def : linkTypes.findAll()) symmetricByType.put(def.getId(), def.isSymmetric());
-        // 반대편 프로젝트를 볼 수 있는가 — 프로젝트마다 한 번만 판정한다(감사 A-01)
-        Map<Long, Boolean> visible = new HashMap<>();
-        visible.put(self.getProjectId(), true);
-        List<LinkView> views = new ArrayList<>();
-        for (IssueLink link : rows) {
-            long otherId = link.getSourceId() == issueId ? link.getTargetId() : link.getSourceId();
-            Issue other = others.get(otherId);
-            if (other == null) continue;
-            boolean symmetric = symmetricByType.getOrDefault(link.getType(), false);
-            String direction = symmetric || link.getSourceId() == issueId ? "outward" : "inward";
-            boolean canSee = visible.computeIfAbsent(other.getProjectId(), pid -> projectService.canView(userId, pid));
-            views.add(new LinkView(LinkResponse.from(link),
-                    canSee ? IssueResponse.from(other) : restricted(other), direction, !canSee));
-        }
-        return views;
-    }
-
-    public LinkResponse addLink(long userId, long sourceId, long targetId, String type) {
-        Issue source = require(userId, sourceId, AlmAction.EDIT);
-        if (sourceId == targetId) throw new IllegalArgumentException("자기 자신과는 연결할 수 없습니다");
-        // 대상도 볼 수 있어야 한다(지라: 대상 Browse 권한) — 링크로 남의 프로젝트 이슈를 끌어와 읽는 길을 막는다(감사 A-01)
-        Issue target = require(userId, targetId, AlmAction.VIEW);
-        LinkTypeDef def = linkTypes.findById(type == null ? "" : type)
-                .orElseThrow(() -> new IllegalArgumentException("없는 링크 타입입니다: " + type));
-        boolean symmetric = def.isSymmetric();
-        boolean duplicate = links.findBySourceIdOrTargetId(sourceId, sourceId).stream().anyMatch(l -> {
-            if (!l.getType().equals(type)) return false;
-            if (l.getSourceId() == sourceId && l.getTargetId() == targetId) return true;
-            return symmetric && l.getSourceId() == targetId && l.getTargetId() == sourceId;
-        });
-        if (duplicate) throw new IllegalArgumentException("이미 연결돼 있습니다");
-        IssueLink link = links.save(IssueLink.of(sourceId, targetId, type));
-        Instant now = now();
-        String label = def.getName();
-        record(source.getId(), userId, "link", label + " 링크: " + target.getKey(), now);
-        record(target.getId(), userId, "link", label + " 링크: " + source.getKey(), now);
-        return LinkResponse.from(link);
-    }
-
-    public void removeLink(long userId, long linkId) {
-        IssueLink link = links.findById(linkId).orElseThrow(() -> new NotFoundException("링크를 찾을 수 없습니다"));
-        require(userId, link.getSourceId(), AlmAction.EDIT);
-        links.delete(link);
-    }
-
-    // ── 외부(웹) 링크 — 에이전트 git 연결(P2a): PR·커밋·웹 URL을 이슈에 붙인다 ──
-
-    private static final Set<String> WEB_LINK_KINDS = Set.of("PR", "COMMIT", "WEB");
-
-    @Transactional(readOnly = true)
-    public List<WebLinkResponse> webLinks(long userId, long issueId) {
-        require(userId, issueId, AlmAction.VIEW);
-        return webLinks.findByIssueIdOrderByIdDesc(issueId).stream().map(WebLinkResponse::from).toList();
-    }
-
-    /**
-     * 같은 issue+url이면 새로 만들지 않고 기존 것을 돌려준다 — 커밋 파서 재실행에도 중복이 안 쌓인다.
-     * 동시 요청이 조회를 함께 통과해도 유니크 제약(V25)에 걸린 쪽은 먼저 들어간 행을 돌려받는다.
-     */
-    public WebLinkOutcome addWebLink(long userId, long issueId, String url, String title, String kind) {
-        Issue issue = require(userId, issueId, AlmAction.EDIT);
-        String normalizedUrl = requireUrl(url);
-        String normalizedKind = requireKind(kind);
-        Optional<IssueWebLink> existing = webLinks.findByIssueIdAndUrl(issueId, normalizedUrl);
-        if (existing.isPresent()) {
-            return new WebLinkOutcome(WebLinkResponse.from(existing.get()), false);
-        }
-        String normalizedTitle = normalizeTitle(title);
-        Instant now = now();
-        boolean inserted = webLinks.insertIfAbsent(issueId, normalizedUrl, normalizedTitle, normalizedKind, userId, now) == 1;
-        IssueWebLink saved = webLinks.findByIssueIdAndUrl(issueId, normalizedUrl)
-                .orElseThrow(() -> new IllegalStateException("웹 링크 저장 직후 조회에 실패했습니다"));
-        if (!inserted) {
-            return new WebLinkOutcome(WebLinkResponse.from(saved), false);
-        }
-        String detail = normalizedKind + ": " + (normalizedTitle != null ? normalizedTitle : normalizedUrl);
-        record(issue.getId(), userId, "web_link_added", detail.length() > 500 ? detail.substring(0, 500) : detail, now);
-        return new WebLinkOutcome(WebLinkResponse.from(saved), true);
-    }
-
-    public void removeWebLink(long userId, long id) {
-        IssueWebLink link = webLinks.findById(id).orElseThrow(() -> new NotFoundException("웹 링크를 찾을 수 없습니다"));
-        require(userId, link.getIssueId(), AlmAction.EDIT);
-        webLinks.delete(link);
-    }
-
-    private static String requireUrl(String value) {
-        String trimmed = requireText(value, "URL을 입력하세요");
-        if (trimmed.length() > 500) throw new IllegalArgumentException("URL이 너무 깁니다");
-        URI uri;
-        try {
-            uri = URI.create(trimmed);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("URL 형식이 올바르지 않습니다");
-        }
-        String scheme = uri.getScheme();
-        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https")) || uri.getHost() == null) {
-            throw new IllegalArgumentException("URL 형식이 올바르지 않습니다");
-        }
-        return trimmed;
-    }
-
-    private static String requireKind(String value) {
-        String normalized = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
-        if (!WEB_LINK_KINDS.contains(normalized)) throw new IllegalArgumentException("없는 링크 종류입니다: " + value);
-        return normalized;
-    }
-
-    private static String normalizeTitle(String title) {
-        if (title == null) return null;
-        String trimmed = title.trim();
-        if (trimmed.isEmpty()) return null;
-        if (trimmed.length() > 200) throw new IllegalArgumentException("제목이 너무 깁니다");
-        return trimmed;
-    }
-
-    // ── 활동 ──
-
-    @Transactional(readOnly = true)
-    public List<ActivityResponse> activity(long userId, long issueId) {
-        require(userId, issueId, AlmAction.VIEW);
-        return activities.findByIssueIdOrderByOccurredAtAscIdAsc(issueId).stream().map(ActivityResponse::from).toList();
-    }
-
-    public void record(long issueId, long actorId, String type, String detail, Instant at) {
-        activities.save(IssueActivity.of(issueId, actorId, type, detail, at));
-    }
-
-    /** 이슈 생성 활동 */
-    public void recordCreated(long actorId, Issue issue) {
-        record(issue.getId(), actorId, "created", issue.getKey(), now());
-    }
-
-    /**
-     * 이슈 수정 전후를 비교해 바뀐 필드마다 한 줄 — 상태·타입은 이름으로, 사용자는 id로 남긴다.
-     * 프론트 목업의 recordChanges와 같은 종류(type) 어휘를 쓴다.
-     */
-    public void recordUpdate(long actorId, Snapshot before, Issue after) {
-        Instant now = now();
-        long issueId = after.getId();
-        if (!Objects.equals(before.status(), after.getStatus())) {
-            record(issueId, actorId, "status", statusName(after.getProjectId(), before.status()) + " → " + statusName(after.getProjectId(), after.getStatus()), now);
-        }
-        if (!Objects.equals(before.assigneeId(), after.getAssigneeId())) {
-            record(issueId, actorId, "assignee", userLabel(before.assigneeId()) + " → " + userLabel(after.getAssigneeId()), now);
-        }
-        if (!Objects.equals(before.priority(), after.getPriority())) {
-            record(issueId, actorId, "priority", settings.priorityName(before.priority()) + " → " + settings.priorityName(after.getPriority()), now);
-        }
-        if (!Objects.equals(before.sprintId(), after.getSprintId())) {
-            record(issueId, actorId, "sprint", idLabel(before.sprintId(), "백로그") + " → " + idLabel(after.getSprintId(), "백로그"), now);
-        }
-        if (!Objects.equals(before.dueDate(), after.getDueDate())) {
-            record(issueId, actorId, "duedate", (before.dueDate() == null ? "미지정" : before.dueDate().toString()) + " → " + (after.getDueDate() == null ? "미지정" : after.getDueDate().toString()), now);
-        }
-        if (!Objects.equals(before.labels(), after.getLabels())) {
-            record(issueId, actorId, "labels", after.getLabels().isEmpty() ? "라벨 없음" : String.join(", ", after.getLabels()), now);
-        }
-        if (!Objects.equals(before.type(), after.getType())) {
-            record(issueId, actorId, "issuetype", before.type() + " → " + after.getType(), now);
-        }
-        if (!Objects.equals(before.parentId(), after.getParentId())) {
-            record(issueId, actorId, "parent", idLabel(before.parentId(), "없음") + " → " + idLabel(after.getParentId(), "없음"), now);
-        }
-        String beforeResolution = before.resolution();
-        String afterResolution = after.getResolution() == null ? null : after.getResolution().name();
-        if (!Objects.equals(beforeResolution, afterResolution)) {
-            record(issueId, actorId, "resolution", (beforeResolution == null ? "미해결" : beforeResolution) + " → " + (afterResolution == null ? "미해결" : afterResolution), now);
-        }
-        if (!Objects.equals(before.fixVersionId(), after.getFixVersionId())) {
-            record(issueId, actorId, "fixversion", idLabel(before.fixVersionId(), "없음") + " → " + idLabel(after.getFixVersionId(), "없음"), now);
-        }
-    }
-
-    /** 수정 전 값 — 엔티티를 바꾸기 전에 뜬다 */
-    public record Snapshot(String status, Long assigneeId, String priority, Long sprintId, LocalDate dueDate,
-                           List<String> labels, String type, Long parentId, String resolution, Long fixVersionId) {
-        public static Snapshot of(Issue issue) {
-            return new Snapshot(issue.getStatus(), issue.getAssigneeId(),
-                    issue.getPriority(), issue.getSprintId(),
-                    issue.getDueDate(), List.copyOf(issue.getLabels()), issue.getType(), issue.getParentId(),
-                    issue.getResolution() == null ? null : issue.getResolution().name(), issue.getFixVersionId());
-        }
-    }
-
     // ── 내부 ──
-
-    /**
-     * 볼 수 없는 링크 반대편 — 키·id·프로젝트·타입·상태만 남긴다. 화면이 아이콘·키로 행을 그릴 수 있게 하되
-     * 제목·설명·사람·라벨처럼 내용을 드러내는 값은 비운다.
-     */
-    private static IssueResponse restricted(Issue other) {
-        return new IssueResponse(other.getId(), other.getKey(), other.getProjectId(), RESTRICTED_TITLE, "",
-                other.getType(), other.getStatus(), other.getPriority(), null, 0L, null, null, null, null,
-                other.getResolution(), null, List.of(), List.of(), 0L, other.getVersion(),
-                other.getCreatedAt(), other.getUpdatedAt(), other.getArchivedAt(), other.getResolvedAt());
-    }
 
     /**
      * 댓글·워크로그 삭제 — 작성자(지금도 프로젝트를 볼 수 있을 때) 또는 프로젝트 관리자(지라 "모든 댓글 삭제").
@@ -406,19 +149,6 @@ public class CollaborationService {
         Issue issue = issues.findById(issueId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));
         projectService.require(userId, issue.getProjectId(), action);
         return issue;
-    }
-
-    private String statusName(long projectId, String statusId) {
-        return settings.body(projectId).statuses().stream()
-                .filter(s -> s.id().equals(statusId)).map(s -> s.name()).findFirst().orElse(statusId);
-    }
-
-    private static String userLabel(Long userId) {
-        return userId == null ? "미지정" : "사용자 " + userId;
-    }
-
-    private static String idLabel(Long id, String empty) {
-        return id == null ? empty : "#" + id;
     }
 
     private static String requireText(String value, String message) {
