@@ -4,6 +4,7 @@ import com.platform.almbackend.directory.GrpcMemberDirectory;
 import com.platform.almbackend.directory.MemberDirectory;
 import com.platform.almbackend.permission.GrpcPermissionClient;
 import com.platform.almbackend.permission.PermissionClient;
+import com.platform.common.grpc.InternalTokenClientInterceptor;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
@@ -45,11 +46,14 @@ public class SecurityConfig {
     @Qualifier("orgChannel")
     ManagedChannel orgChannel(
             @Value("${platform.org-grpc.host}") String host,
-            @Value("${platform.org-grpc.port}") int port) {
+            @Value("${platform.org-grpc.port}") int port,
+            InternalTokenClientInterceptor platformGrpcClientInterceptor) {
         // 콜드 스타트 방지: 첫 요청이 이름 해석·연결 수립에 1초 넘게 걸려 DEADLINE_EXCEEDED(→503)가 나던 것을
         // 시작 시 연결을 선점(getState(true))하고 keepalive로 유휴 끊김을 막아 없앤다(2026-09-05 실측).
+        // 서비스 간 gRPC 토큰(P-01 단계 2): 모든 호출 메타데이터에 PLATFORM_GRPC_TOKEN을 싣는다(비면 안 싣는다).
         ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port)
                 .usePlaintext()
+                .intercept(platformGrpcClientInterceptor)
                 .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
                 .build();
