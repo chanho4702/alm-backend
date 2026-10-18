@@ -29,6 +29,7 @@ public class IssueController {
     private final IssueBulkService bulk;
     private final IssueImportService imports;
     private final IssueRankService ranking;
+    private final IssueCloneService cloner;
 
     @Operation(summary = "프로젝트의 이슈 목록을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues")
@@ -69,6 +70,15 @@ public class IssueController {
             @Valid @RequestBody IssueBulkUpdateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return bulk.update(userId(jwt), request);
+    }
+
+    @Operation(summary = "이슈를 복제한다 — 같은 프로젝트에 내용만 복사하고 원본과 \"복제\" 링크로 잇는다",
+            description = "복사: 제목(\"복제: \" 접두)·타입·본문·우선순위·라벨·컴포넌트·상위 항목. 복사 안 함: 댓글·워크로그·첨부·"
+                    + "담당자·스프린트·마감일·예상 시간·수정 버전, 상태는 워크플로의 처음 상태. 원본 VIEW + 프로젝트 EDIT가 필요하다.")
+    @PostMapping("/api/alm/issues/{issueId}/clone")
+    @ResponseStatus(HttpStatus.CREATED)
+    public IssueResponse cloneIssue(@Parameter(description = "원본 이슈 ID") @PathVariable long issueId, @AuthenticationPrincipal Jwt jwt) {
+        return cloner.cloneIssue(userId(jwt), issueId);
     }
 
     @Operation(summary = "이슈 하나를 조회한다")
