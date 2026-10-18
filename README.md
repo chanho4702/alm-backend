@@ -31,7 +31,7 @@ search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱�
 ## 빠른 시작
 
 JDK 24와 `common-proto`·`common-starter` 패키지(같은 태그 버전, 기본값은 `build.gradle`의
-`commonProtoVersion` = `0.16.0`)가 필요하다. 발행본을 받으려면 `GITHUB_TOKEN`에 GitHub Packages
+`commonProtoVersion` = `0.17.0`)가 필요하다. 발행본을 받으려면 `GITHUB_TOKEN`에 GitHub Packages
 `read:packages` 권한을 설정한다.
 
 ```powershell
@@ -55,10 +55,10 @@ proto를 만들지 않고, 변경은 platform-backend main에 올려 태그로 �
 
 ```powershell
 cd ..\platform-backend
-.\gradlew.bat :common-proto:publishToMavenLocal :common-starter:publishToMavenLocal '-PprotoVersion=0.17.0-SNAPSHOT'
+..gradlew.bat :common-proto:publishToMavenLocal :common-starter:publishToMavenLocal '-PprotoVersion=0.18.0-SNAPSHOT'
 
 cd ..\alm-backend
-.\gradlew.bat test '-PuseMavenLocal' '-PcommonProtoVersion=0.17.0-SNAPSHOT'
+.\gradlew.bat test '-PuseMavenLocal' '-PcommonProtoVersion=0.18.0-SNAPSHOT'
 ```
 
 dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다. REST와 gRPC가 각각
@@ -607,6 +607,8 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `PLATFORM_ISSUER` / `PLATFORM_AUDIENCE` | `http://localhost:9000` / `platform-api` | JWT 검증 계약 |
 | `ORG_GRPC_HOST` / `ORG_GRPC_PORT` | `localhost` / `9131` | 권한 판정(프로젝트·전역 관리자)과 사용자 디렉터리 |
 | `ALM_GRPC_ENABLED` / `ALM_GRPC_PORT` | `true` / `9121` | 콘텐츠 조달 gRPC |
+| `PLATFORM_GRPC_TOKEN` | (빈 값) | 서비스 간 gRPC 토큰(P-01). org 호출 메타데이터 `x-internal-token`에 싣고, 콘텐츠 gRPC 서버는 이 값으로 검사한다. 플랫폼 공용 1개 |
+| `PLATFORM_GRPC_AUTH_MODE` | `monitor` | 콘텐츠 gRPC 서버의 토큰 검사: `off`·`monitor`(통과+경고)·`enforce`(거부) |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_DB` | `localhost` / `6379` / `0` | 이벤트 스트림 |
 | `EVENTS_ENABLED` / `EVENTS_STREAM` | `true` / `platform:events:v1` | 이벤트 발행 설정 |
 | `EVENTS_OUTBOX_POLL_DELAY` / `EVENTS_OUTBOX_BATCH_SIZE` | `1s` / `100` | 아웃박스 워커 주기·배치 |

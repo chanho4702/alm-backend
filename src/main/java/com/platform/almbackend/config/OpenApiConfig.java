@@ -1,5 +1,6 @@
 package com.platform.almbackend.config;
 
+import com.platform.common.web.PlatformErrorController;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
@@ -44,6 +45,9 @@ public class OpenApiConfig {
     /** 인증 주체는 서버가 토큰에서 꺼낸다 — 요청 파라미터로 문서에 새면 안 된다 */
     static {
         SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthenticationPrincipal.class);
+        // common-starter 0.17.0의 /error 컨트롤러는 API가 아니다 — springdoc은 Boot 기본 BasicErrorController만
+        // 알아서 숨기므로 스타터 것은 직접 숨긴다.
+        SpringDocUtils.getConfig().addHiddenRestControllers(PlatformErrorController.class);
     }
 
     /**
