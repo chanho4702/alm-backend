@@ -1,5 +1,7 @@
 package com.platform.almbackend.issue;
 
+import com.platform.almbackend.issue.dto.IssueBulkUpdateRequest;
+import com.platform.almbackend.issue.dto.IssueBulkUpdateResponse;
 import com.platform.almbackend.issue.dto.IssueCreateRequest;
 import com.platform.almbackend.issue.dto.IssueImportRequest;
 import com.platform.almbackend.issue.dto.IssueImportResponse;
@@ -24,6 +26,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 @Tag(name = "Issues", description = "이슈 생성·수정·이동·순서 변경·가져오기")
 public class IssueController {
     private final IssueService issues;
+    private final IssueBulkService bulk;
 
     @Operation(summary = "프로젝트의 이슈 목록을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues")
@@ -49,6 +52,21 @@ public class IssueController {
             @Valid @RequestBody IssueImportRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return issues.importIssues(userId(jwt), projectId, request);
+    }
+
+    /**
+     * 일괄 편집 — 이슈 N개에 같은 필드 변경을 한 요청으로. 행마다 자기 트랜잭션이라 일부만 성공할 수 있고,
+     * 항상 200 + 행별 결과다(요청 자체가 잘못되면 400).
+     */
+    @Operation(summary = "여러 이슈의 필드를 한 번에 바꾼다 — 행별 결과(버전 충돌 포함)를 돌려준다",
+            description = "changes에서 키를 보낸 필드만 바뀐다(assigneeId·sprintId·fixVersionId는 null이면 해제). "
+                    + "items[].expectedVersion이 서버 버전과 다르면 그 행만 CONFLICT(currentVersion 포함)이고 나머지는 계속 처리한다. "
+                    + "행마다 단건 수정과 같은 권한·전이·검증 규칙을 탄다. 최대 200건.")
+    @PostMapping("/api/alm/issues/bulk")
+    public IssueBulkUpdateResponse bulkUpdate(
+            @Valid @RequestBody IssueBulkUpdateRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return bulk.update(userId(jwt), request);
     }
 
     @Operation(summary = "이슈 하나를 조회한다")
