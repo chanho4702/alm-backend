@@ -16,6 +16,9 @@ public interface SavedFilterRepository extends JpaRepository<SavedFilter, Long> 
 
     List<SavedFilter> findByOwnerId(long ownerId);
 
+    /** 조직 전체 공유 필터(V28 부분 인덱스) */
+    List<SavedFilter> findBySharedTrue();
+
     Optional<SavedFilter> findByIdAndOwnerId(long id, long ownerId);
 
     boolean existsByOwnerIdAndName(long ownerId, String name);

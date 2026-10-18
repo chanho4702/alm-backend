@@ -4,6 +4,7 @@ import com.platform.almbackend.domain.SavedFilter;
 import com.platform.almbackend.repository.SavedFilterRepository;
 import com.platform.almbackend.search.aql.AqlSyntax;
 import com.platform.common.error.ConflictException;
+import com.platform.common.error.ForbiddenException;
 import com.platform.common.error.NotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -18,8 +19,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 내 저장 필터 — 사이드바에 꽂아 두는 검색. 프로젝트 권한을 묻지 않는다(질의를 <b>실행</b>할 때
- * 검색이 볼 수 있는 범위로 좁힌다), 대신 소유자 밖으로는 한 줄도 새지 않게 한다.
+ * 저장 필터 — 사이드바에 꽂아 두는 검색. 프로젝트 권한을 묻지 않는다(질의를 <b>실행</b>할 때
+ * 검색이 볼 수 있는 범위로 좁힌다). 비공개 필터는 소유자 밖으로 한 줄도 새지 않고, 공유 필터(F-12)는 조직 전체가
+ * 보되 소유자만 고친다.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,19 +35,22 @@ public class SavedFilterService {
 
     private final SavedFilterRepository filters;
 
+    /** {@code shared}·{@code ownerId}·{@code mine}은 2026-10-18 추가(F-12, 하위 호환) */
     public record FilterResponse(long id, String name, String kind, String query,
-                                 Instant createdAt, Instant updatedAt) {
-        static FilterResponse from(SavedFilter filter) {
+                                 Instant createdAt, Instant updatedAt,
+                                 boolean shared, long ownerId, boolean mine) {
+        static FilterResponse from(SavedFilter filter, long viewerId) {
             return new FilterResponse(filter.getId(), filter.getName(), filter.getKind(), filter.getQuery(),
-                    filter.getCreatedAt(), filter.getUpdatedAt());
+                    filter.getCreatedAt(), filter.getUpdatedAt(),
+                    filter.isShared(), filter.getOwnerId(), filter.getOwnerId() == viewerId);
         }
     }
 
-    /** 만들 때는 셋 다 필요하다 */
-    public record FilterCreateRequest(String name, String kind, String query) {}
+    /** 만들 때는 이름·종류·질의가 필요하다. shared는 생략하면 비공개 */
+    public record FilterCreateRequest(String name, String kind, String query, Boolean shared) {}
 
     /** 고칠 때는 보낸 것만 바뀐다 — null은 "그대로 두라"는 뜻이다 */
-    public record FilterUpdateRequest(String name, String kind, String query) {}
+    public record FilterUpdateRequest(String name, String kind, String query, Boolean shared) {}
 
     /**
      * 이름 순. 정렬은 DB가 아니라 여기서 한다 — {@code ORDER BY name}은 콜레이션을 타서 한글·영문이
@@ -58,9 +63,28 @@ public class SavedFilterService {
     @Transactional(readOnly = true)
     public List<FilterResponse> list(long userId) {
         return filters.findByOwnerId(userId).stream()
-                .map(FilterResponse::from)
+                .map(f -> FilterResponse.from(f, userId))
                 .sorted(byName())
                 .toList();
+    }
+
+    /**
+     * 남이 공유한 필터(F-12) — 조직 전체에 보인다. 질의만 주고 결과는 주지 않는다: 실행은 보는 사람이 검색·AQL로
+     * 하므로 그 사람이 볼 수 있는 이슈만 나온다. 내 공유 필터는 {@link #list}에 이미 있어 뺀다.
+     */
+    @Transactional(readOnly = true)
+    public List<FilterResponse> shared(long userId) {
+        return filters.findBySharedTrue().stream()
+                .filter(f -> f.getOwnerId() != userId)
+                .map(f -> FilterResponse.from(f, userId))
+                .sorted(byName())
+                .toList();
+    }
+
+    /** 단건 열기 — 내 것이거나 공유된 것. 비공개인 남의 것은 404 */
+    @Transactional(readOnly = true)
+    public FilterResponse get(long userId, long filterId) {
+        return FilterResponse.from(requireVisible(userId, filterId), userId);
     }
 
     /** {@code Collator}는 스레드 안전이 아니다 — 공유 상수로 두지 않고 호출마다 만든다 */
@@ -75,8 +99,8 @@ public class SavedFilterService {
         String kind = requireKind(request.kind());
         String query = requireQuery(request.query(), kind);
         if (filters.existsByOwnerIdAndName(userId, name)) throw new ConflictException(DUPLICATE_NAME);
-        SavedFilter created = SavedFilter.of(userId, name, kind, query, now());
-        return FilterResponse.from(save(created));
+        SavedFilter created = SavedFilter.of(userId, name, kind, query, Boolean.TRUE.equals(request.shared()), now());
+        return FilterResponse.from(save(created), userId);
     }
 
     public FilterResponse update(long userId, long filterId, FilterUpdateRequest request) {
@@ -89,18 +113,28 @@ public class SavedFilterService {
         if (name != null && !name.equals(filter.getName()) && filters.existsByOwnerIdAndName(userId, name)) {
             throw new ConflictException(DUPLICATE_NAME);
         }
-        filter.edit(name, kind, query, now());
+        filter.edit(name, kind, query, request.shared(), now());
         flush();
-        return FilterResponse.from(filter);
+        return FilterResponse.from(filter, userId);
     }
 
     public void delete(long userId, long filterId) {
         filters.delete(require(userId, filterId));
     }
 
-    /** 남의 것은 없는 것과 같다 — 403으로 존재를 알리지 않는다 */
+    /**
+     * 고치거나 지울 대상 — 소유자만. 공유돼 보이는 남의 필터는 403(보이는 것을 없다고 하지 않는다),
+     * 비공개인 남의 것은 404(있다는 사실도 알리지 않는다).
+     */
     private SavedFilter require(long userId, long filterId) {
-        return filters.findByIdAndOwnerId(filterId, userId)
+        SavedFilter filter = requireVisible(userId, filterId);
+        if (filter.getOwnerId() != userId) throw new ForbiddenException("공유된 필터는 만든 사람만 수정·삭제할 수 있습니다");
+        return filter;
+    }
+
+    private SavedFilter requireVisible(long userId, long filterId) {
+        return filters.findById(filterId)
+                .filter(f -> f.getOwnerId() == userId || f.isShared())
                 .orElseThrow(() -> new NotFoundException("저장 필터를 찾을 수 없습니다: " + filterId));
     }
 

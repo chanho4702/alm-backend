@@ -43,6 +43,19 @@ public class SavedFilterController {
         return filters.list(userId(jwt));
     }
 
+    @Operation(summary = "남이 공유한 저장 필터를 조회한다",
+            description = "조직 전체 공유(F-12). 내 필터는 빠진다(내 것은 /me/filters). 질의만 주고, 실행 결과는 보는 사람의 권한으로 걸러진다.")
+    @GetMapping("/api/alm/filters/shared")
+    public List<FilterResponse> shared(@AuthenticationPrincipal Jwt jwt) {
+        return filters.shared(userId(jwt));
+    }
+
+    @Operation(summary = "저장 필터 하나를 연다", description = "내 것이거나 공유된 것. 비공개인 남의 필터는 404.")
+    @GetMapping("/api/alm/filters/{id}")
+    public FilterResponse get(@Parameter(description = "저장 필터 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
+        return filters.get(userId(jwt), id);
+    }
+
     @Operation(summary = "저장 필터를 만든다",
             description = "kind가 `aql`이면 문법을 검사해 틀리면 400 `{error, position, expected}`로 거절한다.")
     @ConflictResponse("같은 이름의 필터가 있습니다")

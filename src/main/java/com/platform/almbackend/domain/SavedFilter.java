@@ -16,7 +16,8 @@ import java.time.Instant;
  * 저장 필터 — 사이드바에 꽂아 두는 내 검색 하나. 스마트 검색 문자열({@code smart})이거나
  * AQL({@code aql})이며, 무엇을 저장했는지는 {@code kind}가 말한다.
  *
- * <p>소유자 본인만 보고 고친다. 공유 필터는 없다 — 남의 것을 지목하면 404다(있다는 사실도 알리지 않는다).
+ * <p>소유자 본인만 고친다. {@code shared}면 조직 전체가 보고 실행한다(V28, F-12) — 결과는 실행하는 사람의 권한으로
+ * 걸러진다. 비공개인 남의 것을 지목하면 404다(있다는 사실도 알리지 않는다).
  */
 @Entity
 @Table(name = "saved_filter")
@@ -45,6 +46,10 @@ public class SavedFilter {
     @Column(name = "query", nullable = false, length = 4000)
     private String query;
 
+    /** 조직 전체 공유(V28) */
+    @Column(nullable = false)
+    private boolean shared;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -52,7 +57,12 @@ public class SavedFilter {
     private Instant updatedAt;
 
     public static SavedFilter of(long ownerId, String name, String kind, String query, Instant now) {
+        return of(ownerId, name, kind, query, false, now);
+    }
+
+    public static SavedFilter of(long ownerId, String name, String kind, String query, boolean shared, Instant now) {
         SavedFilter filter = new SavedFilter();
+        filter.shared = shared;
         filter.ownerId = ownerId;
         filter.name = name;
         filter.kind = kind;
@@ -64,6 +74,11 @@ public class SavedFilter {
 
     /** 부분 수정 — 안 보낸 항목은 그대로 둔다. 값 검증은 서비스가 이미 끝냈다 */
     public void edit(String name, String kind, String query, Instant now) {
+        edit(name, kind, query, null, now);
+    }
+
+    public void edit(String name, String kind, String query, Boolean shared, Instant now) {
+        if (shared != null) this.shared = shared;
         if (name != null) this.name = name;
         if (kind != null) this.kind = kind;
         if (query != null) this.query = query;
