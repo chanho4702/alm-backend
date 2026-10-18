@@ -295,7 +295,13 @@ public class IssueService {
      */
     private boolean isDescendant(long ancestorId, Issue candidate) {
         if (candidate.getParentId() == null) return false;
-        return issues.ancestorChainContains(candidate.getId(), ancestorId);
+        int result = issues.ancestorChainCheck(candidate.getId(), ancestorId);
+        if (result == 1) {
+            // 상한에서 멈춘 체인은 "순환 없음"이 아니라 "모름"이다 — 통과시키지 않는다
+            throw new IllegalArgumentException("상위 항목 계층이 너무 깊어 순환 여부를 확인할 수 없습니다 (최대 "
+                    + IssueRepository.MAX_ANCESTOR_DEPTH + "단계)");
+        }
+        return result == 2;
     }
 
     private static List<String> normalizeLabels(List<String> values) {

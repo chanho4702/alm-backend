@@ -225,6 +225,31 @@ class PostgresWritePathSmokeTest {
         mvc.perform(get("/api/alm/filters/shared").with(asUser(2, "Bob"))).andExpect(status().isOk());
     }
 
+    @Test
+    void 깊이_상한을_넘는_계층의_순환_검사는_PG에서도_거부로_끝난다() throws Exception {
+        long project = createProject();
+        long root = createIssue(project, "뿌리", "{}", null);
+        long parent = root;
+        for (int i = 0; i < 1100; i++) {
+            parent = jdbc.queryForObject("""
+                    insert into issue (project_id, issue_number, issue_key, title, description, issue_type, status, priority,
+                                       reporter_id, sort_order, version, created_at, updated_at, parent_id)
+                    select project_id, ?, project_id || '-D' || ?, title, description, issue_type, status, priority, reporter_id,
+                           ?, 1, created_at, updated_at, ? from issue where id = ?
+                    returning id
+                    """, Long.class, 5000 + i, i, 5000 + i, parent, root);
+        }
+        mvc.perform(put("/api/alm/issues/{id}", root).with(asUser(1, "Alice")).contentType(MediaType.APPLICATION_JSON)
+                        .content(updateBody("뿌리", "todo", version(root), "{\"parentId\":" + parent + ",\"labels\":[]}")))
+                .andExpect(status().isBadRequest());
+        // 얕은 순환은 정확히 "순환"으로 잡는다
+        long child = createIssue(project, "자식", "{\"parentId\":" + root + "}", null);
+        mvc.perform(put("/api/alm/issues/{id}", root).with(asUser(1, "Alice")).contentType(MediaType.APPLICATION_JSON)
+                        .content(updateBody("뿌리", "todo", version(root), "{\"parentId\":" + child + ",\"labels\":[]}")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("상위 항목이 순환합니다"));
+    }
+
     // ── 헬퍼 ──
 
     private long createProject() throws Exception {

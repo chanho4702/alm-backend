@@ -163,9 +163,13 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @Query("select distinct l from Issue i join i.labels l where i.projectId = :projectId")
     List<String> findDistinctLabelsByProjectId(@Param("projectId") long projectId);
 
+    /** 순환 검사가 따라 올라가는 최대 단계 — 넘으면 판정할 수 없으므로 거부한다(fail-closed) */
+    int MAX_ANCESTOR_DEPTH = 1000;
+
     /**
-     * startId의 조상 체인(자기 자신 포함, 위로) 어디엔가 ancestorId가 부모로 나오는가 — 순환 검사용.
-     * 재귀 CTE 한 번. 데이터가 이미 순환해 있어도 깊이 상한(1000)에서 멈춘다. 보관된 이슈도 체인에 넣는다(네이티브).
+     * startId의 조상 체인(자기 자신 포함, 위로)을 재귀 CTE 한 번으로 훑는다 — 순환 검사용. 보관된 이슈도 넣는다(네이티브).
+     * 돌려주는 값: 2 = ancestorId가 체인에 부모로 나온다(순환), 1 = 깊이 상한에 닿아 끝까지 못 봤다(판정 불가 —
+     * 호출자가 거부한다), 0 = 순환 없음. 상한은 이미 순환해 있는 데이터에서 질의가 끝나게 하는 장치이기도 하다.
      */
     @Query(value = """
             with recursive chain(id, parent_id, depth) as (
@@ -174,7 +178,11 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
                 select i.id, i.parent_id, c.depth + 1 from issue i join chain c on i.id = c.parent_id
                  where c.depth < 1000
             )
-            select count(*) > 0 from chain where parent_id = :ancestorId
+            select case
+                     when exists (select 1 from chain where parent_id = :ancestorId) then 2
+                     when exists (select 1 from chain where depth >= 1000 and parent_id is not null) then 1
+                     else 0
+                   end
             """, nativeQuery = true)
-    boolean ancestorChainContains(@Param("startId") long startId, @Param("ancestorId") long ancestorId);
+    Integer ancestorChainCheck(@Param("startId") long startId, @Param("ancestorId") long ancestorId);
 }

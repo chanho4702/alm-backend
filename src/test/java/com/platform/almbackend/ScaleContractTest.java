@@ -329,6 +329,31 @@ class ScaleContractTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * 순환 검사의 깊이 상한(1000)을 넘는 계층 — 상한에서 멈춰 "순환 없음"으로 통과시키면 안 된다(Codex P2).
+     * 뿌리 ← 1 ← … ← 1100 체인을 SQL로 만들고 뿌리의 부모를 맨 끝으로 지정하면 거부돼야 한다.
+     */
+    @Test
+    void 깊이_상한을_넘는_계층에서도_순환을_통과시키지_않는다() throws Exception {
+        long root = createIssue("뿌리", "{}");
+        long parent = root;
+        for (int i = 0; i < 1100; i++) {
+            jdbc.update("""
+                    insert into issue (project_id, issue_number, issue_key, title, description, issue_type, status, priority,
+                                       reporter_id, sort_order, version, created_at, updated_at, parent_id)
+                    select project_id, ?, ?, title, description, issue_type, status, priority, reporter_id, ?, 1,
+                           created_at, updated_at, ? from issue where id = ?
+                    """, 5000 + i, "SC-" + (5000 + i), 5000 + i, parent, root);
+            parent = jdbc.queryForObject("select id from issue where issue_key = ?", Long.class, "SC-" + (5000 + i));
+        }
+        long leaf = parent;
+        mvc.perform(put("/api/alm/issues/{id}", root).with(asUser(1, "Alice")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"뿌리\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\",\"priority\":\"medium\","
+                                + "\"details\":{\"parentId\":" + leaf + ",\"labels\":[]},\"expectedVersion\":" + version(root) + "}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("select parent_id from issue where id = ?", Long.class, root)).isNull();
+    }
+
     // ── 헬퍼 ──
 
     private long createProject(String key) throws Exception {
