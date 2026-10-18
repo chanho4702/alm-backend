@@ -118,6 +118,42 @@ public class SchemeService {
         return resolved(projectId);
     }
 
+    /**
+     * 접근 가능한 프로젝트 전부의 해석된 상태 목록(order 순) — 홈·검색·⌘K가 프로젝트마다
+     * {@code /projects/{id}/settings}를 부르던 1+N을 한 번으로 줄인다(감사 A-10). 레지스트리는 한 번, 같은 스킴은
+     * 한 번만 해석한다. 키는 프로젝트 id 문자열(JSON 객체 키).
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<SettingsBody.WorkflowStatus>> statusesByProject(long userId) {
+        List<Long> projectIds = projectService.accessibleProjectIds(userId);
+        if (projectIds.isEmpty()) return Map.of();
+        SchemeQueries.Registry registry = queries.registry();
+        Map<Long, ProjectSettings> settingsById = new java.util.HashMap<>();
+        for (ProjectSettings ps : projectSettings.findAllById(projectIds)) settingsById.put(ps.getProjectId(), ps);
+        Map<String, List<SettingsBody.WorkflowStatus>> byScheme = new java.util.HashMap<>();
+        Map<String, List<SettingsBody.WorkflowStatus>> out = new java.util.LinkedHashMap<>();
+        for (long projectId : projectIds) {
+            ProjectSettings ps = settingsById.get(projectId);
+            List<SettingsBody.WorkflowStatus> statuses;
+            if (ps != null && ps.isCustom()) {
+                statuses = sortedStatuses(queries.enrich(queries.parse(ps.getCustomBody()), registry));
+            } else {
+                String schemeKey = ps == null ? "" : ps.getSchemeId();
+                statuses = byScheme.computeIfAbsent(schemeKey, key -> {
+                    Optional<SettingsScheme> scheme = key.isEmpty() ? queries.defaultScheme() : schemes.findById(key);
+                    SettingsBody body = scheme.map(sc -> queries.parse(sc.getBody())).orElseGet(SettingsBody::defaults);
+                    return sortedStatuses(queries.enrich(body, registry));
+                });
+            }
+            out.put(String.valueOf(projectId), statuses);
+        }
+        return out;
+    }
+
+    private static List<SettingsBody.WorkflowStatus> sortedStatuses(SettingsBody body) {
+        return body.statuses().stream().sorted(java.util.Comparator.comparingInt(SettingsBody.WorkflowStatus::order)).toList();
+    }
+
     public ResolvedSettingsResponse assignScheme(long actorId, long projectId, String schemeId) {
         projectService.require(actorId, projectId, AlmAction.ADMIN);
         SettingsScheme scheme = requireScheme(schemeId);

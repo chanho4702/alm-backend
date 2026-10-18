@@ -162,4 +162,19 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
      */
     @Query("select distinct l from Issue i join i.labels l where i.projectId = :projectId")
     List<String> findDistinctLabelsByProjectId(@Param("projectId") long projectId);
+
+    /**
+     * startId의 조상 체인(자기 자신 포함, 위로) 어디엔가 ancestorId가 부모로 나오는가 — 순환 검사용.
+     * 재귀 CTE 한 번. 데이터가 이미 순환해 있어도 깊이 상한(1000)에서 멈춘다. 보관된 이슈도 체인에 넣는다(네이티브).
+     */
+    @Query(value = """
+            with recursive chain(id, parent_id, depth) as (
+                select id, parent_id, 0 from issue where id = :startId
+                union all
+                select i.id, i.parent_id, c.depth + 1 from issue i join chain c on i.id = c.parent_id
+                 where c.depth < 1000
+            )
+            select count(*) > 0 from chain where parent_id = :ancestorId
+            """, nativeQuery = true)
+    boolean ancestorChainContains(@Param("startId") long startId, @Param("ancestorId") long ancestorId);
 }

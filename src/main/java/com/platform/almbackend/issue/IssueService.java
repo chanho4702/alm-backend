@@ -50,7 +50,6 @@ import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 import java.util.Set;
 import java.util.Locale;
-import java.util.HashSet;
 import java.util.Objects;
 
 @Service
@@ -493,15 +492,13 @@ public class IssueService {
                 .orElseThrow(() -> new NotFoundException("부모 이슈를 찾을 수 없습니다: " + parentId));
     }
 
-    /** candidate가 ancestorId의 자손인지 — 부모 체인을 따라 올라가며 확인한다 */
+    /**
+     * candidate가 ancestorId의 자손인지 — 부모 체인을 재귀 CTE 한 번으로 올라간다(감사 A-20: 계층 무제한이라
+     * 예전처럼 단계마다 findById를 부르면 깊이만큼 질의가 나갔다).
+     */
     private boolean isDescendant(long ancestorId, Issue candidate) {
-        Set<Long> seen = new HashSet<>();
-        Issue cursor = candidate;
-        while (cursor != null && cursor.getParentId() != null && seen.add(cursor.getId())) {
-            if (Objects.equals(cursor.getParentId(), ancestorId)) return true;
-            cursor = issues.findById(cursor.getParentId()).orElse(null);
-        }
-        return false;
+        if (candidate.getParentId() == null) return false;
+        return issues.ancestorChainContains(candidate.getId(), ancestorId);
     }
 
     private static List<String> normalizeLabels(List<String> values) {

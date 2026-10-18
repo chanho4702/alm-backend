@@ -52,10 +52,23 @@ public class SchemeQueries {
 
     /** 레지스트리가 이름·카테고리의 진실 — 캐시는 레지스트리에 없는 옛 id만 버틴다 */
     public SettingsBody enrich(SettingsBody body) {
+        return enrich(body, registry());
+    }
+
+    /** 상태·분류 레지스트리 한 벌 — 여러 본문을 해석할 때 한 번만 읽는다 */
+    public record Registry(Map<String, StatusDef> defs, Map<String, StatusCategory> cats) {}
+
+    public Registry registry() {
         Map<String, StatusDef> defs = new LinkedHashMap<>();
         for (StatusDef def : statuses.findAll()) defs.put(def.getId(), def);
         Map<String, StatusCategory> cats = new LinkedHashMap<>();
         for (StatusCategory c : categories.findAll()) cats.put(c.getId(), c);
+        return new Registry(defs, cats);
+    }
+
+    public SettingsBody enrich(SettingsBody body, Registry registry) {
+        Map<String, StatusDef> defs = registry.defs();
+        Map<String, StatusCategory> cats = registry.cats();
         List<SettingsBody.WorkflowStatus> enriched = new ArrayList<>();
         for (SettingsBody.WorkflowStatus s : body.statuses()) {
             StatusDef def = defs.get(s.id());

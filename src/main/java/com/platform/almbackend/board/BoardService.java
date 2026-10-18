@@ -15,12 +15,18 @@ import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.repository.BoardRepository;
 import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.SprintRepository;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -122,33 +128,60 @@ public class BoardService {
         }
     }
 
-    /** 보드에 보이는 이슈 — scrum: 활성 스프린트(없으면 빈 목록), kanban: 전체 + 저장 필터 */
+    /**
+     * 보드에 보이는 이슈 — scrum: 활성 스프린트(없으면 빈 목록), kanban: 전체 + 저장 필터.
+     * 조건은 전부 DB 술어로 내린다(감사 A-07): 예전에는 프로젝트 전 이슈를 메모리에 올려 자바 스트림으로
+     * 걸렀다. 보드는 DnD·인라인 생성마다 다시 읽는 가장 잦은 경로다. 스크럼은 (project, sprint, sort) 인덱스,
+     * 담당자는 V27 (assignee, project) 인덱스, 라벨은 EXISTS(V27 issue_label(label))로 탄다.
+     */
     @Transactional(readOnly = true)
     public List<IssueResponse> issues(long userId, long boardId) {
         Board board = requireBoard(boardId);
         projectService.require(userId, board.getProjectId(), AlmAction.VIEW);
-        List<Issue> all = issues.findByProjectIdOrderBySortOrderAscKeyAsc(board.getProjectId());
+        long projectId = board.getProjectId();
+        Long activeSprintId = null;
         if ("scrum".equals(board.getType())) {
-            Sprint active = sprints.findByProjectIdAndState(board.getProjectId(), SprintState.ACTIVE).orElse(null);
+            Sprint active = sprints.findByProjectIdAndState(projectId, SprintState.ACTIVE).orElse(null);
             if (active == null) return List.of();
-            long activeId = active.getId();
-            all = all.stream().filter(i -> activeId == (i.getSprintId() == null ? -1 : i.getSprintId())).toList();
+            activeSprintId = active.getId();
         }
         Filter filter = read(board.getFilterJson());
-        if (!filter.assigneeIds().isEmpty()) {
-            Set<String> ids = new HashSet<>(filter.assigneeIds());
-            all = all.stream().filter(i -> i.getAssigneeId() == null
-                    ? ids.contains("unassigned") : ids.contains(String.valueOf(i.getAssigneeId()))).toList();
-        }
-        if (!filter.types().isEmpty()) {
-            Set<String> types = new HashSet<>(filter.types());
-            all = all.stream().filter(i -> types.contains(i.getType())).toList();
-        }
-        if (!filter.labels().isEmpty()) {
-            Set<String> labels = new HashSet<>(filter.labels());
-            all = all.stream().filter(i -> i.getLabels().stream().anyMatch(labels::contains)).toList();
-        }
-        return issueResponses.of(all);
+        Specification<Issue> spec = boardSpec(projectId, activeSprintId, filter);
+        List<Issue> visible = issues.findAll(spec, Sort.by(Sort.Order.asc("sortOrder"), Sort.Order.asc("key")));
+        return issueResponses.of(visible);
+    }
+
+    /** 보드 조건 — 저장 필터의 의미는 예전 메모리 필터와 같다(담당자 "unassigned"=미지정, 라벨은 하나라도 겹치면) */
+    static Specification<Issue> boardSpec(long projectId, Long sprintId, Filter filter) {
+        return (root, query, cb) -> {
+            List<Predicate> where = new ArrayList<>();
+            where.add(cb.equal(root.get("projectId"), projectId));
+            if (sprintId != null) where.add(cb.equal(root.get("sprintId"), sprintId));
+            if (!filter.assigneeIds().isEmpty()) {
+                List<Long> ids = new ArrayList<>();
+                boolean unassigned = false;
+                for (String raw : filter.assigneeIds()) {
+                    if ("unassigned".equals(raw)) { unassigned = true; continue; }
+                    try {
+                        ids.add(Long.valueOf(raw));
+                    } catch (NumberFormatException ignored) {
+                        // 저장된 필터의 잘못된 값은 아무도 잡지 않는다(예전 문자열 비교와 같은 결과)
+                    }
+                }
+                List<Predicate> any = new ArrayList<>();
+                if (!ids.isEmpty()) any.add(root.get("assigneeId").in(ids));
+                if (unassigned) any.add(cb.isNull(root.get("assigneeId")));
+                where.add(any.isEmpty() ? cb.disjunction() : cb.or(any.toArray(Predicate[]::new)));
+            }
+            if (!filter.types().isEmpty()) where.add(root.get("type").in(filter.types()));
+            if (!filter.labels().isEmpty()) {
+                Subquery<Integer> sub = query.subquery(Integer.class);
+                Root<Issue> correlated = sub.correlate(root);
+                sub.select(cb.literal(1)).where(correlated.join("labels").in(filter.labels()));
+                where.add(cb.exists(sub));
+            }
+            return cb.and(where.toArray(Predicate[]::new));
+        };
     }
 
     private static void validateColumns(List<Column> columns) {

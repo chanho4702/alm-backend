@@ -8,11 +8,13 @@ import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.repository.IssueChangeLogRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -61,14 +63,34 @@ public class IssueChangeLogService {
         }
     }
 
+    /** 한 번에 내주는 이력 상한 — 넘으면 최신 쪽만 주고 truncated로 알린다(감사 A-08) */
+    public static final int MAX_ROWS = 20_000;
+    /** until을 비웠을 때의 배타 상한 — "끝없음" */
+    private static final Instant FAR_FUTURE = Instant.parse("9999-12-31T00:00:00Z");
+
+    /** 이력 한 묶음 — truncated면 기간 안에 limit보다 많아 오래된 쪽이 잘렸다 */
+    public record HistorySlice(List<IssueChangeResponse> items, boolean truncated, int limit) {}
+
+    /**
+     * 기간(since 포함 ~ until 배타)·상한(limit, 기본·최대 {@value #MAX_ROWS}) 안의 이력, 시간 오름차순.
+     * 변경 이력은 단조 증가해서 무제한 응답은 운영 1년이면 리포트 진입마다 수만 행이 된다.
+     */
     @Transactional(readOnly = true)
-    public List<IssueChangeResponse> history(
-            long userId, long projectId, ChangeField field, Long sprintId, Instant since) {
+    public HistorySlice history(long userId, long projectId, ChangeField field, Long sprintId,
+                                Instant since, Instant until, Integer limit) {
         projectService.requireProject(projectId);
         projectService.require(userId, projectId, AlmAction.VIEW);
-        return logs.findHistory(projectId, field, sprintId, text(sprintId), since).stream()
-                .map(IssueChangeResponse::from)
-                .toList();
+        if (since != null && until != null && !since.isBefore(until)) {
+            throw new IllegalArgumentException("since는 until보다 앞서야 합니다");
+        }
+        int cap = limit == null ? MAX_ROWS : Math.max(1, Math.min(limit, MAX_ROWS));
+        List<IssueChangeLog> newestFirst = logs.findHistoryNewestFirst(projectId, field, sprintId, text(sprintId),
+                since, until == null ? FAR_FUTURE : until, Limit.of(cap + 1));
+        boolean truncated = newestFirst.size() > cap;
+        List<IssueChangeLog> kept = truncated ? newestFirst.subList(0, cap) : newestFirst;
+        List<IssueChangeResponse> items = new ArrayList<>(kept.size());
+        for (int i = kept.size() - 1; i >= 0; i--) items.add(IssueChangeResponse.from(kept.get(i)));
+        return new HistorySlice(items, truncated, cap);
     }
 
     /** DB(timestamptz)가 담는 마이크로초까지만 — 메모리 값과 조회 값이 같아야 리포트 식별이 성립한다 */

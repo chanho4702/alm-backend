@@ -281,6 +281,15 @@ public class SettingsController {
     public record CustomRequest(boolean custom) {}
 
     @Tag(name = "Project Settings")
+    @Operation(summary = "접근 가능한 모든 프로젝트의 상태 목록을 한 번에 조회한다",
+            description = "키는 프로젝트 ID(문자열), 값은 그 프로젝트에 적용된 워크플로 상태(order 순, kind·color·icon 해석 포함)다. "
+                    + "프로젝트마다 /projects/{id}/settings를 부르지 않게 한다. 휴지통 프로젝트는 빠진다.")
+    @GetMapping("/api/alm/projects/statuses")
+    public Map<String, List<SettingsBody.WorkflowStatus>> statusesByProject(@AuthenticationPrincipal Jwt jwt) {
+        return schemes.statusesByProject(userId(jwt));
+    }
+
+    @Tag(name = "Project Settings")
     @Operation(summary = "프로젝트에 실제로 적용된 설정을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/settings")
     public ResolvedSettingsResponse resolve(@Parameter(description = "프로젝트 ID") @PathVariable long projectId, @AuthenticationPrincipal Jwt jwt) {
