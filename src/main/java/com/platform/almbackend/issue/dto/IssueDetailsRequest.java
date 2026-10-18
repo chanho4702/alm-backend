@@ -21,7 +21,7 @@ import java.util.List;
         이슈의 세부 항목. 바깥 요청에서 details 자체를 생략하면 아래 값을 모두 보존하고, \
         details를 주면 null인 필드는 명시적 해제로 본다.""")
 public record IssueDetailsRequest(
-        @Schema(description = "상위 이슈 ID. 에픽→일반 이슈→하위 작업 2단계까지만 허용한다", example = "1000")
+        @Schema(description = "상위 이슈 ID. 같은 프로젝트의 이슈만, 깊이 제한 없음(자기 자신·자손을 지정하면 순환으로 400)", example = "1000")
         @Positive(message = "parentId는 양수여야 합니다")
         Long parentId,
         @Schema(description = "옮겨 놓을 스프린트 ID. null이면 백로그", example = "12")

@@ -30,8 +30,9 @@ search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱�
 
 ## 빠른 시작
 
-JDK 24와 `common-proto` 패키지가 필요하다. 정식 `0.6.0` 패키지를 사용할 때는
-`GITHUB_TOKEN`에 GitHub Packages `read:packages` 권한을 설정한다.
+JDK 24와 `common-proto`·`common-starter` 패키지(같은 태그 버전, 기본값은 `build.gradle`의
+`commonProtoVersion` = `0.16.0`)가 필요하다. 발행본을 받으려면 `GITHUB_TOKEN`에 GitHub Packages
+`read:packages` 권한을 설정한다.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Java\jdk-24'
@@ -49,14 +50,15 @@ $env:GITHUB_TOKEN = (gh auth token)
 docker compose -f ..\infra\keycloak\docker-compose.yml up -d postgres redis keycloak auth-server org-service
 ```
 
-현재 checkout의 `0.6.0`이 아직 발행되지 않았거나 proto 변경을 먼저 검증할 때는 Maven Local을 사용한다.
+proto 변경을 발행 전에 먼저 검증할 때만 Maven Local을 사용한다(공유 아티팩트 버전은 하나다 — 브랜치 전용
+proto를 만들지 않고, 변경은 platform-backend main에 올려 태그로 발행한다).
 
 ```powershell
 cd ..\platform-backend
-.\gradlew.bat :common-proto:publishToMavenLocal '-PprotoVersion=0.6.0-SNAPSHOT'
+.\gradlew.bat :common-proto:publishToMavenLocal :common-starter:publishToMavenLocal '-PprotoVersion=0.17.0-SNAPSHOT'
 
 cd ..\alm-backend
-.\gradlew.bat test '-PuseMavenLocal' '-PcommonProtoVersion=0.6.0-SNAPSHOT'
+.\gradlew.bat test '-PuseMavenLocal' '-PcommonProtoVersion=0.17.0-SNAPSHOT'
 ```
 
 dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다. REST와 gRPC가 각각
@@ -72,11 +74,15 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/projects` | 인증 | 프로젝트 생성, 생성자에게 ADMIN grant 부여 시도 |
 | `GET` | `/api/alm/projects/{projectId}` | VIEW | 프로젝트 조회 |
 | `PUT` | `/api/alm/projects/{projectId}` | ADMIN | 프로젝트 수정 |
-| `DELETE` | `/api/alm/projects/{projectId}` | ADMIN | 프로젝트·하위 이슈 삭제 |
+| `DELETE` | `/api/alm/projects/{projectId}` | ADMIN | 휴지통으로 이동 — 그 안의 이슈는 조회·검색·AQL·쓰기 어디서도 닿지 않는다(404/결과 제외) |
+| `GET` | `/api/alm/projects/statuses` | 접근 가능한 프로젝트 | 프로젝트별 해석된 상태 목록을 한 번에(`{ "<projectId>": [status…] }`, order 순) |
 | `GET` | `/api/alm/projects/{projectId}/issues` | VIEW | 이슈 목록 |
 | `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성 |
 | `GET` | `/api/alm/issues/{issueId}` | VIEW | 이슈 조회 |
-| `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(V6), `details.fixVersionId`(같은 프로젝트·보관 아님; V7) |
+| `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(V6), `details.fixVersionId`(같은 프로젝트·보관 아님; V7). **전체 교체**다 — `status`·`sprintId`는 보드 이동·랭크와 version을 공유하지 않으므로 오래된 스냅샷으로 PUT하면 그 사이의 이동을 되돌릴 수 있다 |
+| `POST` | `/api/alm/issues/bulk` | 행마다 EDIT | 일괄 편집 — 보낸 필드만, 행별 트랜잭션·행별 결과(`CONFLICT`면 `currentVersion`). 최대 200건. 아래 "일괄 편집" 절 |
+| `GET` | `/api/alm/issues/search` | 접근 가능한 프로젝트 | 조건 검색·페이징(최대 200). 응답 `truncated`=뒤에 더 있음. 검색어의 `%`·`_`는 글자 그대로 |
+| `GET` | `/api/alm/issues/aggregate` | 접근 가능한 프로젝트 | 조건 집계(GROUP BY) — 진행률·통계는 목록 대신 이것으로 센다 |
 | `POST` | `/api/alm/issues/query` | 접근 가능한 프로젝트 | **AQL** 검색 — 아래 "AQL" 절 |
 | `POST` | `/api/alm/issues/query/validate` | 인증 | AQL 문법 검사(에디터 실시간) |
 | `GET` | `/api/alm/issues/query/fields` | 접근 가능한 프로젝트 | AQL 자동완성 사전(필드·별칭·연산자·값 후보) |
@@ -90,7 +96,7 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/projects/{projectId}/versions` | VIEW | 버전 목록 |
 | `POST` | `/api/alm/projects/{projectId}/versions` | EDIT | 버전 생성(이름은 프로젝트 안에서 유일, 중복 409) |
 | `PUT` | `/api/alm/versions/{versionId}` | EDIT | 버전 수정(`expectedVersion`, 날짜 역전 400) |
-| `POST` | `/api/alm/versions/{versionId}/release` | EDIT | 릴리스 — `doneStatuses`·`moveUnresolvedToVersionId`로 미완료 이관(선택) |
+| `POST` | `/api/alm/versions/{versionId}/release` | EDIT | 릴리스 — `moveUnresolvedToVersionId`로 미완료 이관(선택). 완료 판정은 서버 워크플로(complete 분류)이고 `doneStatuses`는 무시한다(deprecated) |
 | `POST` | `/api/alm/versions/{versionId}/archive` | EDIT | 보관 |
 | `DELETE` | `/api/alm/versions/{versionId}` | EDIT | 삭제(달린 이슈의 `fixVersionId`를 비운다) |
 | `POST` | `/api/alm/issues/{issueId}/attachments` | EDIT | 첨부 올리기(multipart `file`, 최대 `ALM_MAX_ATTACHMENT_MB`=20) |
@@ -98,7 +104,11 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/attachments/{id}` | VIEW | 내려받기(attachment 처분, nosniff) |
 | `GET` | `/api/alm/attachments/{id}/inline` | VIEW | 인라인(래스터 이미지만) |
 | `DELETE` | `/api/alm/attachments/{id}` | EDIT | 삭제(오브젝트는 커밋 뒤 정리) |
-| `GET` | `/api/alm/projects/{projectId}/changes` | VIEW | 변경 이력(리포트 원천) — `field`·`sprintId`·`since` 필터 |
+| `GET` | `/api/alm/projects/{projectId}/changes` | VIEW | 변경 이력(리포트 원천) — `field`·`sprintId`·`since`(포함)·`until`(배타)·`limit`(기본·최대 20000). 넘으면 최신 쪽만 남기고 `X-Result-Truncated: true` |
+| `GET` | `/api/alm/issues/{issueId}/links` | VIEW | 이슈 링크 — 반대편 프로젝트를 볼 수 없으면 `restricted: true`이고 `other`는 키·타입·상태만(제목 "볼 수 없는 이슈") |
+| `POST` | `/api/alm/issues/{issueId}/links` | 원본 EDIT + 대상 VIEW | 이슈 연결 |
+| `DELETE` | `/api/alm/comments/{id}`, `/api/alm/worklogs/{id}` | 작성자(지금 VIEW) 또는 프로젝트 ADMIN | 댓글·워크로그 삭제. 댓글 수정은 작성자(지금 VIEW)만 |
+| `POST` | `/api/alm/projects/{projectId}/issues/import` | EDIT | CSV 가져오기 — 최대 5000건, 본문 20MB(`platform.alm.import.max-body-size`, 넘으면 413) |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |
 | `GET` | `/api/alm/sprints/{sprintId}` | VIEW | 스프린트 단건 |
@@ -168,15 +178,9 @@ org-service `member_profile`(V7)로 옮겼다. `user_preference`의 `avatar_key`
 스프린트는 프로젝트 안에서 `Sprint N`으로 자동 명명하며(이름을 보내면 그 값을 쓴다),
 `PLANNED → ACTIVE → DONE`으로만 움직인다. 진행 중인 스프린트는 프로젝트당 하나뿐이고, 이 규칙은
 애플리케이션 검사와 함께 부분 unique 인덱스가 최종 판정한다. 완료 시 미완료 이슈는 백로그 맨 뒤로
-돌아가며, **무엇을 완료로 볼지는 요청이 알려준다**:
-
-```json
-POST /api/alm/sprints/{sprintId}/complete
-{ "doneStatuses": ["done", "released"] }
-```
-
-상태 카테고리를 정하는 워크플로 스킴이 아직 프론트 소유이기 때문이다. 목록이 비어 있으면 그
-스프린트의 모든 이슈가 백로그로 돌아간다. 스킴이 서버로 넘어오면 이 필드는 선택값이 된다.
+돌아가며(또는 `moveUnfinishedToSprintId`), **무엇을 완료로 볼지는 서버가 정한다** — 프로젝트 워크플로에서
+상태 분류 `kind=complete`인 상태다(V11부터 스킴이 서버에 있다). 요청의 `doneStatuses`는 옛 클라이언트 호환으로
+받기만 하고 쓰지 않는다(2026-10-18 감사 A-18 — 낡은 목록이 완료 이슈를 다음 스프린트로 옮겨 번다운을 오염시켰다).
 
 순서는 두 종류의 그룹으로 관리한다 — 보드 컬럼(프로젝트+스프린트+상태)과 랭크 그룹
 (프로젝트+스프린트, 상태 무관)이다. `move`는 컬럼 안에서, `rank`는 랭크 그룹 안에서 `beforeId`
@@ -185,10 +189,42 @@ POST /api/alm/sprints/{sprintId}/complete
 항상 재조회한다. 두 연산 모두 프로젝트 행을 잠그고 한 트랜잭션에서 끝내며, 순서는 사용자가 편집
 폼에서 보고 있던 값이 아니므로 `version`을 올리지 않는다(드래그가 남의 저장을 409로 만들지 않는다).
 
-계층은 에픽→일반 이슈(작업·스토리·버그)→하위 작업의 2단계만 허용한다. 부모는 같은
-프로젝트에 있어야 하며, 부모 삭제 시 자식의 `parentId`는 해제된다. `order`는 응답에만
+계층 깊이는 제한하지 않는다(확정 결정 — 하위의 하위 허용). 부모는 같은 프로젝트에 있어야 하고, 자기 자신이나
+자기 자손을 부모로 지정하면 400("상위 항목이 순환합니다" — 재귀 CTE 한 번으로 검사)이다. 부모 삭제 시 자식의
+`parentId`는 해제된다. `order`는 응답에만
 포함되는 서버 관리 값이며 생성 시 프로젝트 내 다음 번호로 발급한다. 재정렬은 별도 API로
 제공하기 전까지 일반 수정 요청으로 바꿀 수 없다.
+
+## 일괄 편집 — `POST /api/alm/issues/bulk`
+
+이슈 N개(최대 200)에 같은 필드 변경을 한 요청으로 적용한다. 행마다 자기 트랜잭션에서 단건 `PUT`과 같은 경로
+(권한·보관 가드·전이 규칙·스프린트/버전 검증·변경 이력·알림·이벤트)를 타므로 일부만 성공할 수 있고, 응답은 항상
+200 + 행별 결과다(요청 자체가 잘못되면 400: 빈 `items`, 중복 이슈, 바꿀 내용 없음).
+
+```json
+{
+  "items": [{ "issueId": 101, "expectedVersion": 3 }, { "issueId": 102 }],
+  "changes": { "status": "inprogress", "assigneeId": null, "addLabels": ["urgent"], "removeLabels": ["old"] }
+}
+```
+
+- `changes`는 **키를 보낸 필드만** 바꾼다: `status`·`priority`(null이면 그대로), `assigneeId`·`sprintId`·`fixVersionId`
+  (null이면 해제 — 미지정·백로그·없음), `addLabels`·`removeLabels`(뺀 뒤 더한다).
+- `expectedVersion`이 서버 버전과 다르면 그 행만 `CONFLICT`. 생략하면 행을 처리하는 순간 읽은 버전으로 저장한다
+  (읽은 뒤 잠그기 전에 누가 고쳤으면 역시 `CONFLICT` — 덮어쓰지 않는다).
+
+```json
+{
+  "updated": 1, "failed": 1,
+  "results": [
+    { "issueId": 101, "key": "ALM-7", "ok": true, "code": "OK", "error": null, "currentVersion": null, "issue": { "...": "IssueResponse" } },
+    { "issueId": 102, "key": "ALM-8", "ok": false, "code": "CONFLICT", "error": "다른 사용자가 먼저 이슈를 수정했습니다. 현재 5, 요청 4", "currentVersion": 5, "issue": null }
+  ]
+}
+```
+
+`code`: `OK`·`CONFLICT`·`FORBIDDEN`·`NOT_FOUND`·`INVALID`(규칙 위반·없는 상태 등)·`UNAVAILABLE`(권한 서비스 불능)·`ERROR`.
+볼 수 없는 프로젝트의 이슈·없는 이슈는 `key`가 null이다.
 
 ## AQL — 조건을 조합하는 이슈 질의어
 
@@ -587,7 +623,11 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 docker build -t alm-backend .
 ```
 
-`FlywaySchemaValidationTest`는 Testcontainers PostgreSQL을 사용하므로 Docker가 필요하다.
+`schema/` 아래 테스트(`FlywaySchemaValidationTest`, 마이그레이션 백필 검증, `PostgresWritePathSmokeTest`)는
+Testcontainers PostgreSQL 16 + Flyway(`ddl-auto=validate`)로 돌므로 Docker가 필요하다. 나머지 컨트롤러 테스트는
+빠른 H2 + Hibernate DDL이라 PG 전용 동작(시각 null 파라미터 타입, 부분 유니크 인덱스, 재귀 CTE, 네이티브 방언)은
+`PostgresWritePathSmokeTest`가 맡는다 — PG에서만 다른 경로를 고치면 거기에 한 줄을 더한다. CI의 `./gradlew build`가
+둘 다 돌린다.
 `Dockerfile`은 런타임 전용이며 먼저 `bootJar`를 실행해야 한다. `docker` 프로필에서는 Eureka
 등록을 끄고 stdout에 ECS JSON 로그를 출력한다.
 
@@ -596,7 +636,10 @@ docker build -t alm-backend .
 ```text
 src/main/java/com/platform/almbackend/
 ├─ project/      프로젝트 REST·서비스·DTO
-├─ issue/        이슈 REST·서비스·DTO
+├─ issue/        이슈 REST·서비스·DTO — IssueService(CRUD)·IssueRankService(이동·랭크)·IssueImportService(CSV)·
+│                IssueBulkService(일괄 편집)·IssueSearchService(검색·집계)·IssueLocks/IssueRankGroups(잠금·순서열)
+├─ collab/       댓글·워크로그(CollaborationService)·이슈/웹 링크(IssueLinkService)·활동 기록(IssueActivityService)
+├─ settings/     레지스트리(RegistryController)·스킴(SchemeController)·프로젝트 설정(ProjectSettingsController)
 ├─ search/aql/   AQL 렉서·파서·해석·Specification
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 AlmContentService
