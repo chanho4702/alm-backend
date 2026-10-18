@@ -7,8 +7,8 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
- * 릴리스 처리. 스프린트 완료와 같은 규칙 — {@code doneStatuses}는 선택값이고 비우면 서버가 워크플로의
- * complete 의미로 판단한다. 미완료 이슈는 지정한 버전으로 옮기고, 지정이 없으면 그 버전에 그대로 둔다(지라와 동일).
+ * 릴리스 처리. 스프린트 완료와 같은 규칙 — 완료 판정은 서버가 워크플로의 complete 의미로 한다.
+ * {@code doneStatuses}는 받기만 하고 쓰지 않는다(deprecated, 2026-10-18 감사 A-18). 미완료 이슈는 지정한 버전으로 옮기고, 지정이 없으면 그 버전에 그대로 둔다(지라와 동일).
  */
 public record VersionReleaseRequest(
         @Size(max = 100, message = "완료 상태는 최대 100개까지 지정할 수 있습니다")

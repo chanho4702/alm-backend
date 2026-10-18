@@ -107,18 +107,18 @@ public class IssueSearchService {
         int safePage = Math.max(0, page);
         String sort = criteria.sort() == null || criteria.sort().isBlank() ? "updated" : criteria.sort();
         if (!SORTS.contains(sort)) throw new IllegalArgumentException("지원하지 않는 정렬 기준입니다: " + sort);
-        List<Long> scopeIds = scopedProjectIds(userId, criteria.projectIds());
-        if (scopeIds != null && scopeIds.isEmpty()) return new IssuePageResponse(List.of(), safePage, safeSize, 0);
+        Scope scope = scope(userId, criteria.projectIds());
+        if (scope.nothing()) return IssuePageResponse.of(List.of(), safePage, safeSize, 0);
         Registry registry = new Registry();
         Specification<Issue> spec = (root, query, cb) -> {
             // count 질의에는 정렬이 필요 없다 — 정렬용 레지스트리 조회도 아낀다
             if (!Long.class.equals(query.getResultType())) {
                 query.orderBy(order(root, cb, sort, "asc".equalsIgnoreCase(criteria.dir()), registry));
             }
-            return where(root, query, cb, criteria, scopeIds, registry);
+            return where(root, query, cb, criteria, scope, registry);
         };
         Page<Issue> result = issues.findAll(spec, PageRequest.of(safePage, safeSize));
-        return new IssuePageResponse(responses.of(result.getContent()), safePage, safeSize, result.getTotalElements());
+        return IssuePageResponse.of(responses.of(result.getContent()), safePage, safeSize, result.getTotalElements());
     }
 
     /**
@@ -130,8 +130,8 @@ public class IssueSearchService {
         if (groupBy == null || !GROUPS.contains(groupBy)) {
             throw new IllegalArgumentException("집계 기준은 status·priority·assignee·type·statusCategory 중 하나여야 합니다");
         }
-        List<Long> scopeIds = scopedProjectIds(userId, criteria.projectIds());
-        if (scopeIds != null && scopeIds.isEmpty()) return new IssueAggregateResponse(0, List.of());
+        Scope scope = scope(userId, criteria.projectIds());
+        if (scope.nothing()) return new IssueAggregateResponse(0, List.of());
         Registry registry = new Registry();
 
         CriteriaBuilder cb = em.getCriteriaBuilder();
@@ -144,7 +144,7 @@ public class IssueSearchService {
             default -> root.get("status");
         };
         query.multiselect(key, cb.count(root))
-                .where(where(root, query, cb, criteria, scopeIds, registry))
+                .where(where(root, query, cb, criteria, scope, registry))
                 .groupBy(key);
 
         Map<String, Long> counts = new HashMap<>();
@@ -189,15 +189,17 @@ public class IssueSearchService {
 
     /** 검색·집계 공통 WHERE. 라벨·컴포넌트는 EXISTS라 행이 불지 않는다 — DISTINCT 없이 count·정렬이 맞는다 */
     private Predicate where(Root<Issue> root, CriteriaQuery<?> query, CriteriaBuilder cb,
-                            Criteria c, List<Long> scopeIds, Registry registry) {
+                            Criteria c, Scope scope, Registry registry) {
         List<Predicate> where = new ArrayList<>();
-        if (scopeIds != null) where.add(root.get("projectId").in(scopeIds));
+        if (scope.include() != null) where.add(root.get("projectId").in(scope.include()));
+        if (!scope.exclude().isEmpty()) where.add(cb.not(root.get("projectId").in(scope.exclude())));
         if (c.text() != null && !c.text().isBlank()) {
-            String like = "%" + c.text().trim().toLowerCase(Locale.ROOT) + "%";
+            // 사용자가 친 %·_는 글자 그대로다 — AQL의 ~와 같은 규칙(이스케이프 없으면 "%"가 전체를 잡는다)
+            String like = "%" + LikePatterns.escape(c.text().trim().toLowerCase(Locale.ROOT)) + "%";
             where.add(cb.or(
-                    cb.like(cb.lower(root.get("title")), like),
-                    cb.like(cb.lower(root.get("description")), like),
-                    cb.like(cb.lower(root.get("key")), like)));
+                    cb.like(cb.lower(root.get("title")), like, LikePatterns.ESCAPE),
+                    cb.like(cb.lower(root.get("description")), like, LikePatterns.ESCAPE),
+                    cb.like(cb.lower(root.get("key")), like, LikePatterns.ESCAPE)));
         }
         if (notEmpty(c.statuses()) || notEmpty(c.statusCategories())) {
             // 상태 id ∪ 분류에 속한 상태 id — 분류에 상태가 없거나 모르는 분류면 그 몫은 아무것도 아니다
@@ -281,16 +283,27 @@ public class IssueSearchService {
         return asc ? cb.asc(expression) : cb.desc(expression);
     }
 
-    /** 요청한 프로젝트 ∩ 접근 범위. null = 전역 접근이라 제한 없음 */
-    private List<Long> scopedProjectIds(long userId, List<Long> requested) {
-        AccessScope scope = permissions.accessibleProjects(userId);
+    /**
+     * 검색 범위 — include: 볼 프로젝트(null = 전역 접근이라 제한 없음), exclude: 휴지통 프로젝트.
+     * 휴지통 이동은 grant를 회수하지 않으므로 접근 범위만으로는 휴지통이 빠지지 않는다(감사 A-02).
+     */
+    record Scope(List<Long> include, List<Long> exclude) {
+        boolean nothing() { return include != null && include.isEmpty(); }
+    }
+
+    /** 요청한 프로젝트 ∩ 접근 범위 − 휴지통 */
+    private Scope scope(long userId, List<Long> requested) {
         if (notEmpty(requested)) {
+            // 명시한 프로젝트는 하나씩 권한·상태를 본다 — 휴지통이면 require가 404
             for (long projectId : requested) projectService.require(userId, projectId, AlmAction.VIEW);
-            return requested;
+            return new Scope(requested, List.of());
         }
-        if (scope.all()) return null;
-        Set<Long> ids = scope.projectIds();
-        return List.copyOf(ids);
+        AccessScope access = permissions.accessibleProjects(userId);
+        List<Long> trashed = projectService.trashedProjectIds();
+        if (access.all()) return new Scope(null, trashed);
+        Set<Long> ids = new LinkedHashSet<>(access.projectIds());
+        trashed.forEach(ids::remove);
+        return new Scope(List.copyOf(ids), List.of());
     }
 
     /** 레지스트리 sort_order(높음→낮음)로 정렬 — 모르는 값은 맨 뒤 */

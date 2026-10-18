@@ -119,6 +119,19 @@ public class TestConfig {
         private long grantedProjectId;
         /** 볼 수 있는 프로젝트 — 기본은 전역이라 기존 테스트는 그대로다 */
         private AccessScope scope = AccessScope.global();
+        /** 특정 (사용자, 프로젝트) 쌍만 거부 — 프로젝트 사이 권한 경계(링크·멘션) 검증용. 키는 "user:project" */
+        private final Set<String> deniedPairs = new HashSet<>();
+        /** 특정 (사용자, 프로젝트)의 ADMIN만 허용 — allowed와 무관하게 ADMIN 판정은 이 목록이 이긴다(비어 있으면 allowed를 따른다) */
+        private final Set<String> adminPairs = new HashSet<>();
+        private boolean adminRestricted;
+
+        /** 이 사용자는 이 프로젝트에 아무 권한이 없다 */
+        public void deny(long userId, long projectId) { deniedPairs.add(userId + ":" + projectId); }
+        /** ADMIN 판정을 명시 목록으로 제한한다 — 이 쌍만 ADMIN */
+        public void grantAdminOnly(long userId, long projectId) {
+            adminRestricted = true;
+            adminPairs.add(userId + ":" + projectId);
+        }
 
         public void setAllowed(boolean allowed) { this.allowed = allowed; }
         /** 거부 사유 — 계정 상태(PENDING/SUSPENDED/DEACTIVATED)면 문구가 달라진다 */
@@ -140,10 +153,18 @@ public class TestConfig {
             globalAdmins.clear();
             unavailable = false;
             scope = AccessScope.global();
+            deniedPairs.clear();
+            adminPairs.clear();
+            adminRestricted = false;
         }
 
         @Override public PermissionDecision check(long userId, long projectId, AlmAction action) {
             failIfUnavailable();
+            if (deniedPairs.contains(userId + ":" + projectId)) return PermissionDecision.deny(deniedReason);
+            if (action == AlmAction.ADMIN && adminRestricted) {
+                return adminPairs.contains(userId + ":" + projectId)
+                        ? PermissionDecision.allow() : PermissionDecision.deny(deniedReason);
+            }
             return allowed ? PermissionDecision.allow() : PermissionDecision.deny(deniedReason);
         }
 

@@ -99,10 +99,8 @@ public class VersionService {
                         ? "릴리스된 버전으로는 이관할 수 없습니다"
                         : "보관된 버전으로는 이관할 수 없습니다");
             }
-            // 요청이 완료 목록을 안 주면 서버가 워크플로 의미(complete)로 판단한다
-            Set<String> done = request == null || request.doneStatuses() == null
-                    ? settings.completeStatusIds(projectId)
-                    : Set.copyOf(request.doneStatuses());
+            // 완료 판정은 서버의 워크플로 의미(complete)로만 — 요청의 doneStatuses는 무시한다(감사 A-18)
+            Set<String> done = settings.completeStatusIds(projectId);
             for (Issue issue : issues.findByFixVersionId(versionId)) {
                 if (!done.contains(issue.getStatus())) {
                     issue.assignFixVersion(targetId);

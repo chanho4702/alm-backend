@@ -56,12 +56,14 @@ public class AqlSearchService {
         List<Long> scopeIds = scope(userId);
         // 볼 수 있는 프로젝트가 하나도 없으면 질의를 돌릴 필요가 없다
         if (scopeIds != null && scopeIds.isEmpty()) {
-            return new QueryResponse(List.of(), safePage, safeSize, 0, text);
+            return QueryResponse.of(List.of(), safePage, safeSize, 0, text);
         }
         AqlResolver.Session session = resolver.open(userId, scopeIds);
-        Specification<AqlIssueRow> spec = new AqlSpecification(session, scopeIds).build(parsed);
+        // 휴지통 프로젝트는 grant가 남아 있어도 결과에서 뺀다(감사 A-02)
+        List<Long> trashed = scopeIds == null ? projects.findTrashedIds() : List.of();
+        Specification<AqlIssueRow> spec = new AqlSpecification(session, scopeIds, trashed).build(parsed);
         Page<AqlIssueRow> result = rows.findAll(spec, PageRequest.of(safePage, safeSize));
-        return new QueryResponse(
+        return QueryResponse.of(
                 responses.map(result.getContent(), AqlIssueRow::getId,
                         (row, c) -> row.toResponse(c.labels(), c.componentIds())),
                 safePage, safeSize, result.getTotalElements(), text);
@@ -142,9 +144,12 @@ public class AqlSearchService {
         return List.of("created", "updated", "due", "resolved");
     }
 
-    /** 볼 수 있는 프로젝트 id. {@code null}이면 제한 없음 */
+    /** 볼 수 있는 프로젝트 id(휴지통 제외). {@code null}이면 제한 없음 — 그때는 휴지통을 따로 뺀다 */
     private List<Long> scope(long userId) {
         AccessScope accessScope = permissions.accessibleProjects(userId);
-        return accessScope.all() ? null : List.copyOf(accessScope.projectIds());
+        if (accessScope.all()) return null;
+        java.util.Set<Long> ids = new java.util.LinkedHashSet<>(accessScope.projectIds());
+        if (!ids.isEmpty()) projects.findTrashedIds().forEach(ids::remove);
+        return List.copyOf(ids);
     }
 }

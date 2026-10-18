@@ -29,6 +29,10 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     @org.springframework.data.jpa.repository.Query(value = "select * from project where deleted_at is not null order by deleted_at desc", nativeQuery = true)
     List<Project> findTrashed();
 
+    /** 휴지통 프로젝트 id만 — 검색·AQL 범위 제외용. 휴지통은 보통 비어 있거나 몇 건이라 IN 목록으로 충분하다 */
+    @org.springframework.data.jpa.repository.Query(value = "select id from project where deleted_at is not null", nativeQuery = true)
+    List<Long> findTrashedIds();
+
     @org.springframework.data.jpa.repository.Query(value = "select * from project where id = :id and deleted_at is not null", nativeQuery = true)
     Optional<Project> findTrashedById(@org.springframework.data.repository.query.Param("id") long id);
 

@@ -32,7 +32,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -78,8 +80,15 @@ public class CollaborationService {
     }
     /** created=false면 이미 있던 링크를 그대로 돌려준 것(멱등) — 컨트롤러가 200/201을 가른다 */
     public record WebLinkOutcome(WebLinkResponse link, boolean created) {}
-    /** blocks: outward=차단함, inward=차단됨 / relates: 항상 outward */
-    public record LinkView(LinkResponse link, IssueResponse other, String direction) {}
+    /**
+     * blocks: outward=차단함, inward=차단됨 / relates: 항상 outward.
+     * {@code restricted}면 반대편 프로젝트를 볼 수 없어 {@code other}가 키·id·타입·상태만 남은 축약본이다
+     * (제목은 "볼 수 없는 이슈", 설명·담당자·라벨 등은 비운다 — 감사 A-01, 2026-10-18 필드 추가).
+     */
+    public record LinkView(LinkResponse link, IssueResponse other, String direction, boolean restricted) {}
+
+    /** 링크 반대편을 볼 권한이 없을 때 제목 대신 보이는 문구 */
+    public static final String RESTRICTED_TITLE = "볼 수 없는 이슈";
     public record ActivityResponse(long id, long issueId, long actorId, String type, String detail, Instant occurredAt) {
         static ActivityResponse from(IssueActivity a) {
             return new ActivityResponse(a.getId(), a.getIssueId(), a.getActorId(), a.getType(), a.getDetail(), a.getOccurredAt());
@@ -108,11 +117,13 @@ public class CollaborationService {
         IssueComment comment = comments.findById(commentId)
                 .orElseThrow(() -> new NotFoundException("코멘트를 찾을 수 없습니다"));
         if (!comment.getAuthorId().equals(userId)) throw new ForbiddenException("본인 댓글만 수정할 수 있습니다");
+        // 작성자라도 지금 프로젝트를 볼 수 있어야 고친다 — 권한을 잃은 뒤의 수정을 막는다(감사 A-17)
+        Issue issue = require(userId, comment.getIssueId(), AlmAction.VIEW);
         Instant now = now();
         comment.edit(requireText(body, "코멘트 내용을 입력하세요"), now);
         if (mentionedUserIds != null && !mentionedUserIds.isEmpty()) {
             // 수정으로 새로 멘션된 사람만 — 클라이언트가 이전 본문과 비교해 보낸다
-            notifications.notifyMentioned(userId, require(userId, comment.getIssueId(), AlmAction.VIEW), mentionedUserIds, now);
+            notifications.notifyMentioned(userId, issue, mentionedUserIds, now);
         }
         return CommentResponse.from(comment);
     }
@@ -120,7 +131,7 @@ public class CollaborationService {
     public void deleteComment(long userId, long commentId) {
         IssueComment comment = comments.findById(commentId)
                 .orElseThrow(() -> new NotFoundException("코멘트를 찾을 수 없습니다"));
-        if (!comment.getAuthorId().equals(userId)) throw new ForbiddenException("본인 댓글만 삭제할 수 있습니다");
+        requireAuthorOrAdmin(userId, comment.getAuthorId(), comment.getIssueId(), "본인 댓글만 삭제할 수 있습니다");
         comments.delete(comment);
     }
 
@@ -145,7 +156,7 @@ public class CollaborationService {
     public void deleteWorklog(long userId, long worklogId) {
         Worklog worklog = worklogs.findById(worklogId)
                 .orElseThrow(() -> new NotFoundException("워크로그를 찾을 수 없습니다"));
-        if (!worklog.getAuthorId().equals(userId)) throw new ForbiddenException("본인 워크로그만 삭제할 수 있습니다");
+        requireAuthorOrAdmin(userId, worklog.getAuthorId(), worklog.getIssueId(), "본인 워크로그만 삭제할 수 있습니다");
         worklogs.delete(worklog);
     }
 
@@ -171,23 +182,38 @@ public class CollaborationService {
 
     @Transactional(readOnly = true)
     public List<LinkView> links(long userId, long issueId) {
-        require(userId, issueId, AlmAction.VIEW);
+        Issue self = require(userId, issueId, AlmAction.VIEW);
+        List<IssueLink> rows = links.findBySourceIdOrTargetId(issueId, issueId);
+        if (rows.isEmpty()) return List.of();
+        // 반대편 이슈는 한 번에, 링크 타입은 맵 하나로 — 링크마다 두 번씩 읽던 N+1(감사 A-20)
+        List<Long> otherIds = rows.stream()
+                .map(l -> l.getSourceId() == issueId ? l.getTargetId() : l.getSourceId()).distinct().toList();
+        Map<Long, Issue> others = new HashMap<>();
+        for (Issue other : issues.findAllById(otherIds)) others.put(other.getId(), other);
+        Map<String, Boolean> symmetricByType = new HashMap<>();
+        for (LinkTypeDef def : linkTypes.findAll()) symmetricByType.put(def.getId(), def.isSymmetric());
+        // 반대편 프로젝트를 볼 수 있는가 — 프로젝트마다 한 번만 판정한다(감사 A-01)
+        Map<Long, Boolean> visible = new HashMap<>();
+        visible.put(self.getProjectId(), true);
         List<LinkView> views = new ArrayList<>();
-        for (IssueLink link : links.findBySourceIdOrTargetId(issueId, issueId)) {
+        for (IssueLink link : rows) {
             long otherId = link.getSourceId() == issueId ? link.getTargetId() : link.getSourceId();
-            Issue other = issues.findById(otherId).orElse(null);
+            Issue other = others.get(otherId);
             if (other == null) continue;
-            boolean symmetric = linkTypes.findById(link.getType()).map(LinkTypeDef::isSymmetric).orElse(false);
+            boolean symmetric = symmetricByType.getOrDefault(link.getType(), false);
             String direction = symmetric || link.getSourceId() == issueId ? "outward" : "inward";
-            views.add(new LinkView(LinkResponse.from(link), IssueResponse.from(other), direction));
+            boolean canSee = visible.computeIfAbsent(other.getProjectId(), pid -> projectService.canView(userId, pid));
+            views.add(new LinkView(LinkResponse.from(link),
+                    canSee ? IssueResponse.from(other) : restricted(other), direction, !canSee));
         }
         return views;
     }
 
     public LinkResponse addLink(long userId, long sourceId, long targetId, String type) {
         Issue source = require(userId, sourceId, AlmAction.EDIT);
-        Issue target = issues.findById(targetId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));
         if (sourceId == targetId) throw new IllegalArgumentException("자기 자신과는 연결할 수 없습니다");
+        // 대상도 볼 수 있어야 한다(지라: 대상 Browse 권한) — 링크로 남의 프로젝트 이슈를 끌어와 읽는 길을 막는다(감사 A-01)
+        Issue target = require(userId, targetId, AlmAction.VIEW);
         LinkTypeDef def = linkTypes.findById(type == null ? "" : type)
                 .orElseThrow(() -> new IllegalArgumentException("없는 링크 타입입니다: " + type));
         boolean symmetric = def.isSymmetric();
@@ -352,6 +378,29 @@ public class CollaborationService {
     }
 
     // ── 내부 ──
+
+    /**
+     * 볼 수 없는 링크 반대편 — 키·id·프로젝트·타입·상태만 남긴다. 화면이 아이콘·키로 행을 그릴 수 있게 하되
+     * 제목·설명·사람·라벨처럼 내용을 드러내는 값은 비운다.
+     */
+    private static IssueResponse restricted(Issue other) {
+        return new IssueResponse(other.getId(), other.getKey(), other.getProjectId(), RESTRICTED_TITLE, "",
+                other.getType(), other.getStatus(), other.getPriority(), null, 0L, null, null, null, null,
+                other.getResolution(), null, List.of(), List.of(), 0L, other.getVersion(),
+                other.getCreatedAt(), other.getUpdatedAt(), other.getArchivedAt(), other.getResolvedAt());
+    }
+
+    /**
+     * 댓글·워크로그 삭제 — 작성자(지금도 프로젝트를 볼 수 있을 때) 또는 프로젝트 관리자(지라 "모든 댓글 삭제").
+     * 휴지통 프로젝트는 누구도 손대지 못한다(require가 404).
+     */
+    private void requireAuthorOrAdmin(long userId, Long authorId, long issueId, String ownerOnlyMessage) {
+        Issue issue = issues.findById(issueId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));
+        if (!Objects.equals(authorId, userId) && !projectService.hasGrant(userId, issue.getProjectId(), AlmAction.ADMIN)) {
+            throw new ForbiddenException(ownerOnlyMessage);
+        }
+        projectService.require(userId, issue.getProjectId(), AlmAction.VIEW);
+    }
 
     private Issue require(long userId, long issueId, AlmAction action) {
         Issue issue = issues.findById(issueId).orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다"));

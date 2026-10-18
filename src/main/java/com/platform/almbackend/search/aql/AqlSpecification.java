@@ -46,14 +46,17 @@ final class AqlSpecification {
 
     private final AqlResolver.Session session;
     private final List<Long> scopeIds;
+    /** 범위가 전역(null)일 때 따로 빼는 프로젝트 — 휴지통 */
+    private final List<Long> excludedProjectIds;
 
     private Root<AqlIssueRow> root;
     private CriteriaQuery<?> query;
     private CriteriaBuilder cb;
 
-    AqlSpecification(AqlResolver.Session session, List<Long> scopeIds) {
+    AqlSpecification(AqlResolver.Session session, List<Long> scopeIds, List<Long> excludedProjectIds) {
         this.session = session;
         this.scopeIds = scopeIds;
+        this.excludedProjectIds = excludedProjectIds == null ? List.of() : excludedProjectIds;
     }
 
     Specification<AqlIssueRow> build(AqlAst.Query parsed) {
@@ -64,6 +67,7 @@ final class AqlSpecification {
 
             List<Predicate> where = new ArrayList<>();
             if (scopeIds != null) where.add(root.get("projectId").in(scopeIds));
+            if (!excludedProjectIds.isEmpty()) where.add(cb.not(root.get("projectId").in(excludedProjectIds)));
             if (!mentionsArchived(parsed.where())) where.add(cb.isNull(root.get("archivedAt")));
             if (parsed.where() != null) where.add(node(parsed.where()));
 

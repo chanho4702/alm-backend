@@ -55,6 +55,16 @@ public class ProjectService {
         return values.stream().map(this::toResponse).toList();
     }
 
+    /** 접근 가능한(휴지통 아닌) 프로젝트 id — 이름순. 여러 프로젝트를 한 번에 답하는 API가 쓴다 */
+    @Transactional(readOnly = true)
+    public List<Long> accessibleProjectIds(long userId) {
+        AccessScope scope = permissions.accessibleProjects(userId);
+        List<Project> values = scope.all()
+                ? projects.findAllByOrderByNameAsc()
+                : projects.findAllByIdInOrderByNameAsc(scope.projectIds());
+        return values.stream().map(Project::getId).toList();
+    }
+
     @Transactional(readOnly = true)
     public ProjectResponse get(long userId, long projectId) {
         Project project = requireProject(projectId);
@@ -119,11 +129,41 @@ public class ProjectService {
                 .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
     }
 
+    /**
+     * 프로젝트 권한 + 상태 가드. 권한이 먼저다(없는 사람에게 존재 여부를 404/403으로 가르쳐 주지 않는다).
+     * 휴지통 프로젝트는 {@code @SQLRestriction}으로 {@code findById}가 비므로 404 — 휴지통은 "삭제"이고, 그 안의
+     * 이슈는 조회·댓글·워크로그·첨부·링크 어느 경로로도 닿지 않아야 한다(감사 A-02: 예전에는 보관 가드가
+     * 빈 Optional을 "보관 아님"으로 읽어 그대로 통과시켰다). 보관된 프로젝트는 읽기만 된다.
+     */
     public void require(long userId, long projectId, AlmAction action) {
         requireGrant(userId, projectId, action);
-        if (action != AlmAction.VIEW && projects.findById(projectId).map(Project::isArchived).orElse(false)) {
+        Project project = projects.findById(projectId)
+                .orElseThrow(() -> new NotFoundException("프로젝트를 찾을 수 없습니다: " + projectId));
+        if (action != AlmAction.VIEW && project.isArchived()) {
             throw new ForbiddenException("보관된 프로젝트는 읽기만 할 수 있습니다");
         }
+    }
+
+    /**
+     * 예외 없이 판정만 — 프로젝트 사이 경계(링크 반대편 가리기, 알림 수신자 거르기)에 쓴다. 휴지통 프로젝트는
+     * 아무도 볼 수 없다. org 불능은 삼키지 않고 503으로 올린다 — 호출자가 그 의미를 정한다.
+     * (noRollbackFor: 알림처럼 불능을 잡아 넘기는 호출자의 바깥 트랜잭션을 rollback-only로 만들지 않는다)
+     */
+    @Transactional(readOnly = true, noRollbackFor = com.platform.common.error.ServiceUnavailableException.class)
+    public boolean canView(long userId, long projectId) {
+        if (!permissions.check(userId, projectId, AlmAction.VIEW).allowed()) return false;
+        return projects.findById(projectId).isPresent();
+    }
+
+    /** 권한만 본다(상태 가드 없음) — 관리자 정리(남의 댓글 삭제)처럼 "이 사람이 이 역할인가"만 필요한 곳 */
+    public boolean hasGrant(long userId, long projectId, AlmAction action) {
+        return permissions.check(userId, projectId, action).allowed();
+    }
+
+    /** 휴지통 프로젝트 id — 검색·AQL 범위에서 뺀다(grant는 휴지통 이동으로 회수되지 않는다) */
+    @Transactional(readOnly = true)
+    public List<Long> trashedProjectIds() {
+        return projects.findTrashedIds();
     }
 
     /** 보관 가드를 우회하는 관리자 확인 — 보관 해제·휴지통 이동에 쓴다 */

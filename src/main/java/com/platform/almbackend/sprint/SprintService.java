@@ -118,8 +118,7 @@ public class SprintService {
 
     /**
      * 완료하면 미완료 이슈는 요청이 지정한 스프린트로, 지정이 없으면 백로그 맨 뒤로 옮긴다.
-     * 완료 판정 기준은 요청이 알려준 상태 목록이며, 목록이 비어 있으면 스프린트의 모든 이슈가
-     * 옮겨진다. 이관 대상 검증이 실패하면 완료 자체가 일어나지 않는다(한 트랜잭션).
+     * 완료 판정 기준은 프로젝트 워크플로의 complete 분류 상태다(요청의 doneStatuses는 받되 쓰지 않는다). 이관 대상 검증이 실패하면 완료 자체가 일어나지 않는다(한 트랜잭션).
      */
     public SprintResponse complete(long userId, long sprintId, SprintCompleteRequest request) {
         Sprint sprint = requireSprint(sprintId);
@@ -129,10 +128,9 @@ public class SprintService {
         if (locked.getState() != SprintState.ACTIVE) {
             throw new ConflictException("진행 중인 스프린트만 완료할 수 있습니다: " + locked.getState());
         }
-        // 완료 판정: 요청이 주면 그대로, 없으면 서버가 워크플로 의미(complete)로 판단한다 — V11부터 서버가 상태 카테고리를 안다
-        Set<String> doneStatuses = request == null || request.doneStatuses() == null
-                ? settings.completeStatusIds(sprint.getProjectId())
-                : Set.copyOf(request.doneStatuses());
+        // 완료 판정은 서버가 워크플로 의미(상태 분류 kind=complete)로만 한다. 요청의 doneStatuses는 무시한다 —
+        // 낡은 클라이언트가 보낸 목록이 완료 이슈를 다음 스프린트로 옮겨 번다운·벨로시티를 오염시켰다(감사 A-18)
+        Set<String> doneStatuses = settings.completeStatusIds(sprint.getProjectId());
         Long targetSprintId = request == null ? null : request.moveUnfinishedToSprintId();
         if (targetSprintId != null) {
             if (targetSprintId == sprintId) {

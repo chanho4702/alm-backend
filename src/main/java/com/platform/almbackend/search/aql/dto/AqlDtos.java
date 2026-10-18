@@ -33,7 +33,12 @@ public final class AqlDtos {
             @Schema(description = "조건을 적용한 전체 건수") long total,
             @Schema(description = "서버가 실제로 실행한 AQL — 저장 필터·URL 공유의 기준",
                     example = "project = ALM AND status != 완료 ORDER BY due ASC")
-            String echoedAql) {}
+            String echoedAql,
+            @Schema(description = "이 페이지 뒤에 결과가 더 있다(2026-10-18 추가)") boolean truncated) {
+        public static QueryResponse of(List<IssueResponse> items, int page, int size, long total, String echoedAql) {
+            return new QueryResponse(items, page, size, total, echoedAql, (long) page * size + items.size() < total);
+        }
+    }
 
     @Schema(description = "AQL 문법 검증 요청")
     public record ValidateRequest(
