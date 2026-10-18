@@ -205,6 +205,26 @@ class PostgresWritePathSmokeTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void 예정_스프린트_삭제_이슈_복제_공유_필터가_PG에서_돈다() throws Exception {
+        long project = createProject();
+        long sprint = id(mvc.perform(post("/api/alm/projects/{id}/sprints", project).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"지울 것\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        long issue = createIssue(project, "스프린트 안", "{\"sprintId\":" + sprint + ",\"labels\":[\"x\"]}", null);
+        mvc.perform(delete("/api/alm/sprints/{id}", sprint).with(asUser(1, "Alice"))).andExpect(status().isNoContent());
+        mvc.perform(get("/api/alm/issues/{id}", issue).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.sprintId").doesNotExist());
+        mvc.perform(post("/api/alm/issues/{id}/clone", issue).with(asUser(1, "Alice")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.labels[0]").value("x"));
+        long filter = id(mvc.perform(post("/api/alm/me/filters").with(asUser(1, "Alice")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"PG 공유\",\"kind\":\"smart\",\"query\":\"x\",\"shared\":true}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        mvc.perform(get("/api/alm/filters/{id}", filter).with(asUser(2, "Bob"))).andExpect(status().isOk());
+        mvc.perform(get("/api/alm/filters/shared").with(asUser(2, "Bob"))).andExpect(status().isOk());
+    }
+
     // ── 헬퍼 ──
 
     private long createProject() throws Exception {

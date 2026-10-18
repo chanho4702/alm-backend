@@ -189,6 +189,8 @@ class OpenApiDocsTest {
                 // 내 저장 필터 — 소유자 본인 것만 다룬다(질의 실행은 검색이 따로 범위를 좁힌다)
                 "get /api/alm/me/filters", "post /api/alm/me/filters",
                 "put /api/alm/me/filters/{id}", "delete /api/alm/me/filters/{id}",
+                // 공유 저장 필터(F-12) — 질의 문자열만 준다(실행은 검색이 보는 사람 범위로 좁힌다)
+                "get /api/alm/filters/shared", "get /api/alm/filters/{id}",
                 // 내 알림 — 프로젝트 권한을 묻지 않는다
                 "get /api/alm/notifications", "post /api/alm/notifications/{id}/read",
                 "post /api/alm/notifications/read-all",
@@ -216,6 +218,7 @@ class OpenApiDocsTest {
             Map.entry("SprintService:104 진행 중 스프린트 존재", "post /api/alm/sprints/{sprintId}/start"),
             Map.entry("SprintService:110 진행 중 스프린트 존재(DB 유니크)", "post /api/alm/sprints/{sprintId}/start"),
             Map.entry("SprintService:126 진행 중 아님", "post /api/alm/sprints/{sprintId}/complete"),
+            Map.entry("SprintService 예정 스프린트 아님(삭제, F-10)", "delete /api/alm/sprints/{sprintId}"),
             Map.entry("VersionService:53 버전 이름 중복(생성)", "post /api/alm/projects/{projectId}/versions"),
             Map.entry("VersionService:65 낙관적 락", "put /api/alm/versions/{versionId}"),
             Map.entry("VersionService:70 버전 이름 중복(수정)", "put /api/alm/versions/{versionId}"),
@@ -238,6 +241,7 @@ class OpenApiDocsTest {
             Map.entry("post /api/alm/sprints/{sprintId}/start",
                     "계획 상태의 스프린트만 시작할 수 있습니다 / 이미 진행 중인 스프린트가 있습니다"),
             Map.entry("post /api/alm/sprints/{sprintId}/complete", "진행 중인 스프린트만 완료할 수 있습니다"),
+            Map.entry("delete /api/alm/sprints/{sprintId}", "예정 스프린트만 삭제할 수 있습니다"),
             Map.entry("post /api/alm/projects/{projectId}/versions", "이미 있는 버전 이름입니다"),
             Map.entry("post /api/alm/versions/{versionId}/release",
                     "이미 릴리스된 버전입니다 / 보관된 버전은 릴리스할 수 없습니다"),

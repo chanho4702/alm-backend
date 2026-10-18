@@ -80,6 +80,10 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성 |
 | `GET` | `/api/alm/issues/{issueId}` | VIEW | 이슈 조회 |
 | `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(V6), `details.fixVersionId`(같은 프로젝트·보관 아님; V7). **전체 교체**다 — `status`·`sprintId`는 보드 이동·랭크와 version을 공유하지 않으므로 오래된 스냅샷으로 PUT하면 그 사이의 이동을 되돌릴 수 있다 |
+| `POST` | `/api/alm/issues/{issueId}/clone` | 원본 VIEW + EDIT | 복제(201) — 제목 "복제: " 접두·타입·본문·우선순위·라벨·컴포넌트·상위만 복사, 처음 상태·스프린트 없음, 원본과 `clones` 링크 |
+| `DELETE` | `/api/alm/sprints/{sprintId}` | ADMIN | 예정 스프린트 삭제(204) — 이슈는 원래 순서로 백로그 맨 위. 진행 중·완료는 409 |
+| `GET` | `/api/alm/filters/shared` | 인증 | 남이 공유한 저장 필터(조직 전체, V28). 결과는 실행하는 사람 권한으로 걸러진다 |
+| `GET` | `/api/alm/filters/{id}` | 인증 | 저장 필터 단건 — 내 것이거나 공유된 것(비공개 남의 것 404). 남의 공유 필터 수정·삭제는 403 |
 | `POST` | `/api/alm/issues/bulk` | 행마다 EDIT | 일괄 편집 — 보낸 필드만, 행별 트랜잭션·행별 결과(`CONFLICT`면 `currentVersion`). 최대 200건. 아래 "일괄 편집" 절 |
 | `GET` | `/api/alm/issues/search` | 접근 가능한 프로젝트 | 조건 검색·페이징(최대 200). 응답 `truncated`=뒤에 더 있음. 검색어의 `%`·`_`는 글자 그대로 |
 | `GET` | `/api/alm/issues/aggregate` | 접근 가능한 프로젝트 | 조건 집계(GROUP BY) — 진행률·통계는 목록 대신 이것으로 센다 |
