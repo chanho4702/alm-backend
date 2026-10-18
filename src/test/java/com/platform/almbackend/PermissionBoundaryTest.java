@@ -99,6 +99,20 @@ class PermissionBoundaryTest {
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].restricted").value(true))
                 .andExpect(jsonPath("$[0].other.key").value("PB-1"))
+                .andExpect(jsonPath("$[0].other.id").value(p2Issue))
+                .andExpect(jsonPath("$[0].other.type").value("task"))
+                .andExpect(jsonPath("$[0].other.status").value("todo"))
+                // 허용 필드(id·key·type·status) 밖은 전부 중립값 — 우선순위·해결·버전·시각·프로젝트도 흘리지 않는다
+                .andExpect(jsonPath("$[0].other.projectId").value(0))
+                .andExpect(jsonPath("$[0].other.priority").doesNotExist())
+                .andExpect(jsonPath("$[0].other.resolution").doesNotExist())
+                .andExpect(jsonPath("$[0].other.version").value(0))
+                .andExpect(jsonPath("$[0].other.order").value(0))
+                .andExpect(jsonPath("$[0].other.reporterId").value(0))
+                .andExpect(jsonPath("$[0].other.createdAt").doesNotExist())
+                .andExpect(jsonPath("$[0].other.updatedAt").doesNotExist())
+                .andExpect(jsonPath("$[0].other.archivedAt").doesNotExist())
+                .andExpect(jsonPath("$[0].other.resolvedAt").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
         assertThat(body).doesNotContain("기밀");
 

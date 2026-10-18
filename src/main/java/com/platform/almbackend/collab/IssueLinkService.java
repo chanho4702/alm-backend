@@ -193,14 +193,16 @@ public class IssueLinkService {
     }
 
     /**
-     * 볼 수 없는 링크 반대편 — 키·id·프로젝트·타입·상태만 남긴다. 화면이 아이콘·키로 행을 그릴 수 있게 하되
+     * 볼 수 없는 링크 반대편 — 키·id·타입·상태만 남긴다. 화면이 아이콘·키로 행을 그릴 수 있게 하되
      * 제목·설명·사람·라벨처럼 내용을 드러내는 값은 비운다.
      */
     private static IssueResponse restricted(Issue other) {
-        return new IssueResponse(other.getId(), other.getKey(), other.getProjectId(), RESTRICTED_TITLE, "",
-                other.getType(), other.getStatus(), other.getPriority(), null, 0L, null, null, null, null,
-                other.getResolution(), null, List.of(), List.of(), 0L, other.getVersion(),
-                other.getCreatedAt(), other.getUpdatedAt(), other.getArchivedAt(), other.getResolvedAt());
+        // 허용: id·key·type·status. 나머지(프로젝트·우선순위·해결·버전·정렬·시각)는 전부 중립값 — 볼 수 없는 이슈의
+        // 진행 상황·활동 시점을 흘리지 않는다(Codex 교차검증 P2)
+        return new IssueResponse(other.getId(), other.getKey(), 0L, RESTRICTED_TITLE, "",
+                other.getType(), other.getStatus(), null, null, 0L, null, null, null, null,
+                null, null, List.of(), List.of(), 0L, 0,
+                null, null, null, null);
     }
 
     private Issue require(long userId, long issueId, AlmAction action) {
