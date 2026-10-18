@@ -167,6 +167,37 @@ public class SprintService {
         return SprintResponse.from(locked);
     }
 
+    /**
+     * 예정(시작 전) 스프린트 삭제(F-10) — 잘못 만든 스프린트를 치운다. 들어 있던 이슈는 원래 순서 그대로 백로그
+     * 맨 위로 돌아가고, 백로그 전체를 1..n으로 다시 매긴다. 진행 중·완료 스프린트는 리포트(번다운·벨로시티)의
+     * 원천이라 지우지 않는다(409). 프로젝트 관리자만 한다(지라: 백로그 스프린트 ⋯ → 삭제).
+     */
+    public void delete(long userId, long sprintId) {
+        Sprint sprint = requireSprint(sprintId);
+        projectService.require(userId, sprint.getProjectId(), AlmAction.ADMIN);
+        lockProject(sprint.getProjectId());
+        Sprint locked = lockSprint(sprintId);
+        if (locked.getState() != SprintState.PLANNED) {
+            throw new ConflictException("예정 스프린트만 삭제할 수 있습니다");
+        }
+        long projectId = locked.getProjectId();
+        List<Issue> moved = issues.findRankGroup(projectId, sprintId);
+        List<Issue> backlog = new ArrayList<>(moved);
+        backlog.addAll(issues.findRankGroup(projectId, null));
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        long order = 0;
+        for (Issue issue : backlog) {
+            if (moved.contains(issue)) {
+                issue.moveToBacklog(++order);
+                changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId, now);
+            } else {
+                issue.resequence(++order);
+            }
+        }
+        issues.flush();
+        sprints.delete(locked);
+    }
+
     @Transactional(readOnly = true)
     public Sprint requireSprint(long sprintId) {
         return sprints.findById(sprintId)

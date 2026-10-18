@@ -72,4 +72,13 @@ public class SprintController {
             @AuthenticationPrincipal Jwt jwt) {
         return sprints.complete(userId(jwt), sprintId, request);
     }
+
+    @ConflictResponse("예정 스프린트만 삭제할 수 있습니다")
+    @Operation(summary = "예정 스프린트를 삭제한다 — 들어 있던 이슈는 백로그 맨 위로",
+            description = "시작 전(PLANNED) 스프린트만 지운다. 진행 중·완료 스프린트는 409. 프로젝트 관리자 권한이 필요하다.")
+    @DeleteMapping("/api/alm/sprints/{sprintId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@Parameter(description = "스프린트 ID") @PathVariable long sprintId, @AuthenticationPrincipal Jwt jwt) {
+        sprints.delete(userId(jwt), sprintId);
+    }
 }
