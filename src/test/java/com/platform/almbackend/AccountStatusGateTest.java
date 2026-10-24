@@ -95,13 +95,16 @@ class AccountStatusGateTest {
     }
 
     /**
-     * org의 member 행은 그 사람의 첫 org 호출 때 생긴다 — ALM이 먼저 불릴 수 있다.
-     * 없는 것을 막으면 정상 사용자가 미러링 순서에 따라 무작위로 차단된다.
+     * org에 행이 없는 사람은 승인 대기로 본다(2026-10-24 B1) — "알 수 없는 사람 = 통과" 분기를 두지 않는다.
+     * 구성원 상태의 정본은 org이고, org도 같은 규칙("행 없음 = PENDING")을 쓴다.
      */
     @Test
-    void 아직_org에_없는_사용자는_통과한다() throws Exception {
+    void org에_없는_사용자는_승인_대기로_막힌다() throws Exception {
+        directory.markAbsent(15);
+
         mvc.perform(get(OPEN_READ).with(asUser(15, "First")))
-                .andExpect(status().isOk());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("승인 대기 중인 계정입니다"));
     }
 
     @Test

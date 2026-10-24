@@ -18,7 +18,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -32,9 +31,10 @@ import java.util.Optional;
  * <ul>
  *   <li>{@code PENDING}·{@code SUSPENDED}·{@code DEACTIVATED} → 403, 문구는 전역 관리자 거부와 같다
  *       ({@link PermissionDecision#accountMessage(String)}가 한 곳에서 정한다).</li>
- *   <li><b>디렉터리에 없으면 통과.</b> org의 member 행은 그 사람의 첫 org 호출 때 생기는데 ALM이 먼저
- *       불릴 수 있다 — 없는 것을 막으면 정상 사용자가 미러링 순서에 따라 무작위로 차단된다. 이건
- *       org-service가 gRPC {@code CheckPermission}에서 쓰는 규칙과 같다.</li>
+ *   <li><b>디렉터리에 없으면 승인 대기로 본다</b>(403 "승인 대기 중인 계정입니다", 2026-10-24 B1). 그전에는
+ *       "org의 member 행은 첫 org 호출 때 생기므로 없으면 통과"였는데, 그 분기가 "알 수 없는 사람 = 통과"라
+ *       미러되지 않은 계정이 격리를 건너뛰었다. org도 같은 날 "행 없음 = PENDING"으로 바꾼다 — 구성원 상태의
+ *       정본은 org다.</li>
  *   <li>org 불능(UNAVAILABLE·DEADLINE) → 503. 장애를 "정지된 계정"으로 말하지 않는다.</li>
  * </ul>
  *
@@ -78,12 +78,12 @@ public class AccountStatusInterceptor implements HandlerInterceptor {
         cache.invalidateAll();
     }
 
-    /** org가 아는 상태. 그런 사람이 없으면 empty(통과), 못 물어봤으면 던진다(503) */
+    /** org가 아는 상태. 그런 사람이 없으면 PENDING(막힘), 못 물어봤으면 던진다(503) */
     private Optional<String> status(long userId) {
-        MemberDirectory.Lookup lookup = directory.lookup(List.of(userId));
+        MemberDirectory.Lookup lookup = directory.accountStatus(userId);
         if (lookup.outcome() == MemberDirectory.Outcome.UNAVAILABLE) {
             // 콜드 스타트·순간 끊김 한 번은 흡수한다 — 모든 ALM 요청 앞에 서는 게이트라 첫 요청이 503으로 죽으면 화면 전체가 막힌다
-            lookup = directory.lookup(List.of(userId));
+            lookup = directory.accountStatus(userId);
         }
         switch (lookup.outcome()) {
             case UNAVAILABLE -> throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
@@ -93,7 +93,8 @@ public class AccountStatusInterceptor implements HandlerInterceptor {
             }
             case OK -> {
                 DirectoryMember member = lookup.members().get(userId);
-                return Optional.ofNullable(member == null ? null : member.status());
+                // 행 없음 = 승인 대기(fail-closed) — "모르는 사람은 통과"를 두지 않는다
+                return Optional.of(member == null ? PermissionDecision.PENDING : member.status());
             }
         }
         return Optional.empty();

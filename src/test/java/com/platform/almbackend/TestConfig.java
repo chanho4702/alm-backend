@@ -200,12 +200,18 @@ public class TestConfig {
 
         private final Map<Long, DirectoryMember> members = new HashMap<>();
         private final List<Call> calls = Collections.synchronizedList(new ArrayList<>());
+        private final java.util.Set<Long> absent = java.util.concurrent.ConcurrentHashMap.newKeySet();
         private boolean unavailable;
         private boolean failed;
 
         public void put(long id, String displayName, String email, String status) {
             members.put(id, new DirectoryMember(id, displayName, email, status, "HUMAN"));
         }
+        /**
+         * 게이트 창구에서 이 사람을 "org에 없음"으로 답한다. 실제 게이트는 org에 없는 사람을 승인 대기로 막지만
+         * (2026-10-24 fail-closed), 이 대역의 게이트 창구는 상태를 다루지 않는 테스트를 위해 모르는 사람을 ACTIVE로 답한다.
+         */
+        public void markAbsent(long id) { absent.add(id); }
         /** org 불능 — 알림은 스냅샷으로 폴백하고, 계정 상태 게이트는 503을 낸다 */
         public void setUnavailable(boolean unavailable) { this.unavailable = unavailable; }
         /** 가용성 장애가 아닌 조회 실패 — 게이트는 통과시켜야 한다(org 버그를 계정 정지로 말하지 않는다) */
@@ -213,6 +219,7 @@ public class TestConfig {
         public List<Call> calls() { return List.copyOf(calls); }
         public void reset() {
             members.clear();
+            absent.clear();
             calls.clear();
             unavailable = false;
             failed = false;
@@ -245,6 +252,12 @@ public class TestConfig {
                 if (member != null) found.put(id, member);
             }
             return Lookup.ok(found);
+        }
+
+        @Override public Lookup accountStatus(long userId) {
+            Lookup lookup = lookup(List.of(userId)); // 호출 기록·장애 흉내는 lookup과 같다
+            if (!lookup.ok() || lookup.members().containsKey(userId) || absent.contains(userId)) return lookup;
+            return Lookup.ok(Map.of(userId, new DirectoryMember(userId, "", "", "ACTIVE", "HUMAN")));
         }
     }
 
