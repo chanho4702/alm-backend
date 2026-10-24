@@ -24,7 +24,8 @@ import java.util.List;
  *
  * <ul>
  *   <li><b>한 회차는 한 노드만</b>: 다음 시각으로 옮기는 조건부 UPDATE({@link AutomationRuleRepository#claim})에 성공한 노드만 돈다.</li>
- *   <li><b>회차당 이슈 상한</b>({@code schedule-batch}, 기본 100) — 나머지는 다음 회차에 다시 맞으면 처리된다.</li>
+ *   <li><b>회차당 이슈 상한</b>({@code schedule-batch}, 기본 100) — 규칙별 커서(V38, id 오름차순)로 다음 회차가 이어서 돌고,
+ *       끝에 닿으면 처음부터 다시 돈다.</li>
  *   <li>밀린 회차는 따라잡지 않는다 — 서버가 멈췄다 켜지면 한 번만 돌고 다음 시각은 "지금 이후"로 잡는다.</li>
  *   <li>실행 이력 보존 30일 — 같은 주기에서 지난 것을 지운다.</li>
  * </ul>
@@ -85,17 +86,32 @@ public class AutomationScheduler {
         return ran;
     }
 
+    /**
+     * 한 회차. 대상은 id 오름차순으로 규칙의 커서(지난 회차의 마지막 이슈) 다음부터 {@code batch}개 — 상한을 넘는 대상도 회차마다
+     * 이어서 돌고(예전에는 매번 page 0이라 조건을 바꾸지 않는 COMMENT·NOTIFY가 첫 배치만 영원히 처리했다, Codex P1), 덜 차면
+     * 바퀴 끝이라 커서를 비워 다음 회차는 처음부터다. 한 회차는 질의 한 번이라 같은 이슈를 두 번 돌지 않는다.
+     */
     private void runOnce(AutomationRule rule, Instant started) {
         List<Long> targets;
+        Long cursor = rule.getScheduleCursor();
         try {
-            targets = aql.matchingIssueIds(rule.getActorId(), rule.getProjectId(), rule.getConditionAql(), null, batch);
+            targets = aql.matchingIssueIdsAfter(rule.getActorId(), rule.getProjectId(), rule.getConditionAql(), cursor, batch);
+            if (targets.isEmpty() && cursor != null) {
+                // 지난 회차가 마침 바퀴 끝에서 멈췄다 — 이번 회차는 처음부터(아직 이번 회차에 처리한 이슈가 없으니 중복 아님)
+                cursor = null;
+                targets = aql.matchingIssueIdsAfter(rule.getActorId(), rule.getProjectId(), rule.getConditionAql(), null, batch);
+            }
         } catch (ServiceUnavailableException e) {
-            engine.recordScheduled(rule.getId(), 1, 0, 1, "권한 서비스에 연결할 수 없어 대상을 찾지 못했습니다", 0, false, started);
+            engine.recordScheduled(rule.getId(), 1, 0, 1, "권한 서비스에 연결할 수 없어 대상을 찾지 못했습니다", 0, false, started,
+                    false, null);
             return;
         } catch (RuntimeException e) {
-            engine.recordScheduled(rule.getId(), 1, 0, 1, "대상 검색(AQL) 실패: " + e.getMessage(), 0, true, started);
+            engine.recordScheduled(rule.getId(), 1, 0, 1, "대상 검색(AQL) 실패: " + e.getMessage(), 0, true, started,
+                    false, null);
             return;
         }
+        // 상한만큼 찼으면 다음 회차는 그 뒤부터, 덜 찼으면 바퀴 끝
+        Long nextCursor = targets.size() >= batch ? targets.get(targets.size() - 1) : null;
         int processed = 0;
         int failed = 0;
         int actions = 0;
@@ -112,7 +128,9 @@ public class AutomationScheduler {
                 if (firstError == null) firstError = (outcome.issueKey() == null ? "" : outcome.issueKey() + " ") + outcome.error();
             }
         }
-        engine.recordScheduled(rule.getId(), 1, processed, failed, firstError, actions, countFailure, started);
+        // 실패한 이슈가 있어도 커서는 옮긴다 — 한 이슈의 실패가 바퀴 전체를 멈추지 않게(실패는 이력·연속 실패로 남는다)
+        engine.recordScheduled(rule.getId(), 1, processed, failed, firstError, actions, countFailure, started,
+                true, nextCursor);
     }
 
     public int purgeOld(Instant now) {

@@ -58,6 +58,8 @@ public class IssueRankService {
         SettingsBody body = settings.body(issue.getProjectId());
         SettingsBody.ResolvedWorkflow flow = body.workflowFor(issue.getType());
         String status = IssueService.requireStatus(body, issue.getType(), request.status());
+        // 트리아지 대기 이슈는 보드에서 열을 옮겨 대기열을 우회하지 못한다(Codex P2) — 워크플로 밖 상태 이관 분기도 포함
+        if (!status.equals(issue.getStatus())) WorkflowEngine.assertNotInTriage(issue);
         // 같은 열 안 순서 변경은 전환이 아니다. 지금 상태가 워크플로 밖(옛 데이터)이면 규칙 없이 옮긴다(이관)
         WorkflowEngine.Evaluated used = status.equals(issue.getStatus()) || !flow.has(issue.getStatus())
                 ? null : workflow.choose(userId, issue, flow, status);

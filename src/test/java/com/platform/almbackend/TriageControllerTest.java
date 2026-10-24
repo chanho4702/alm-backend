@@ -44,6 +44,7 @@ class TriageControllerTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired TestConfig.FakePermissionClient permissions;
     @Autowired TestConfig.SettingsSeeder seeder;
+    @Autowired com.platform.almbackend.automation.AutomationScheduler scheduler;
     MockMvc mvc;
     long projectId;
 
@@ -209,6 +210,66 @@ class TriageControllerTest {
         assertThat(jdbc.queryForObject("select count(*) from issue where triage_source = 'MANUAL'", Long.class)).isEqualTo(2);
     }
 
+    /**
+     * Codex P2: 트리아지 대기 이슈는 수락·중복·거절로만 대기열을 나간다 — 일반 전환·보드 이동·PUT·일괄 상태 변경·자동화
+     * TRANSITION이 상태·해결을 바꾸면 트리아지 처리를 우회한다. 상태를 건드리지 않는 편집은 그대로 된다.
+     */
+    @Test
+    void 트리아지_대기_이슈는_일반_상태_변경_경로로_옮길_수_없다() throws Exception {
+        enable();
+        long id = submit("대기 중");
+        String blocked = "트리아지 대기열에 있는 이슈는 트리아지에서 먼저 처리해야 합니다";
+
+        mvc.perform(post("/api/alm/issues/{id}/transitions", id).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"transitionId\":\"implicit:done\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(blocked));
+        // 목록도 숨기지 않되 이유와 함께 비활성
+        mvc.perform(get("/api/alm/issues/{id}/transitions", id).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transitions[0].available").value(false))
+                .andExpect(jsonPath("$.transitions[0].unavailableReason").value(blocked));
+        mvc.perform(post("/api/alm/issues/{id}/move", id).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"done\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(blocked));
+        mvc.perform(put("/api/alm/issues/{id}", id).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content(updateBody(id, "done", "대기 중")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(blocked));
+        mvc.perform(post("/api/alm/issues/bulk").with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"issueId\":" + id + "}],\"changes\":{\"status\":\"done\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.updated").value(0))
+                .andExpect(jsonPath("$.results[0].code").value("INVALID"))
+                .andExpect(jsonPath("$.results[0].error").value(blocked));
+
+        // 자동화 TRANSITION도 같은 관문 — 예약 규칙이 대기 이슈를 옮기지 못하고 실패로 남는다
+        long ruleId = TestData.id(mvc.perform(post("/api/alm/projects/{id}/automation/rules", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"name":"대기 정리","trigger":{"type":"SCHEDULED","cron":"0 9 * * *"},"condition":"triage = true",
+                                 "actions":[{"type":"TRANSITION","toStatus":"done"}]}"""))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        jdbc.update("update automation_rule set next_run_at = ? where id = ?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(5)), ruleId);
+        assertThat(scheduler.runDue(Instant.now())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select message from automation_run where rule_id = ? order by id desc limit 1",
+                String.class, ruleId)).contains(blocked);
+
+        JsonNode now = JSON.readTree(mvc.perform(get("/api/alm/issues/{id}", id).with(asUser(1, "Alice")))
+                .andReturn().getResponse().getContentAsString());
+        assertThat(now.get("status").asText()).isEqualTo("todo");
+        assertThat(now.get("triageState").asText()).isEqualTo("PENDING");
+        assertThat(now.has("resolution") && !now.get("resolution").isNull()).isFalse();
+
+        // 상태를 건드리지 않는 편집은 막지 않는다
+        mvc.perform(put("/api/alm/issues/{id}", id).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content(updateBody(id, "todo", "제목 고침")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("제목 고침"));
+    }
+
     @Test
     void 권한_서비스_불능은_대기열로_새지_않고_503이다() throws Exception {
         enable();
@@ -246,6 +307,14 @@ class TriageControllerTest {
         return TestData.id(mvc.perform(post("/api/alm/projects/{id}/boards", projectId).with(asUser(1, "Alice"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"칸반\",\"type\":\"kanban\"}"))
                 .andReturn().getResponse().getContentAsString());
+    }
+
+    private String updateBody(long id, String status, String title) throws Exception {
+        JsonNode current = JSON.readTree(mvc.perform(get("/api/alm/issues/{id}", id).with(asUser(1, "Alice")))
+                .andReturn().getResponse().getContentAsString());
+        return "{\"title\":\"" + title + "\",\"description\":\"\",\"type\":\"" + current.get("type").asText()
+                + "\",\"status\":\"" + status + "\",\"priority\":\"" + current.get("priority").asText()
+                + "\",\"details\":{},\"expectedVersion\":" + current.get("version").asInt() + "}";
     }
 
     private static String issue(String title, String extra) {

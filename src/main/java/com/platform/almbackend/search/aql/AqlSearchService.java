@@ -19,6 +19,7 @@ import com.platform.almbackend.search.aql.dto.AqlDtos.ValidateResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,18 +76,38 @@ public class AqlSearchService {
      * {@code onlyIssueId}를 주면 그 이슈 하나가 맞는지만 본다. 정렬은 질의의 ORDER BY(없으면 최근 수정 순)를 따른다.
      */
     public List<Long> matchingIssueIds(long userId, long projectId, String aql, Long onlyIssueId, int limit) {
-        AqlAst.Query parsed = AqlParser.parse(aql == null ? "" : aql);
-        AqlValidation.check(parsed);
-        List<Long> scopeIds = scope(userId);
-        if (scopeIds != null && !scopeIds.contains(projectId)) return List.of();
-        if (projects.findTrashedIds().contains(projectId)) return List.of();
-        List<Long> only = List.of(projectId);
-        AqlResolver.Session session = resolver.open(userId, only);
-        Specification<AqlIssueRow> spec = new AqlSpecification(session, only, List.of()).build(parsed);
+        Specification<AqlIssueRow> spec = matchingSpec(userId, projectId, aql);
+        if (spec == null) return List.of();
         if (onlyIssueId != null) spec = spec.and((root, query, cb) -> cb.equal(root.get("id"), onlyIssueId));
         return rows.findAll(spec, PageRequest.of(0, Math.max(1, Math.min(limit, MAX_SIZE)))).getContent().stream()
                 .map(AqlIssueRow::getId)
                 .toList();
+    }
+
+    /**
+     * 예약 자동화용 — 조건에 맞는 이슈를 <b>id 오름차순</b>으로 {@code afterId} 다음부터 최대 {@code limit}개. 질의의 ORDER BY는
+     * 무시한다(커서가 이어지려면 정렬 키가 고정돼야 한다). {@code afterId}가 null이면 처음부터.
+     */
+    public List<Long> matchingIssueIdsAfter(long userId, long projectId, String aql, Long afterId, int limit) {
+        Specification<AqlIssueRow> spec = matchingSpec(userId, projectId, aql);
+        if (spec == null) return List.of();
+        if (afterId != null) spec = spec.and((root, query, cb) -> cb.greaterThan(root.get("id"), afterId));
+        return rows.findAll(spec, PageRequest.of(0, Math.max(1, Math.min(limit, MAX_SIZE)), Sort.by("id").ascending()))
+                .getContent().stream()
+                .map(AqlIssueRow::getId)
+                .toList();
+    }
+
+    /** 볼 수 없거나 휴지통 프로젝트면 null */
+    private Specification<AqlIssueRow> matchingSpec(long userId, long projectId, String aql) {
+        AqlAst.Query parsed = AqlParser.parse(aql == null ? "" : aql);
+        AqlValidation.check(parsed);
+        List<Long> scopeIds = scope(userId);
+        if (scopeIds != null && !scopeIds.contains(projectId)) return null;
+        if (projects.findTrashedIds().contains(projectId)) return null;
+        List<Long> only = List.of(projectId);
+        AqlResolver.Session session = resolver.open(userId, only);
+        return new AqlSpecification(session, only, List.of()).build(parsed);
     }
 
     /** 문법·필드·연산자만 본다 — 값이 실재하는지는 실행할 때 확인한다 */

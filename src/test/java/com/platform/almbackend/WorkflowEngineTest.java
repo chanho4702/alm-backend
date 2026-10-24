@@ -298,6 +298,64 @@ class WorkflowEngineTest {
                 .andExpect(jsonPath("$.error").value("없는 전환입니다: nope"));
     }
 
+    /**
+     * Codex P2: id 없는 전환 여럿이 같은 대상으로 가면 모두 합성 id {@code implicit:<대상>}을 받는다. 실행 조회가 출발 상태를
+     * 보기 전에 첫 것을 고르면, 목록에서 "할 수 있음"으로 보인 전환이 실행에서 거부됐다. 목록(evaluate)이 준 id는 같은 규칙
+     * (출발 상태 → 조건)으로 실행돼야 한다.
+     */
+    @Test
+    void id_없는_전환들이_같은_대상이면_실행도_지금_출발_상태의_전환을_쓴다() throws Exception {
+        useCustomBody(body(BASE_STATUSES,
+                "[{\"from\":[\"todo\"],\"to\":\"done\",\"postFunctions\":[{\"type\":\"clearAssignee\"}]},"
+                        + "{\"from\":[\"inprogress\"],\"to\":\"done\",\"postFunctions\":[{\"type\":\"assignToActor\"}]},"
+                        + "{\"from\":[],\"to\":\"todo\"},"
+                        + "{\"id\":\"t-go\",\"from\":[\"todo\"],\"to\":\"inprogress\"}]", ""));
+        long id = createIssue("작업", "task", "inprogress", null).get("id").asLong();
+
+        String listed = mvc.perform(get("/api/alm/issues/{id}/transitions", id).with(asUser(2, "Bob")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transitions.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode toDone = null;
+        for (JsonNode t : JSON.readTree(listed).get("transitions")) {
+            if ("done".equals(t.get("to").asText())) toDone = t;
+        }
+        assertThat(toDone).isNotNull();
+        assertThat(toDone.get("id").asText()).isEqualTo("implicit:done");
+        assertThat(toDone.get("available").asBoolean()).isTrue();
+
+        // 목록이 준 id 그대로 실행 — 진행 중에서 출발하는 전환(후처리: 담당자를 실행자로)이 쓰여야 한다
+        transition(id, 2, "{\"transitionId\":\"implicit:done\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("done"))
+                .andExpect(jsonPath("$.assigneeId").value(2));
+
+        // 출발 상태가 맞는 전환이 하나도 없으면 기존 문구 그대로
+        transition(id, 2, "{\"transitionId\":\"t-go\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("지금 상태(완료)에서는 할 수 없는 전환입니다: 진행 중"));
+    }
+
+    /** 목록이 "할 수 있음"으로 준 전환 id는 모두 실행 조회에서도 같은 전환으로 통과한다(같은 규칙). */
+    @Test
+    void 목록의_가능한_전환_id는_모두_실행된다() throws Exception {
+        String transitions = "[{\"from\":[\"todo\"],\"to\":\"done\"},{\"from\":[\"inprogress\"],\"to\":\"done\"},"
+                + "{\"from\":[\"done\"],\"to\":\"inprogress\"},{\"from\":[],\"to\":\"todo\"}]";
+        useCustomBody(body(BASE_STATUSES, transitions, ""));
+        for (String start : List.of("todo", "inprogress", "done")) {
+            long probe = createIssue("목록", "task", start, null).get("id").asLong();
+            String listed = mvc.perform(get("/api/alm/issues/{id}/transitions", probe).with(asUser(1, "Alice")))
+                    .andReturn().getResponse().getContentAsString();
+            for (JsonNode t : JSON.readTree(listed).get("transitions")) {
+                if (!t.get("available").asBoolean()) continue;
+                long fresh = createIssue("실행", "task", start, null).get("id").asLong();
+                transition(fresh, 1, "{\"transitionId\":\"" + t.get("id").asText() + "\"}")
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.status").value(t.get("to").asText()));
+            }
+        }
+    }
+
     @Test
     void 전환_실행의_expectedVersion이_어긋나면_409() throws Exception {
         long id = createIssue("작업", "task", "todo", null).get("id").asLong();

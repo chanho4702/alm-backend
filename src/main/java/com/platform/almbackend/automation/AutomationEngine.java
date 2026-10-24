@@ -279,11 +279,16 @@ public class AutomationEngine {
     }
 
     /** 예약 실행 한 회차의 요약을 남긴다 */
+    /**
+     * @param moveCursor 대상 검색에 성공한 회차면 true — 예약 커서를 {@code nextCursor}(null = 바퀴 끝)로 옮긴다. 대상 검색이
+     *                   실패한 회차는 false(같은 자리에서 다시).
+     */
     void recordScheduled(long ruleId, int depth, int processed, int failed, String firstError, int actionsRun,
-                         boolean countFailure, Instant started) {
+                         boolean countFailure, Instant started, boolean moveCursor, Long nextCursor) {
         newTransaction.executeWithoutResult(status -> {
             AutomationRule rule = rules.findById(ruleId).orElse(null);
             if (rule == null) return;
+            if (moveCursor) rule.moveScheduleCursor(nextCursor);
             Instant at = now();
             String summary = "이슈 " + processed + "건 처리" + (failed > 0 ? ", " + failed + "건 실패: " + firstError : "");
             if (failed == 0) {

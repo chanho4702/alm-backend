@@ -66,7 +66,7 @@ public class WorkflowEngine {
         if (workflow.transitions().isEmpty()) {
             for (WorkflowStatus status : workflow.statuses()) {
                 if (status.id().equals(issue.getStatus())) continue;
-                out.add(implicit(status, context.editDenied()));
+                out.add(implicit(status, context.blocked()));
             }
             return out;
         }
@@ -74,7 +74,19 @@ public class WorkflowEngine {
             if (!t.appliesFrom(issue.getStatus()) || t.to().equals(issue.getStatus())) continue;
             out.add(evaluateOne(t, workflow, context));
         }
-        return out;
+        // 같은 합성 id가 여럿이면(id 없는 전환이 같은 대상으로) 실행 조회는 그중 할 수 있는 첫 것을 쓴다 — 목록도 한 줄로 합친다
+        List<Evaluated> merged = new ArrayList<>();
+        Map<String, Integer> at = new java.util.HashMap<>();
+        for (Evaluated e : out) {
+            Integer index = at.get(e.id());
+            if (index == null) {
+                at.put(e.id(), merged.size());
+                merged.add(e);
+            } else if (!merged.get(index).available() && e.available()) {
+                merged.set(index, e);
+            }
+        }
+        return merged;
     }
 
     /**
@@ -84,6 +96,7 @@ public class WorkflowEngine {
      * @throws IllegalArgumentException 갈 수 없는 상태이거나 조건 미충족(400)
      */
     public Evaluated choose(long actorId, Issue issue, ResolvedWorkflow workflow, String to) {
+        assertNotInTriage(issue);
         if (workflow.transitions().isEmpty()) {
             WorkflowStatus target = workflow.status(to).orElseThrow(
                     () -> new IllegalArgumentException("이 이슈 타입의 워크플로에 없는 상태입니다: " + to));
@@ -109,6 +122,7 @@ public class WorkflowEngine {
      */
     public Evaluated chooseById(long actorId, Issue issue, ResolvedWorkflow workflow, String transitionId) {
         String id = transitionId == null ? "" : transitionId.trim();
+        assertNotInTriage(issue);
         if (workflow.transitions().isEmpty()) {
             if (!id.startsWith(IMPLICIT_PREFIX)) throw new IllegalArgumentException("없는 전환입니다: " + id);
             String to = id.substring(IMPLICIT_PREFIX.length());
@@ -116,19 +130,35 @@ public class WorkflowEngine {
                     .orElseThrow(() -> new IllegalArgumentException("없는 전환입니다: " + id));
             return implicit(target, null);
         }
-        Transition t = workflow.transitions().stream()
-                .filter(x -> id.equals(x.id())
-                        || ((x.id() == null || x.id().isBlank()) && id.equals(IMPLICIT_PREFIX + x.to())))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("없는 전환입니다: " + id));
-        if (!t.appliesFrom(issue.getStatus())) {
-            throw new IllegalArgumentException("지금 상태(" + statusName(workflow, issue.getStatus())
-                    + ")에서는 할 수 없는 전환입니다: " + transitionName(t, workflow));
+        // id 없는 전환은 합성 id(implicit:<대상>)를 받으므로 같은 대상으로 가는 것끼리 id가 겹친다 — evaluate와 같은 규칙
+        // (지금 출발 상태에서 갈 수 있는 것 → 조건 충족)으로 고른다. 출발 상태를 보기 전에 첫 것을 집으면, 목록에서 "할 수
+        // 있음"으로 보인 전환이 실행에서 거부된다(Codex P2).
+        List<Transition> matching = workflow.transitions().stream()
+                .filter(x -> id.equals(evaluatedId(x)))
+                .toList();
+        if (matching.isEmpty()) throw new IllegalArgumentException("없는 전환입니다: " + id);
+        Context context = new Context(actorId, issue);
+        Evaluated firstRejected = null;
+        for (Transition t : matching) {
+            if (!t.appliesFrom(issue.getStatus())) continue;
+            Evaluated evaluated = evaluateOne(t, workflow, context);
+            if (evaluated.available()) return evaluated;
+            if (firstRejected == null) firstRejected = evaluated;
         }
-        Evaluated evaluated = evaluateOne(t, workflow, new Context(actorId, issue));
-        if (!evaluated.available()) throw new IllegalArgumentException(evaluated.reason());
-        return evaluated;
+        if (firstRejected != null) throw new IllegalArgumentException(firstRejected.reason());
+        throw new IllegalArgumentException("지금 상태(" + statusName(workflow, issue.getStatus())
+                + ")에서는 할 수 없는 전환입니다: " + transitionName(matching.get(0), workflow));
     }
+
+    /**
+     * 트리아지 대기(보류 포함) 이슈는 수락·중복·거절로만 대기열을 나간다 — 상태·해결을 바꾸는 일반 경로(전환 실행·보드 이동·
+     * PUT·일괄 편집·자동화 TRANSITION)는 여기서 400으로 막는다(Codex P2).
+     */
+    public static void assertNotInTriage(Issue issue) {
+        if (issue.inTriage()) throw new IllegalArgumentException(TRIAGE_FIRST);
+    }
+
+    public static final String TRIAGE_FIRST = "트리아지 대기열에 있는 이슈는 트리아지에서 먼저 처리해야 합니다";
 
     /** 전환 검증 — 전환 화면 값까지 반영한 <b>뒤</b>의 이슈로 본다. 문구는 생성 필수 검사와 같다("담당자는 필수입니다") */
     public void assertValidators(Evaluated used, Issue after) {
@@ -188,9 +218,14 @@ public class WorkflowEngine {
                 editDenied == null, editDenied);
     }
 
+    /** 목록(evaluate)과 실행 조회(chooseById)가 함께 쓰는 전환 id 규칙 — 없으면 implicit:<대상> */
+    private static String evaluatedId(Transition t) {
+        return t.id() == null || t.id().isBlank() ? IMPLICIT_PREFIX + t.to() : t.id();
+    }
+
     private Evaluated evaluateOne(Transition t, ResolvedWorkflow workflow, Context context) {
-        String id = t.id() == null || t.id().isBlank() ? IMPLICIT_PREFIX + t.to() : t.id();
-        String reason = context.editDenied();
+        String id = evaluatedId(t);
+        String reason = context.blocked();
         if (reason == null) {
             for (Condition c : t.conditions()) {
                 reason = check(c, context);
@@ -264,6 +299,13 @@ public class WorkflowEngine {
                 }
             }
             return editDenied;
+        }
+
+        /** 모든 전환을 막는 이유 — 편집 불가(권한·보관) 다음에 트리아지 대기 */
+        String blocked() {
+            String denied = editDenied();
+            if (denied != null) return denied;
+            return issue.inTriage() ? TRIAGE_FIRST : null;
         }
 
         boolean hasGrant(AlmAction action) {

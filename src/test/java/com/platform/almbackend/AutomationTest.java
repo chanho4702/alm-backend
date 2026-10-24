@@ -49,6 +49,11 @@ class AutomationTest {
     @Autowired TestConfig.FakePermissionClient permissions;
     @Autowired TestConfig.SettingsSeeder seeder;
     @Autowired AutomationScheduler scheduler;
+    @Autowired com.platform.almbackend.repository.AutomationRuleRepository rules;
+    @Autowired com.platform.almbackend.repository.AutomationRunRepository runRepository;
+    @Autowired com.platform.almbackend.automation.AutomationEngine engine;
+    @Autowired com.platform.almbackend.search.aql.AqlSearchService aql;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
     MockMvc mvc;
     long projectId;
 
@@ -322,6 +327,38 @@ class AutomationTest {
                 .andExpect(jsonPath("$[0].message").value("이슈 1건 처리"));
         assertThat(jdbc.queryForObject("select next_run_at from automation_rule where id = ?", Timestamp.class, ruleId)
                 .toInstant()).isAfter(Instant.now());
+    }
+
+    /**
+     * Codex P1: 예약 규칙이 매 회차 page 0만 가져오면, COMMENT·NOTIFY처럼 조건을 바꾸지 않는 액션은 첫 배치만 영원히 처리한다.
+     * 규칙별 커서(마지막 처리 이슈 id)로 다음 회차에 이어 가고, 끝에 닿으면 처음부터 — 한 바퀴 안에서 같은 이슈를 두 번 돌지 않는다.
+     */
+    @Test
+    void 예약_규칙은_배치_상한을_넘는_대상을_회차마다_이어서_돌고_끝나면_처음부터() throws Exception {
+        AutomationScheduler small = new AutomationScheduler(rules, runRepository, engine, aql, transactionManager, false, 2);
+        long ruleId = rule("""
+                {"name":"전부 독촉","trigger":{"type":"SCHEDULED","cron":"0 9 * * *"},"condition":"type = task",
+                 "actions":[{"type":"COMMENT","body":"확인해 주세요"}]}""");
+        List<Long> ids = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) ids.add(issue("작업 " + i, "task"));
+
+        // 1회차 2건, 2회차 2건, 3회차 1건(끝) — 5건이 모두 정확히 한 번씩
+        for (int tick = 0; tick < 3; tick++) {
+            jdbc.update("update automation_rule set next_run_at = ? where id = ?", Timestamp.from(Instant.now().minusSeconds(5)), ruleId);
+            assertThat(small.runDue(Instant.now())).isEqualTo(1);
+        }
+        for (long id : ids) assertThat(comments(id)).as("issue " + id).isEqualTo(1);
+
+        // 4회차는 처음부터 다시 — 앞의 두 건만 두 번째 코멘트
+        jdbc.update("update automation_rule set next_run_at = ? where id = ?", Timestamp.from(Instant.now().minusSeconds(5)), ruleId);
+        assertThat(small.runDue(Instant.now())).isEqualTo(1);
+        assertThat(comments(ids.get(0))).isEqualTo(2);
+        assertThat(comments(ids.get(1))).isEqualTo(2);
+        assertThat(comments(ids.get(2))).isEqualTo(1);
+    }
+
+    private long comments(long issueId) {
+        return jdbc.queryForObject("select count(*) from issue_comment where issue_id = ?", Long.class, issueId);
     }
 
     @Test

@@ -71,6 +71,13 @@ public class AutomationRule {
     @Column(name = "disabled_reason", length = 200)
     private String disabledReason;
 
+    /**
+     * 예약 커서(V38) — 이번 바퀴에서 마지막으로 처리한 이슈 id(대상은 id 오름차순). null이면 다음 회차는 처음부터.
+     * 회차당 상한을 넘는 대상을 이어서 돌기 위한 값이라 사람의 편집이 아니다(version을 올리지 않는다).
+     */
+    @Column(name = "schedule_cursor")
+    private Long scheduleCursor;
+
     @Column(nullable = false)
     private Integer version;
 
@@ -114,7 +121,14 @@ public class AutomationRule {
         }
         this.enabled = enabled;
         this.updatedAt = now;
+        // 조건·액션이 바뀌었을 수 있다 — 예약 대상은 처음부터 다시 돈다
+        this.scheduleCursor = null;
         if (bumpVersion) this.version += 1;
+    }
+
+    /** 예약 회차가 끝난 뒤 커서를 옮긴다 — null이면 바퀴 끝(다음 회차는 처음부터) */
+    public void moveScheduleCursor(Long lastProcessedIssueId) {
+        this.scheduleCursor = lastProcessedIssueId;
     }
 
     /** 성공한 실행 — 연속 실패를 끊는다 */

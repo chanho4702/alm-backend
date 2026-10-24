@@ -241,6 +241,9 @@ public class IssueService {
         }
         // 해결(A1) — 화면이 들고 있던 값을 그대로 다시 보내므로 "현재 값과 다를 때만" 지정으로 본다
         boolean explicitResolution = details != null && !Objects.equals(details.resolution(), issue.getResolution());
+        // 트리아지 대기 이슈의 상태·해결은 트리아지 처리(수락·중복·거절)로만 — 요청이 바꾸려 하면 400(Codex P2).
+        // 타입 변경에 따른 상태 이관(요청 상태 = 지금 상태)은 사용자가 고른 전환이 아니므로 막지 않는다.
+        if (!requested.equals(issue.getStatus()) || explicitResolution) WorkflowEngine.assertNotInTriage(issue);
         IssueResolution resolution = ResolutionRule.resolve(
                 SchemeService.isComplete(body, issue.getStatus()), SchemeService.isComplete(body, status),
                 issue.getResolution(), explicitResolution, details == null ? null : details.resolution(),
