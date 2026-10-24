@@ -37,6 +37,9 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @Query("select count(i) from Issue i where i.parentId = :parentId and i.status not in :doneStatuses")
     long countOpenChildren(@Param("parentId") long parentId,
                            @Param("doneStatuses") java.util.Collection<String> doneStatuses);
+    /** 트리아지 대기열(V35 부분 인덱스 idx_issue_triage) — 들어온 순서 */
+    @EntityGraph(attributePaths = "labels")
+    List<Issue> findByProjectIdAndTriageStateIsNotNullOrderByCreatedAtAscIdAsc(long projectId);
     List<Issue> findByIdGreaterThanOrderByIdAsc(long afterId, Limit limit);
     List<Issue> findByProjectIdAndIdGreaterThanOrderByIdAsc(long projectId, long afterId, Limit limit);
     long deleteByProjectId(long projectId);

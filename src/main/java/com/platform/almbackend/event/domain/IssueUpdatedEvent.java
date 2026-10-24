@@ -8,7 +8,8 @@ import java.util.Set;
  * <b>함께</b> 발행되고 여기의 {@code changedFields}에도 {@code "status"}가 들어 있다.
  *
  * <p>{@code changedFields} 어휘(필드 구성 id와 같다): title · description · type · status · priority · assignee ·
- * parent · sprint · dueDate · estimate · resolution · fixVersion · labels · components.
+ * parent · sprint · dueDate · estimate · resolution · fixVersion · labels · components · startDate · storyPoints ·
+ * flagged · triage(V30·V35). 전체 목록은 {@link IssueDomainEventPublisher#CHANGED_FIELDS}.
  * 보드 안 순서 변경(sortOrder)만 있는 이동은 필드 변경이 아니라 발행하지 않는다.
  */
 public record IssueUpdatedEvent(

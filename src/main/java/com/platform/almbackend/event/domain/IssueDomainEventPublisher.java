@@ -28,14 +28,26 @@ public class IssueDomainEventPublisher {
     /** 변경 전 값 — 엔티티를 바꾸기 전에 뜬다. {@link IssueUpdatedEvent#changedFields()} 계산용 */
     public record Before(String title, String description, String type, String status, String priority,
                          Long assigneeId, Long parentId, Long sprintId, LocalDate dueDate, BigDecimal estimateHours,
-                         IssueResolution resolution, Long fixVersionId, List<String> labels, List<Long> componentIds) {
+                         IssueResolution resolution, Long fixVersionId, List<String> labels, List<Long> componentIds,
+                         LocalDate startDate, BigDecimal storyPoints, boolean flagged, String triageState) {
         public static Before of(Issue issue) {
             return new Before(issue.getTitle(), issue.getDescription(), issue.getType(), issue.getStatus(),
                     issue.getPriority(), issue.getAssigneeId(), issue.getParentId(), issue.getSprintId(),
                     issue.getDueDate(), issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(),
-                    List.copyOf(issue.getLabels()), List.copyOf(issue.getComponentIds()));
+                    List.copyOf(issue.getLabels()), List.copyOf(issue.getComponentIds()),
+                    issue.getStartDate(), issue.getStoryPoints(), issue.isFlagged(), issue.getTriageState());
         }
     }
+
+    /**
+     * {@link IssueUpdatedEvent#changedFields()}의 전체 어휘 — 자동화 "필드 변경" 트리거가 고를 수 있는 값이다.
+     * 저장된 규칙이 이 이름을 들고 있으므로 이름을 바꾸지 말고 늘리기만 한다.
+     */
+    public static final List<String> CHANGED_FIELDS = List.of(
+            "title", "description", "type", "status", "priority", "assignee", "parent", "sprint", "dueDate",
+            "estimate", "resolution", "fixVersion", "labels", "components",
+            // V30·V35(2026-10-24 웨이브 D)
+            "startDate", "storyPoints", "flagged", "triage");
 
     public void created(long actorId, Issue issue) {
         publisher.publishEvent(new IssueCreatedEvent(issue.getId(), issue.getProjectId(), issue.getKey(),
@@ -79,6 +91,11 @@ public class IssueDomainEventPublisher {
         if (!Objects.equals(b.fixVersionId(), a.getFixVersionId())) out.add("fixVersion");
         if (!Objects.equals(b.labels(), List.copyOf(a.getLabels()))) out.add("labels");
         if (!Objects.equals(b.componentIds(), List.copyOf(a.getComponentIds()))) out.add("components");
+        if (!Objects.equals(b.startDate(), a.getStartDate())) out.add("startDate");
+        if (b.storyPoints() == null ? a.getStoryPoints() != null
+                : a.getStoryPoints() == null || b.storyPoints().compareTo(a.getStoryPoints()) != 0) out.add("storyPoints");
+        if (b.flagged() != a.isFlagged()) out.add("flagged");
+        if (!Objects.equals(b.triageState(), a.getTriageState())) out.add("triage");
         return out;
     }
 

@@ -124,6 +124,18 @@ public class TestConfig {
         /** 특정 (사용자, 프로젝트)의 ADMIN만 허용 — allowed와 무관하게 ADMIN 판정은 이 목록이 이긴다(비어 있으면 allowed를 따른다) */
         private final Set<String> adminPairs = new HashSet<>();
         private boolean adminRestricted;
+        /** 특정 (사용자, 프로젝트, 동작)만 거부 — 열람자(VIEW만)를 흉내 낸다. 키는 "user:project:ACTION" */
+        private final Set<String> deniedActions = new HashSet<>();
+        /** 이 사용자의 판정만 org 불능(503) — 사람의 요청은 통과시키고 자동화 실행 주체만 막을 때 쓴다 */
+        private final Set<Long> unavailableUsers = new HashSet<>();
+
+        public void setUnavailableFor(long userId) { unavailableUsers.add(userId); }
+
+        /** 이 사용자는 이 프로젝트에서 이 동작(과 그보다 강한 동작)을 못 한다 — EDIT를 막으면 ADMIN도 막힌다 */
+        public void denyAction(long userId, long projectId, AlmAction action) {
+            deniedActions.add(userId + ":" + projectId + ":" + action);
+            if (action == AlmAction.EDIT) deniedActions.add(userId + ":" + projectId + ":" + AlmAction.ADMIN);
+        }
 
         /** 이 사용자는 이 프로젝트에 아무 권한이 없다 */
         public void deny(long userId, long projectId) { deniedPairs.add(userId + ":" + projectId); }
@@ -156,11 +168,15 @@ public class TestConfig {
             deniedPairs.clear();
             adminPairs.clear();
             adminRestricted = false;
+            deniedActions.clear();
+            unavailableUsers.clear();
         }
 
         @Override public PermissionDecision check(long userId, long projectId, AlmAction action) {
             failIfUnavailable();
+            if (unavailableUsers.contains(userId)) throw new ServiceUnavailableException("권한 서비스에 연결할 수 없습니다");
             if (deniedPairs.contains(userId + ":" + projectId)) return PermissionDecision.deny(deniedReason);
+            if (deniedActions.contains(userId + ":" + projectId + ":" + action)) return PermissionDecision.deny(deniedReason);
             if (action == AlmAction.ADMIN && adminRestricted) {
                 return adminPairs.contains(userId + ":" + projectId)
                         ? PermissionDecision.allow() : PermissionDecision.deny(deniedReason);

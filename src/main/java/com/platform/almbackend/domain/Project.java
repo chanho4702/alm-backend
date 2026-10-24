@@ -65,6 +65,14 @@ public class Project {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /**
+     * 트리아지(V35) — 켜면 편집 권한이 없는 프로젝트 열람자도 이슈를 올릴 수 있고, 그 이슈는 대기열로 간다.
+     * 프로젝트 관리자가 켜고 끈다(프로젝트 version과 무관한 설정이라 올리지 않는다).
+     */
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(name = "triage_enabled", nullable = false)
+    private boolean triageEnabled;
+
     @Column(name = "last_issue_number", nullable = false)
     private Long lastIssueNumber;
 
@@ -113,6 +121,8 @@ public class Project {
     public void unarchive() { this.archivedAt = null; }
     public void trash(Instant at) { this.deletedAt = at; }
     public void restoreFromTrash() { this.deletedAt = null; }
+
+    public void setTriageEnabled(boolean enabled) { this.triageEnabled = enabled; }
 
     public void assignLead(Long leadId) {
         this.leadId = leadId;

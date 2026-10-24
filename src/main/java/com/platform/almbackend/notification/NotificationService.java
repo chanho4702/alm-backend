@@ -132,6 +132,29 @@ public class NotificationService {
         }
     }
 
+    /**
+     * 자동화 "알림" 액션 — 고른 대상(담당자·보고자·워처·지정 사용자)에게 인앱 알림. 메일은 보내지 않는다.
+     * 지금 프로젝트를 볼 수 없는 사람은 뺀다(키·제목이 실리므로, 멘션과 같은 규칙).
+     */
+    public int notifyAutomation(long actorId, Issue issue, boolean assignee, boolean reporter, boolean watcherSet,
+                                Collection<Long> userIds, String message) {
+        Set<Long> targets = new LinkedHashSet<>();
+        if (assignee && issue.getAssigneeId() != null) targets.add(issue.getAssigneeId());
+        if (reporter) targets.add(issue.getReporterId());
+        if (watcherSet) {
+            for (IssueWatcher watcher : watchers.findByIssueIdOrderByCreatedAtAsc(issue.getId())) targets.add(watcher.getUserId());
+        }
+        if (userIds != null) userIds.stream().filter(Objects::nonNull).forEach(targets::add);
+        Instant now = now();
+        int sent = 0;
+        for (long recipient : targets) {
+            if (!mayReceive(recipient, issue)) continue;
+            notifications.save(Notification.of(recipient, issue, actorId, Notification.Type.AUTOMATION, message, now));
+            sent++;
+        }
+        return sent;
+    }
+
     // ── 알림 ──
 
     /** 알림함을 열 때 메일 주소 스냅샷도 갱신한다 — 발송 시점에는 수신자의 토큰이 없다 */

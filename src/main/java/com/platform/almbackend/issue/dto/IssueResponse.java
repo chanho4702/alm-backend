@@ -60,7 +60,16 @@ public record IssueResponse(
         Instant archivedAt,
         @Schema(description = "해결일 — 완료 사유가 처음 붙은 시각. 미해결이면 null",
                 example = "2026-09-10T04:12:00Z")
-        Instant resolvedAt
+        Instant resolvedAt,
+        @Schema(description = "시작일(V30). 없으면 null", example = "2026-10-27")
+        LocalDate startDate,
+        @Schema(description = "스토리 포인트(V30). 추정하지 않았으면 null", example = "3")
+        BigDecimal storyPoints,
+        @Schema(description = "플래그(막힘, V30)", example = "false")
+        boolean flagged,
+        @Schema(description = "트리아지 대기열 상태(V35) — PENDING·SNOOZED, 대기열 밖이면 null. 보류 시각이 지났으면 PENDING",
+                example = "PENDING")
+        String triageState
 ) {
     public static IssueResponse from(Issue issue) {
         return of(issue, issue.getLabels(), issue.getComponentIds());
@@ -77,6 +86,7 @@ public record IssueResponse(
                 issue.getDueDate(),
                 issue.getEstimateHours(), issue.getResolution(), issue.getFixVersionId(), List.copyOf(labels), List.copyOf(componentIds), issue.getSortOrder(),
                 issue.getVersion(), issue.getCreatedAt(), issue.getUpdatedAt(), issue.getArchivedAt(),
-                issue.getResolvedAt());
+                issue.getResolvedAt(), issue.getStartDate(), issue.getStoryPoints(), issue.isFlagged(),
+                issue.effectiveTriageState(Instant.now()));
     }
 }

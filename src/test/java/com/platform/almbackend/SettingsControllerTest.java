@@ -317,7 +317,7 @@ class SettingsControllerTest {
     void 필드_구성이_없는_본문도_13종_전부_표시_비필수로_채워_응답한다() throws Exception {
         mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.fields.length()").value(13))
+                .andExpect(jsonPath("$.body.fields.length()").value(15))
                 .andExpect(jsonPath("$.body.fields[0].id").value("description"))
                 .andExpect(jsonPath("$.body.fields[0].visible").value(true))
                 .andExpect(jsonPath("$.body.fields[0].required").value(false))
@@ -325,7 +325,7 @@ class SettingsControllerTest {
                 .andExpect(jsonPath("$.body.fields[12].id").value("links"));
         mvc.perform(get("/api/alm/settings/schemes").with(asUser(1, "Alice")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].body.fields.length()").value(13));
+                .andExpect(jsonPath("$[0].body.fields.length()").value(15));
     }
 
     @Test
@@ -466,13 +466,13 @@ class SettingsControllerTest {
         mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
                 .andExpect(status().isOk())
                 // 기본 구성은 그대로 13종
-                .andExpect(jsonPath("$.body.fields.length()").value(13))
+                .andExpect(jsonPath("$.body.fields.length()").value(15))
                 .andExpect(jsonPath("$.body.fields[1].id").value("assignee"))
                 .andExpect(jsonPath("$.body.fields[1].required").value(true))
                 .andExpect(jsonPath("$.body.fields[7].id").value("dueDate"))
                 .andExpect(jsonPath("$.body.fields[7].required").value(false))
                 // 덮어쓰기가 있는 타입만 13종 전부로 정규화된다
-                .andExpect(jsonPath("$.body.fieldsByType.bug.length()").value(13))
+                .andExpect(jsonPath("$.body.fieldsByType.bug.length()").value(15))
                 .andExpect(jsonPath("$.body.fieldsByType.bug[1].id").value("assignee"))
                 .andExpect(jsonPath("$.body.fieldsByType.bug[1].required").value(false))
                 .andExpect(jsonPath("$.body.fieldsByType.bug[7].id").value("dueDate"))
@@ -587,7 +587,7 @@ class SettingsControllerTest {
         mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"body\":" + body + "}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.fieldsByType['" + typeId + "'].length()").value(13));
+                .andExpect(jsonPath("$.body.fieldsByType['" + typeId + "'].length()").value(15));
 
         mvc.perform(delete("/api/alm/settings/issue-types/{id}", typeId).with(asAdmin(9, "Root")))
                 .andExpect(status().isNoContent());
@@ -613,7 +613,7 @@ class SettingsControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(defaultBodyWithFieldsByType("[]", "{\"bug\":[" + field("dueDate", true, true) + "]}")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.fieldsByType.bug.length()").value(13))
+                .andExpect(jsonPath("$.body.fieldsByType.bug.length()").value(15))
                 .andExpect(jsonPath("$.body.fieldsByType.bug[7].id").value("dueDate"))
                 .andExpect(jsonPath("$.body.fieldsByType.bug[7].required").value(true));
         // 다시 읽어도 같은 값이다
@@ -643,7 +643,7 @@ class SettingsControllerTest {
 
         mvc.perform(get("/api/alm/projects/{id}/settings", projectId).with(asUser(1, "Alice")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.fields.length()").value(13))
+                .andExpect(jsonPath("$.body.fields.length()").value(15))
                 .andExpect(jsonPath("$.body.fields[0].id").value("description"))
                 .andExpect(jsonPath("$.body.fields[0].required").value(false))
                 .andExpect(jsonPath("$.body.fieldsByType").isEmpty());

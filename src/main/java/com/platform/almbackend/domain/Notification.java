@@ -23,7 +23,8 @@ import java.time.Instant;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Notification {
-    public enum Type { ASSIGNED, STATUS_CHANGED, COMMENTED, MENTIONED }
+    /** AUTOMATION(2026-10-24) — 자동화 규칙의 "알림" 액션. detail에 규칙이 정한 문장(최대 200자)이 실린다. 인앱 전용(메일 없음) */
+    public enum Type { ASSIGNED, STATUS_CHANGED, COMMENTED, MENTIONED, AUTOMATION }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

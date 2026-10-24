@@ -117,6 +117,21 @@ public class AqlIssueRow {
     @Column(nullable = false, insertable = false, updatable = false)
     private Integer version;
 
+    @Column(name = "start_date", insertable = false, updatable = false)
+    private LocalDate startDate;
+
+    @Column(name = "story_points", precision = 6, scale = 1, insertable = false, updatable = false)
+    private BigDecimal storyPoints;
+
+    @Column(nullable = false, insertable = false, updatable = false)
+    private boolean flagged;
+
+    @Column(name = "triage_state", length = 12, insertable = false, updatable = false)
+    private String triageState;
+
+    @Column(name = "triage_snoozed_until", insertable = false, updatable = false)
+    private Instant triageSnoozedUntil;
+
     @Column(nullable = false, insertable = false, updatable = false)
     private Instant createdAt;
 
@@ -133,6 +148,15 @@ public class AqlIssueRow {
         return new IssueResponse(id, key, projectId, title, description, type, status, priority,
                 assigneeId, reporterId, parentId, sprintId, dueDate, estimateHours, resolution, fixVersionId,
                 List.copyOf(labels), List.copyOf(componentIds), sortOrder, version, createdAt, updatedAt, archivedAt,
-                resolvedAt);
+                resolvedAt, startDate, storyPoints, flagged, effectiveTriageState());
+    }
+
+    /** {@code Issue.effectiveTriageState}와 같은 판정 — 보류 시각이 지났으면 대기다 */
+    private String effectiveTriageState() {
+        if ("SNOOZED".equals(triageState)
+                && (triageSnoozedUntil == null || !triageSnoozedUntil.isAfter(Instant.now()))) {
+            return "PENDING";
+        }
+        return triageState;
     }
 }

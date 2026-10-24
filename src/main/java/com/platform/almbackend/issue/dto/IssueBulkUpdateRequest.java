@@ -52,6 +52,7 @@ public record IssueBulkUpdateRequest(
         private List<@Size(max = 80, message = "라벨은 80자 이하여야 합니다") String> addLabels;
         @Size(max = 50, message = "라벨은 최대 50개까지 지정할 수 있습니다")
         private List<String> removeLabels;
+        private Boolean flagged;
 
         @Schema(description = "상태 ID", example = "inprogress") public String getStatus() { return status; }
         @Schema(description = "우선순위 ID", example = "high") public String getPriority() { return priority; }
@@ -60,6 +61,7 @@ public record IssueBulkUpdateRequest(
         @Schema(description = "수정 버전 ID. null이면 해제", example = "5") public Long getFixVersionId() { return fixVersionId; }
         @Schema(description = "더할 라벨") public List<String> getAddLabels() { return addLabels; }
         @Schema(description = "뺄 라벨") public List<String> getRemoveLabels() { return removeLabels; }
+        @Schema(description = "플래그(막힘, V30). null은 무시", example = "true") public Boolean getFlagged() { return flagged; }
 
         @JsonProperty("status") public void setStatus(String v) { status = v; present.add("status"); }
         @JsonProperty("priority") public void setPriority(String v) { priority = v; present.add("priority"); }
@@ -68,6 +70,13 @@ public record IssueBulkUpdateRequest(
         @JsonProperty("fixVersionId") public void setFixVersionId(Long v) { fixVersionId = v; present.add("fixVersionId"); }
         @JsonProperty("addLabels") public void setAddLabels(List<String> v) { addLabels = v; present.add("addLabels"); }
         @JsonProperty("removeLabels") public void setRemoveLabels(List<String> v) { removeLabels = v; present.add("removeLabels"); }
+        @JsonProperty("flagged") public void setFlagged(Boolean v) { flagged = v; if (v != null) present.add("flagged"); }
+
+        /** 플래그 말고 다른 필드도 바꾸는가 — 플래그만이면 편집(PUT) 경로를 타지 않는다(version을 올리지 않는다) */
+        @JsonIgnore
+        public boolean hasFieldChanges() {
+            return present.stream().anyMatch(f -> !f.equals("flagged"));
+        }
 
         /** 이 필드를 바꾸라는 요청인가(키가 왔는가) */
         public boolean has(String field) { return present.contains(field); }

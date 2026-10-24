@@ -187,6 +187,8 @@ public class BoardService {
         return (root, query, cb) -> {
             List<Predicate> where = new ArrayList<>();
             where.add(cb.equal(root.get("projectId"), projectId));
+            // 트리아지 대기열(V35)은 보드에 나오지 않는다 — 수락돼야 워크플로에 들어온다
+            where.add(cb.isNull(root.get("triageState")));
             if (sprintId != null) where.add(cb.equal(root.get("sprintId"), sprintId));
             if (!filter.assigneeIds().isEmpty()) {
                 List<Long> ids = new ArrayList<>();

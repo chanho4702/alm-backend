@@ -50,6 +50,7 @@ public class IssueBulkService {
     private final IssueService issueService;
     private final ProjectService projectService;
     private final PlatformTransactionManager transactionManager;
+    private final IssueFlagService flags;
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public IssueBulkUpdateResponse update(long userId, IssueBulkUpdateRequest request) {
@@ -91,6 +92,13 @@ public class IssueBulkService {
 
     /** 한 행 — 행 트랜잭션 안에서 돈다 */
     private IssueResponse applyRow(long userId, IssueBulkUpdateRequest.Item item, IssueBulkUpdateRequest.Changes changes) {
+        IssueResponse saved = changes.hasFieldChanges() ? applyFields(userId, item, changes) : null;
+        // 플래그는 version과 무관한 값이다(보드 규칙) — 플래그만 바꾸는 행은 expectedVersion을 보지 않는다
+        if (changes.has("flagged")) saved = flags.flag(userId, item.issueId(), changes.getFlagged(), null);
+        return saved;
+    }
+
+    private IssueResponse applyFields(long userId, IssueBulkUpdateRequest.Item item, IssueBulkUpdateRequest.Changes changes) {
         Issue current = issues.findById(item.issueId())
                 .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + item.issueId()));
         List<String> labels = new ArrayList<>(current.getLabels());

@@ -94,6 +94,34 @@ public class Issue {
     @Column(name = "estimate_hours", precision = 10, scale = 2)
     private BigDecimal estimateHours;
 
+    /** 시작일(V30, D3) — 타임라인 막대의 시작. 마감일보다 늦을 수 없다(서비스 400 + DB CHECK) */
+    @Column(name = "start_date")
+    private LocalDate startDate;
+
+    /** 스토리 포인트(V30) — 0 이상, 소수 한 자리. 예상 시간과 별개의 추정 단위다 */
+    @Column(name = "story_points", precision = 6, scale = 1)
+    private BigDecimal storyPoints;
+
+    /** 플래그(막힘, V30, D2) — 보드에서 바로 켜고 끈다. 편집 폼의 version을 올리지 않는다({@link #flag}) */
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(nullable = false)
+    private boolean flagged;
+
+    /**
+     * 트리아지 대기열(V35) — null이면 일반 워크플로 안에 있다. {@code PENDING}(대기)·{@code SNOOZED}(보류).
+     * 대기열의 이슈는 보드·백로그·프로젝트 목록에 나오지 않고 트리아지 화면에서 수락·중복·거절·보류된다.
+     */
+    @Column(name = "triage_state", length = 12)
+    private String triageState;
+
+    /** 보류가 풀리는 시각 — 지나면 다시 대기로 보인다(읽을 때 판정, 행은 그대로 둔다) */
+    @Column(name = "triage_snoozed_until")
+    private Instant triageSnoozedUntil;
+
+    /** 대기열에 들어온 길 — {@code EXTERNAL}(편집 권한 없는 사람이 만듦)·{@code MANUAL}(명시적으로 보냄) */
+    @Column(name = "triage_source", length = 16)
+    private String triageSource;
+
     // 목록 응답은 IssueResponses가 페이지 단위로 따로 읽는다. 그 밖의 경로(IssueService.list 등)에서
     // 이슈마다 지연 로딩되더라도 한 번에 최대 100건씩 묶어 읽게 하는 안전망이다
     @ElementCollection
@@ -274,6 +302,87 @@ public class Issue {
             this.resolvedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         }
         this.resolution = next;
+    }
+
+    /**
+     * 시작일·스토리 포인트 — 생성·수정 경로가 부른다(그 경로가 이미 version을 올렸다). 시작일↔마감일 순서는
+     * 서비스가 먼저 확인한다.
+     */
+    public void applyPlanning(LocalDate startDate, BigDecimal storyPoints) {
+        this.startDate = startDate;
+        this.storyPoints = storyPoints;
+    }
+
+    /**
+     * 플래그 — 보드·우클릭에서 바로 켜고 끄는 값이라 version을 올리지 않는다. PUT 본문에 없는 값이므로
+     * 오래된 편집 폼의 저장이 이 값을 되돌리지 못한다(보드 이동과 같은 이유).
+     */
+    public void flag(boolean flagged) {
+        this.flagged = flagged;
+        this.updatedAt = Instant.now();
+    }
+
+    public static final String TRIAGE_PENDING = "PENDING";
+    public static final String TRIAGE_SNOOZED = "SNOOZED";
+    public static final String TRIAGE_EXTERNAL = "EXTERNAL";
+    public static final String TRIAGE_MANUAL = "MANUAL";
+
+    public boolean inTriage() { return triageState != null; }
+
+    /**
+     * 트리아지 대기열로 — 스프린트에서 빼 백로그 순서 끝에 둔다(대기열은 계획 밖이다). 생성 직후(아직 저장 전)에도,
+     * 기존 이슈를 명시적으로 보낼 때도 쓴다.
+     */
+    public void sendToTriage(String source, long backlogOrder) {
+        this.triageState = TRIAGE_PENDING;
+        this.triageSnoozedUntil = null;
+        this.triageSource = source;
+        this.sprintId = null;
+        this.sortOrder = backlogOrder;
+        if (this.version != null && this.id != null) this.version += 1;
+    }
+
+    /** 보류 — until이 지나면 다시 대기로 보인다 */
+    public void snoozeTriage(Instant until) {
+        this.triageState = TRIAGE_SNOOZED;
+        this.triageSnoozedUntil = until;
+        this.version += 1;
+    }
+
+    /** 지금 보면 대기인가 보류인가 — 보류 시각이 지났으면 대기다 */
+    public String effectiveTriageState(Instant now) {
+        if (TRIAGE_SNOOZED.equals(triageState) && (triageSnoozedUntil == null || !triageSnoozedUntil.isAfter(now))) {
+            return TRIAGE_PENDING;
+        }
+        return triageState;
+    }
+
+    /** 수락 — 대기열에서 빠져 지정 상태로 백로그 끝에 들어간다. 담당자·우선순위는 null이면 그대로 */
+    public void acceptFromTriage(String status, long backlogOrder, Long assigneeId, String priority) {
+        clearTriage();
+        this.status = status;
+        if (assigneeId != null) this.assigneeId = assigneeId;
+        if (priority != null) this.priority = priority;
+        this.sprintId = null;
+        this.sortOrder = backlogOrder;
+        this.version += 1;
+    }
+
+    /**
+     * 거절·중복 — 대기열에서 빠지면서 바로 끝난다: 완료 의미 상태 + 해결 사유. 해결은 {@link #applyResolution}
+     * 한 길로만 바뀐다(해결일 규칙).
+     */
+    public void closeFromTriage(String completeStatus, IssueResolution resolution) {
+        clearTriage();
+        this.status = completeStatus;
+        applyResolution(resolution);
+        this.version += 1;
+    }
+
+    private void clearTriage() {
+        this.triageState = null;
+        this.triageSnoozedUntil = null;
+        this.triageSource = null;
     }
 
     /**

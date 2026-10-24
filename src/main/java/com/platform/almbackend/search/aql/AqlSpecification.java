@@ -163,6 +163,16 @@ final class AqlSpecification {
             case "estimate" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("estimateHours")),
                     cb.equal(root.<BigDecimal>get("estimateHours"), session.number(v))));
             case "created", "updated" -> anyOf(values, v -> instantWindow(instantPath(field), session.moment(v)));
+            case "startDate" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("startDate")),
+                    cb.equal(root.<LocalDate>get("startDate"), session.moment(v).date())));
+            case "storyPoints" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("storyPoints")),
+                    cb.equal(root.<BigDecimal>get("storyPoints"), session.number(v))));
+            case "flagged" -> anyOf(values, v -> session.bool(v)
+                    ? cb.isTrue(root.get("flagged"))
+                    : cb.isFalse(root.get("flagged")));
+            case "triage" -> anyOf(values, v -> session.bool(v)
+                    ? cb.isNotNull(root.get("triageState"))
+                    : cb.isNull(root.get("triageState")));
             // 해결일은 비어 있을 수 있다 — NULL을 남기면 NOT(…)이 정확한 여집합이 못 된다(클래스 주석)
             case "resolved" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("resolvedAt")),
                     instantWindow(root.get("resolvedAt"), session.moment(v))));
@@ -241,9 +251,9 @@ final class AqlSpecification {
                 // 생성·수정 시각은 비지 않지만 해결일은 빈다 — due처럼 값이 있는 것만 비교에 넣는다
                 return "resolved".equals(field.name()) ? cb.and(cb.isNotNull(path), compared) : compared;
             }
-            case "due" -> {
+            case "due", "startDate" -> {
                 LocalDate date = session.moment(value).date();
-                Path<LocalDate> path = root.get("dueDate");
+                Path<LocalDate> path = root.get("due".equals(field.name()) ? "dueDate" : "startDate");
                 Predicate present = cb.isNotNull(path);
                 return cb.and(present, switch (operator) {
                     case "<" -> cb.lessThan(path, date);
@@ -252,9 +262,9 @@ final class AqlSpecification {
                     default -> cb.greaterThanOrEqualTo(path, date);
                 });
             }
-            case "estimate" -> {
+            case "estimate", "storyPoints" -> {
                 BigDecimal amount = session.number(value);
-                Path<BigDecimal> path = root.get("estimateHours");
+                Path<BigDecimal> path = root.get("estimate".equals(field.name()) ? "estimateHours" : "storyPoints");
                 return cb.and(cb.isNotNull(path), switch (operator) {
                     case "<" -> cb.lessThan(path, amount);
                     case "<=" -> cb.lessThanOrEqualTo(path, amount);
@@ -279,6 +289,8 @@ final class AqlSpecification {
             case "due" -> cb.isNull(root.get("dueDate"));
             case "resolved" -> cb.isNull(root.get("resolvedAt"));
             case "estimate" -> cb.isNull(root.get("estimateHours"));
+            case "startDate" -> cb.isNull(root.get("startDate"));
+            case "storyPoints" -> cb.isNull(root.get("storyPoints"));
             case "labels" -> cb.isEmpty(root.get("labels"));
             case "component" -> cb.isEmpty(root.get("componentIds"));
             default -> throw AqlException.at(position, "EMPTY를 쓸 수 없는 필드입니다: " + field.name());
@@ -318,6 +330,8 @@ final class AqlSpecification {
             case "summary" -> List.of(root.get("title"));
             case "assignee" -> List.of(root.get("assigneeId"));
             case "estimate" -> List.of(root.get("estimateHours"));
+            case "startDate" -> List.of(root.get("startDate"));
+            case "storyPoints" -> List.of(root.get("storyPoints"));
             // 키는 문자열로 정렬하면 ALM-10이 ALM-9보다 앞이라 프로젝트+번호로 센다
             default -> List.of(root.get("projectId"), root.get("issueNumber"));
         };
@@ -372,6 +386,8 @@ final class AqlSpecification {
             case "due" -> cb.isNotNull(root.get("dueDate"));
             case "resolved" -> cb.isNotNull(root.get("resolvedAt"));
             case "estimate" -> cb.isNotNull(root.get("estimateHours"));
+            case "startDate" -> cb.isNotNull(root.get("startDate"));
+            case "storyPoints" -> cb.isNotNull(root.get("storyPoints"));
             case "labels" -> cb.isNotEmpty(root.get("labels"));
             case "component" -> cb.isNotEmpty(root.get("componentIds"));
             default -> cb.conjunction();

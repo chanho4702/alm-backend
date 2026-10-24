@@ -69,6 +69,26 @@ public class AqlSearchService {
                 safePage, safeSize, result.getTotalElements(), text);
     }
 
+    /**
+     * 한 프로젝트 안에서 AQL에 맞는 이슈 id — 자동화 조건·예약 대상이 쓴다. 범위는 {@code userId}(규칙의 실행 주체)가
+     * 볼 수 있는 프로젝트와 {@code projectId}의 교집합이라, 실행 주체가 권한을 잃으면 아무것도 맞지 않는다.
+     * {@code onlyIssueId}를 주면 그 이슈 하나가 맞는지만 본다. 정렬은 질의의 ORDER BY(없으면 최근 수정 순)를 따른다.
+     */
+    public List<Long> matchingIssueIds(long userId, long projectId, String aql, Long onlyIssueId, int limit) {
+        AqlAst.Query parsed = AqlParser.parse(aql == null ? "" : aql);
+        AqlValidation.check(parsed);
+        List<Long> scopeIds = scope(userId);
+        if (scopeIds != null && !scopeIds.contains(projectId)) return List.of();
+        if (projects.findTrashedIds().contains(projectId)) return List.of();
+        List<Long> only = List.of(projectId);
+        AqlResolver.Session session = resolver.open(userId, only);
+        Specification<AqlIssueRow> spec = new AqlSpecification(session, only, List.of()).build(parsed);
+        if (onlyIssueId != null) spec = spec.and((root, query, cb) -> cb.equal(root.get("id"), onlyIssueId));
+        return rows.findAll(spec, PageRequest.of(0, Math.max(1, Math.min(limit, MAX_SIZE)))).getContent().stream()
+                .map(AqlIssueRow::getId)
+                .toList();
+    }
+
     /** 문법·필드·연산자만 본다 — 값이 실재하는지는 실행할 때 확인한다 */
     public ValidateResponse validate(String aql) {
         try {
@@ -112,6 +132,8 @@ public class AqlSearchService {
             case "project" -> visibleProjects(userId).stream()
                     .map(project -> new Candidate(project.getKey(), project.getName())).toList();
             case "archived" -> List.of(new Candidate("false", "활성"), new Candidate("true", "보관됨"));
+            case "flagged" -> List.of(new Candidate("true", "막힘"), new Candidate("false", "막힘 아님"));
+            case "triage" -> List.of(new Candidate("true", "트리아지 대기"), new Candidate("false", "워크플로 안"));
             default -> List.of();
         };
     }
@@ -141,7 +163,7 @@ public class AqlSearchService {
     }
 
     private static List<String> dateFields() {
-        return List.of("created", "updated", "due", "resolved");
+        return List.of("created", "updated", "due", "resolved", "startDate");
     }
 
     /** 볼 수 있는 프로젝트 id(휴지통 제외). {@code null}이면 제한 없음 — 그때는 휴지통을 따로 뺀다 */

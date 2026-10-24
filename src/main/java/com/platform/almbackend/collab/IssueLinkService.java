@@ -202,7 +202,7 @@ public class IssueLinkService {
         return new IssueResponse(other.getId(), other.getKey(), 0L, RESTRICTED_TITLE, "",
                 other.getType(), other.getStatus(), null, null, 0L, null, null, null, null,
                 null, null, List.of(), List.of(), 0L, 0,
-                null, null, null, null);
+                null, null, null, null, null, null, false, null);
     }
 
     private Issue require(long userId, long issueId, AlmAction action) {

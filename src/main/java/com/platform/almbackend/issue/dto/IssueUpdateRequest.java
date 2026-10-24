@@ -36,5 +36,14 @@ public record IssueUpdateRequest(
         Integer expectedVersion,
         /** 설명에서 새로 @멘션된 사용자 — 알림 대상(선택) */
         @Schema(description = "설명에서 새로 멘션한 사용자 ID. 알림 대상이다", example = "[7, 42]")
-        List<Long> mentionedUserIds
-) {}
+        List<Long> mentionedUserIds,
+        @Schema(description = "시작일·스토리 포인트(V30). 키를 보낸 것만 바뀐다 — 생략하면 그대로")
+        @Valid IssuePlanningRequest planning
+) {
+    /** 계획 필드 없이 — 기존 호출부용(계획 필드는 그대로 둔다) */
+    public IssueUpdateRequest(String title, String description, String type, String status, String priority,
+                              Long assigneeId, IssueDetailsRequest details, Integer expectedVersion,
+                              List<Long> mentionedUserIds) {
+        this(title, description, type, status, priority, assigneeId, details, expectedVersion, mentionedUserIds, null);
+    }
+}

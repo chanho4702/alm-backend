@@ -153,10 +153,12 @@ public record SettingsBody(
 
     // ── 이슈 필드 구성 ──
 
-    /** 구성 가능한 필드 13종 — 모달의 지라 필드 순서 고정 */
+    /** 구성 가능한 필드 15종(V30에서 시작일·스토리 포인트 추가) — 모달의 지라 필드 순서 고정 */
     public static final List<String> FIELD_IDS = List.of(
             "description", "assignee", "priority", "labels", "components", "parent",
-            "sprint", "dueDate", "fixVersion", "resolution", "estimate", "attachments", "links");
+            "sprint", "dueDate", "fixVersion", "resolution", "estimate", "attachments", "links",
+            // V30(2026-10-24) — 뒤에 붙인다(앞 순서는 모달 순서라 그대로). 구버전 본문은 기본값(표시·비필수)으로 채워진다
+            "startDate", "storyPoints");
 
     /** 오류 메시지용 한국어 이름 */
     public static final Map<String, String> FIELD_NAMES = Map.ofEntries(
@@ -172,7 +174,9 @@ public record SettingsBody(
             Map.entry("resolution", "해결"),
             Map.entry("estimate", "예상 시간"),
             Map.entry("attachments", "첨부"),
-            Map.entry("links", "링크"));
+            Map.entry("links", "링크"),
+            Map.entry("startDate", "시작일"),
+            Map.entry("storyPoints", "스토리 포인트"));
 
     /** 완료 상태에서만 의미가 있어 필수로 지정할 수 없다 */
     public static final String RESOLUTION = "resolution";

@@ -239,6 +239,8 @@ public class EmailNotifier {
             case STATUS_CHANGED -> "'" + label + "' 이슈의 상태가 바뀌었습니다";
             case COMMENTED -> "'" + label + "' 이슈에 새 코멘트가 달렸습니다";
             case MENTIONED -> actor + "님이 '" + label + "'에서 나를 멘션했습니다";
+            // 자동화 알림은 메일로 보내지 않지만(인앱 전용) 문장은 정해 둔다 — switch가 모든 종류를 다룬다
+            case AUTOMATION -> "'" + label + "' 이슈의 자동화 알림";
         };
         StringBuilder body = new StringBuilder();
         body.append(subject).append("\n\n");

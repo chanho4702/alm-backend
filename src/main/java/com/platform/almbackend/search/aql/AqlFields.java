@@ -91,7 +91,13 @@ public final class AqlFields {
             new Field("estimate", List.of("예상시간"), Kind.NUMBER, NUMBER_OPS, true, true, true),
             new Field("text", List.of("텍스트", "내용"), Kind.TEXT, MATCH_ONLY, false, false, true),
             new Field("summary", List.of("요약", "제목"), Kind.TEXT, TEXT_OPS, true, false, true),
-            new Field("archived", List.of("보관"), Kind.BOOL, List.of("=", "!="), false, false, true));
+            new Field("archived", List.of("보관"), Kind.BOOL, List.of("=", "!="), false, false, true),
+            // V30(2026-10-24) — 시작일·스토리 포인트·플래그. 시작일·포인트는 비어 있을 수 있다(due·estimate와 같은 규칙)
+            new Field("startDate", List.of("시작일"), Kind.DATE, DATE_OPS, true, true, true),
+            new Field("storyPoints", List.of("스토리포인트", "포인트"), Kind.NUMBER, NUMBER_OPS, true, true, true),
+            new Field("flagged", List.of("플래그", "막힘"), Kind.BOOL, List.of("=", "!="), false, false, true),
+            // V35 — 트리아지 대기열에 있는가(보류 포함). 대기열 이슈도 검색에는 나온다(보드·백로그에서만 빠진다)
+            new Field("triage", List.of("트리아지"), Kind.BOOL, List.of("=", "!="), false, false, true));
 
     private static final Map<String, Field> INDEX = index();
 

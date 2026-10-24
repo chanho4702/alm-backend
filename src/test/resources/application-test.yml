@@ -26,6 +26,10 @@ platform:
       # 테스트는 워커를 직접 부른다(EventOutboxRelay.publishPending) — 스케줄러 스레드가 끼어들면 기록 순서가 흔들린다
       polling-enabled: false
   alm:
+    automation:
+      # 테스트는 규칙 실행을 같은 스레드에서 바로 돌려 결과를 곧장 확인한다. 예약 폴러는 테스트가 runDue를 직접 부른다
+      async: false
+      schedule-polling-enabled: false
     trash:
       # 테스트는 잡 메서드를 직접 부른다 — 시계는 사실상 돌지 않게(매년 1월 1일)
       purge-cron: "0 0 3 1 1 *"

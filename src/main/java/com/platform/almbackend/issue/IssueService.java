@@ -25,6 +25,7 @@ import com.platform.almbackend.sprint.SprintService;
 import com.platform.almbackend.version.VersionService;
 import com.platform.almbackend.attachment.AttachmentService;
 import com.platform.almbackend.repository.IssueRepository;
+import com.platform.almbackend.triage.TriageAdmission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,12 +63,15 @@ public class IssueService {
     private final IssueRankGroups rankGroups;
     private final WorkflowEngine workflow;
     private final IssueDomainEventPublisher domainEvents;
+    private final TriageAdmission triageAdmission;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
         projectService.requireProject(projectId);
         projectService.require(userId, projectId, AlmAction.VIEW);
+        // 트리아지 대기열(V35)은 일반 워크플로 밖이다 — 보드·백로그가 읽는 목록에 넣지 않는다(대기열은 /triage)
         return issues.findByProjectIdOrderBySortOrderAscKeyAsc(projectId).stream()
+                .filter(issue -> !issue.inTriage())
                 .map(IssueResponse::from)
                 .toList();
     }
@@ -80,9 +84,10 @@ public class IssueService {
     }
 
     public IssueResponse create(long userId, long projectId, IssueCreateRequest request) {
-        projectService.require(userId, projectId, AlmAction.EDIT);
+        // 트리아지를 켠 프로젝트는 열람자도 올릴 수 있다(대기열행). 꺼져 있으면 예전처럼 EDIT가 필요하다
+        String triageSource = triageAdmission.admit(userId, projectId, request.triage());
         Project project = locks.lockProject(projectId);
-        return createNumbered(userId, project, project.nextIssueNumber(), request);
+        return createNumbered(userId, project, project.nextIssueNumber(), request, triageSource);
     }
 
     /**
@@ -90,6 +95,12 @@ public class IssueService {
      * 행을 잠근 트랜잭션 안에서 불러야 한다(번호 카운터의 직렬화 지점).
      */
     public IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request) {
+        return createNumbered(userId, project, number, request, null);
+    }
+
+    /** {@code triageSource}가 있으면 트리아지 대기열로 만든다 — 스프린트에는 넣지 않는다(대기열은 계획 밖) */
+    private IssueResponse createNumbered(long userId, Project project, long number, IssueCreateRequest request,
+                                         String triageSource) {
         long projectId = project.getId();
         String type = normalizeType(request.type() == null ? settings.defaultType(projectId) : request.type());
         settings.assertTypeEnabled(projectId, type);
@@ -98,8 +109,10 @@ public class IssueService {
         assertRequiredFields(body, type, request, details);
         Long parentId = details == null ? null : details.parentId();
         validateParent(projectId, null, type, parentId);
-        Long sprintId = details == null ? null : details.sprintId();
+        Long sprintId = triageSource != null || details == null ? null : details.sprintId();
         if (sprintId != null) sprintService.requireSprintInProject(sprintId, projectId);
+        IssuePlanning.Values planning = IssuePlanning.merge(request.planning(), null, null);
+        IssuePlanning.requireOrder(planning.startDate(), details == null ? null : details.dueDate());
         long order = issues.findMaxSortOrderInRankGroup(projectId, sprintId) + 1;
         List<Long> componentIds = componentService.validateForIssue(projectId, details == null ? null : details.componentIds());
         Issue fresh = Issue.of(
@@ -123,6 +136,8 @@ public class IssueService {
         // 완료 의미 상태로 만들면 해결 = 완료(A1, 목업 createIssue와 같다)
         fresh.changeResolution(ResolutionRule.resolve(false, SchemeService.isComplete(body, fresh.getStatus()),
                 null, false, null, null));
+        fresh.applyPlanning(planning.startDate(), planning.storyPoints());
+        if (triageSource != null) fresh.sendToTriage(triageSource, order);
         Long fixVersionId = details == null ? null : details.fixVersionId();
         if (fixVersionId != null) {
             versionService.requireAssignable(fixVersionId, projectId);
@@ -162,6 +177,8 @@ public class IssueService {
         requireField(fields, "dueDate", details != null && details.dueDate() != null);
         requireField(fields, "fixVersion", details != null && details.fixVersionId() != null);
         requireField(fields, "estimate", details != null && details.estimateHours() != null);
+        requireField(fields, "startDate", request.planning() != null && request.planning().getStartDate() != null);
+        requireField(fields, "storyPoints", request.planning() != null && request.planning().getStoryPoints() != null);
     }
 
     private static void requireField(Map<String, SettingsBody.FieldConfig> fields, String fieldId, boolean present) {
@@ -201,6 +218,8 @@ public class IssueService {
         List<Long> componentIds = details == null || details.componentIds() == null
                 ? List.copyOf(issue.getComponentIds())
                 : componentService.validateForIssue(issue.getProjectId(), details.componentIds());
+        IssuePlanning.Values planning = IssuePlanning.merge(request.planning(), issue.getStartDate(), issue.getStoryPoints());
+        IssuePlanning.requireOrder(planning.startDate(), dueDate);
         SettingsBody body = settings.body(issue.getProjectId());
         SettingsBody.ResolvedWorkflow flow = body.workflowFor(nextType);
         String requested = request.status() == null ? issue.getStatus() : request.status().trim();
@@ -232,6 +251,8 @@ public class IssueService {
         Long previousAssigneeId = issue.getAssigneeId();
         IssueActivityService.Snapshot snapshotBefore = IssueActivityService.Snapshot.of(issue);
         IssueDomainEventPublisher.Before domainBefore = IssueDomainEventPublisher.Before.of(issue);
+        java.time.LocalDate previousStart = issue.getStartDate();
+        BigDecimal previousPoints = issue.getStoryPoints();
         boolean regrouped = !Objects.equals(status, issue.getStatus())
                 || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
@@ -251,6 +272,7 @@ public class IssueService {
                 labels,
                 order);
         issue.replaceComponents(componentIds);
+        issue.applyPlanning(planning.startDate(), planning.storyPoints());
         // 전환 검증은 요청 값을 반영한 뒤, 후처리는 검증 뒤(지라와 같은 순서)
         workflow.assertValidators(used, issue);
         workflow.applyPostFunctions(used, issue, userId);
@@ -265,6 +287,7 @@ public class IssueService {
         }
         changeLog.recordChanges(userId, issue, previousStatus, previousSprintId);
         activityLog.recordUpdate(userId, snapshotBefore, issue);
+        IssuePlanning.recordActivity(activityLog, userId, issue, previousStart, previousPoints);
         notifications.onIssueUpdated(userId, issue, previousStatus, previousAssigneeId);
         notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));

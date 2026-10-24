@@ -115,6 +115,11 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/issues/{issueId}/links` | 원본 EDIT + 대상 VIEW | 이슈 연결 |
 | `DELETE` | `/api/alm/comments/{id}`, `/api/alm/worklogs/{id}` | 작성자(지금 VIEW) 또는 프로젝트 ADMIN | 댓글·워크로그 삭제. 댓글 수정은 작성자(지금 VIEW)만 |
 | `POST` | `/api/alm/projects/{projectId}/issues/import` | EDIT | CSV 가져오기 — 최대 5000건, 본문 20MB(`platform.alm.import.max-body-size`, 넘으면 413) |
+| `PUT` | `/api/alm/issues/{issueId}/flag` | EDIT | 플래그(막힘) 켜기·끄기 — version 불변. 아래 "계획 필드·플래그" 절 |
+| `GET` | `/api/alm/projects/{projectId}/estimation/summary`, `/reports/velocity` | VIEW | 추정 합계·속도(포인트·시간·건수) |
+| `GET`·`POST`·`PUT`·`DELETE` | `/api/alm/views/**`, `/api/alm/me/views`, `/api/alm/projects/{projectId}/views` | 범위별 | 저장된 보기(V31) — 아래 "저장된 보기" 절 |
+| `GET`·`PUT`·`POST` | `/api/alm/projects/{projectId}/triage/**`, `/api/alm/issues/{issueId}/triage/**` | VIEW·EDIT·ADMIN | 트리아지(V35) — 아래 "트리아지" 절 |
+| `GET`·`POST`·`PUT`·`DELETE` | `/api/alm/projects/{projectId}/automation/**`, `/api/alm/automation/rules/**` | ADMIN | 자동화 규칙(V36·V37) — 아래 "자동화 규칙" 절 |
 | `GET` | `/api/alm/projects/{projectId}/sprints` | VIEW | 스프린트 목록 |
 | `POST` | `/api/alm/projects/{projectId}/sprints` | EDIT | 스프린트 생성(`Sprint N` 자동 명명) |
 | `GET` | `/api/alm/sprints/{sprintId}` | VIEW | 스프린트 단건 |
@@ -600,7 +605,7 @@ order   := field ("ASC" | "DESC")?
 ## 저장 필터
 
 사이드바에 꽂아 두는 내 검색. 스마트 검색 문자열이거나 AQL이며 무엇을 저장했는지는 `kind`가 말한다.
-정본은 서버(`saved_filter`, V24)이고 소유자 본인만 보고 고친다 — 공유 필터는 없다.
+정본은 서버(`saved_filter`, V24)이고 소유자 본인만 고친다. `shared`(V28, F-12)면 조직 전체가 보고 실행한다(결과는 보는 사람 권한).
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
@@ -619,6 +624,148 @@ order   := field ("ASC" | "DESC")?
   `{error, position, expected}`로 거절한다(검색과 같은 오류 계약) — 못 여는 필터를 꽂아 두고 누를 때마다
   400을 보느니 저장을 막는다. 값 해석(그런 상태가 실재하는가)은 검색과 마찬가지로 실행할 때 한다.
   `kind`만 `aql`로 바꿔도 이미 저장돼 있던 문자열이 검사 대상이다.
+
+## 계획 필드·플래그 (V30, 웨이브 D2·D3)
+
+이슈 응답(`IssueResponse`)에 네 필드가 붙는다(뒤에 추가, 하위 호환).
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `startDate` | `"yyyy-MM-dd"` 또는 null | 시작일. 마감일보다 늦으면 400 `시작일은 마감일보다 늦을 수 없습니다`(DB CHECK가 뒤를 받친다) |
+| `storyPoints` | number 또는 null | 스토리 포인트 0~9999, 소수 첫째 자리(0.5 가능) |
+| `flagged` | boolean | 플래그(막힘) |
+| `triageState` | `"PENDING"`·`"SNOOZED"` 또는 null | 트리아지 대기열(V35). 보류 시각이 지났으면 PENDING |
+
+- **쓰는 길 — `planning`**: 생성·수정 요청에 `planning: {startDate?, storyPoints?}`. `details`("보내면 통째로 교체")와 달리
+  **키를 보낸 것만** 바뀐다(생략=그대로, null=비우기) — 이 필드를 모르는 옛 클라이언트의 저장이 값을 지우지 않는다.
+  필드 구성(스킴 `fields`)에 `startDate`·`storyPoints`가 추가돼 15종이다(필수로 걸면 생성 때 `시작일은 필수입니다`).
+- **플래그 — `PUT /api/alm/issues/{id}/flag`** `{flagged: true, comment?: "이유"}` → 이슈. EDIT. **version을 올리지 않는다**
+  (보드 이동과 같은 규칙 — 보드에서 플래그를 켰다고 열어 둔 편집 폼이 409가 되지 않는다. PUT 본문에 없는 값이라 오래된
+  폼 저장이 되돌리지도 않는다). 이유를 주면 `플래그 추가: …` 코멘트가 남는다. 일괄 편집 `changes.flagged`도 된다.
+- **AQL**: `startDate`(별칭 `시작일`, DATE), `storyPoints`(`스토리포인트`·`포인트`, NUMBER), `flagged`(`플래그`·`막힘`, BOOL),
+  `triage`(`트리아지`, BOOL — 대기열 이슈). 시작일·포인트는 `IS EMPTY`·정렬 가능. 자동완성 사전(`/query/fields`)에 그대로 실린다
+  — 프론트 목업 평가기도 같은 필드를 더한다.
+
+```json
+POST /api/alm/projects/7/issues
+{ "title": "로그인 개선", "details": { "dueDate": "2026-11-10" },
+  "planning": { "startDate": "2026-11-01", "storyPoints": 3 } }
+```
+
+### 추정 합계·속도
+
+| 메서드 | 경로 | 권한 | 설명 |
+|---|---|---|---|
+| `GET` | `/api/alm/projects/{projectId}/estimation/summary` | VIEW | 진행 중·예정 스프린트(번호 순) + 백로그의 합계. 트리아지 대기열은 빠진다 |
+| `GET` | `/api/alm/projects/{projectId}/reports/velocity?unit=points&limit=7` | VIEW | 최근 완료 스프린트의 속도(`unit` = points 기본·hours·count, `limit` 최대 20) |
+
+```json
+{ "projectId": 7, "groups": [
+  { "sprintId": 12, "name": "Sprint 3", "state": "ACTIVE", "issueCount": 8, "completedCount": 3,
+    "storyPoints": 21, "completedStoryPoints": 8, "unestimatedCount": 2, "estimateHours": 30.5, "completedEstimateHours": 10 },
+  { "sprintId": null, "name": "백로그", "state": null, "issueCount": 14 } ] }
+
+{ "projectId": 7, "unit": "points", "average": 17.5,
+  "sprints": [ { "sprintId": 11, "name": "Sprint 2", "completedAt": "2026-10-20T09:00:00Z", "committed": 24, "completed": 18 } ] }
+```
+
+- 완료 판정은 서버 워크플로의 완료 의미(complete)다. `committed` = 완료 시점 범위(완료분 + 스프린트 완료 처리로 그 순간 이월된
+  이슈 — 이력 시각이 `completedAt`과 같은 것). 값은 **지금의 추정치**로 센다(추정 변경 이력은 남기지 않는다). 번다운은 지금처럼
+  프론트가 변경 이력으로 그리고, 포인트 기준은 이슈 응답의 `storyPoints`로 고른다.
+
+## 저장된 보기 (V31, 웨이브 D1)
+
+필터(스마트·AQL) + 표시 옵션을 이름 붙여 저장한다. 공유 모델은 저장 필터(F-12)와 같은 결 — **질의와 표시 옵션만** 공유하고
+결과는 여는 사람이 자기 권한으로 다시 실행한다. 다른 점은 공유 범위가 조직 전체가 아니라 **프로젝트**(Linear 팀 보기)라는 것.
+
+| 메서드 | 경로 | 권한 | 설명 |
+|---|---|---|---|
+| `GET` | `/api/alm/me/views?projectId=` | 인증 | 내 개인 보기(프로젝트 지정 시 그 프로젝트 것만) |
+| `GET` | `/api/alm/projects/{projectId}/views` | VIEW | 프로젝트 공유 보기(먼저) + 그 프로젝트의 내 개인 보기, 각각 이름 순 |
+| `GET` | `/api/alm/views/{id}` | 내 것 또는 프로젝트 VIEW | 단건. 그 밖은 404 |
+| `POST` | `/api/alm/views` | personal: 인증(프로젝트 지정 시 VIEW) / project: EDIT | 만들기 → 201 |
+| `PUT` | `/api/alm/views/{id}` | 만든 사람(공유면 지금 EDIT) 또는 프로젝트 ADMIN | 보낸 항목만, `expectedVersion` 필수(어긋나면 409). `clearFilter: true`로 필터 지우기 |
+| `DELETE` | `/api/alm/views/{id}` | 같음 | 204 |
+
+```json
+{ "id": 31, "name": "막힌 이슈", "scope": "project", "projectId": 7, "ownerId": 42, "mine": true, "canEdit": true,
+  "layout": "board", "filter": { "kind": "aql", "query": "flagged = true" },
+  "display": { "groupBy": "assignee", "subGroupBy": "none", "orderBy": "storyPoints", "orderDirection": "desc",
+               "properties": ["key", "status", "assignee", "storyPoints"], "showSubIssues": true, "showEmptyGroups": false },
+  "version": 1, "createdAt": "2026-10-24T09:00:00Z", "updatedAt": "2026-10-24T09:00:00Z" }
+```
+
+- `scope`: `personal`(만든 사람만, 남이 지목하면 404) · `project`(그 프로젝트 VIEW 모두). 프로젝트는 만든 뒤 바꾸지 않는다.
+  볼 수 있는 남의 공유 보기를 고치면 403, 공유 보기를 비공개로 돌리는 것은 만든 사람만.
+- 표시 옵션은 닫힌 어휘다 — `groupBy`/`subGroupBy`: none·status·assignee·priority·sprint·epic·label·type·component·fixVersion
+  (하위 그룹은 그룹과 달라야 한다), `orderBy`: manual·priority·status·updated·created·due·startDate·storyPoints·estimate·title·key,
+  `properties`: key·type·status·priority·assignee·reporter·labels·components·sprint·fixVersion·due·startDate·storyPoints·estimate·
+  flagged·parent·created·updated. 모르는 값은 400, 비운 항목은 기본값으로 채워 **항상 전부 있는 모양**으로 응답한다.
+- `layout`: list·board. 필터 규칙은 저장 필터와 같다(`kind` smart·aql, aql은 저장 때 문법 검사 → 400 `{error, position, expected}`).
+
+## 트리아지 (V35)
+
+Linear식 대기열 — 일반 워크플로 **밖**에서 새로 들어온 이슈를 받는다. 새 상태 분류를 만들지 않는다(kind 3개 고정) — 대기열은
+`issue.triage_state`이고 그동안 상태는 워크플로 첫 '할 일'이다.
+
+**들어오는 길(정의)**: ① 트리아지를 켠 프로젝트에서 **편집 권한이 없는 열람자**가 만든 이슈(`EXTERNAL`) — 트리아지가 꺼져 있으면
+예전처럼 403, ② 편집자가 생성 요청에 `triage: true`를 주거나 기존 이슈를 `POST /issues/{id}/triage`로 보낸 이슈(`MANUAL`).
+대기열 이슈는 스프린트에 들어가지 않고 **보드·백로그(`/projects/{id}/issues`)·추정 합계에서 빠진다**. 검색·AQL에는 나온다(`triage = true`).
+API·가져오기(CSV)로 만든 이슈는 일반 생성이다(편집 권한 기준). 이메일 수신 경로는 아직 없다.
+
+| 메서드 | 경로 | 권한 | 설명 |
+|---|---|---|---|
+| `GET` | `/api/alm/projects/{projectId}/triage/settings` | VIEW | `{projectId, enabled, pending, snoozed}` |
+| `PUT` | `/api/alm/projects/{projectId}/triage/settings` | ADMIN | `{enabled}` — 꺼도 남은 대기열은 처리할 수 있다 |
+| `GET` | `/api/alm/projects/{projectId}/triage?state=pending` | VIEW | 대기열(들어온 순서), 이슈 배열. `state` = pending(기본)·snoozed·all |
+| `POST` | `/api/alm/issues/{issueId}/triage` | EDIT | 대기열로 보내기(완료된 이슈는 400, 스프린트에서 빠진다) |
+| `POST` | `/api/alm/issues/{issueId}/triage/accept` | EDIT | `{status?, assigneeId?, priority?, comment?}` — 지정 상태(기본 첫 '할 일')로 백로그 끝. 완료 의미 상태로는 400 |
+| `POST` | `/api/alm/issues/{issueId}/triage/duplicate` | EDIT(+원본 VIEW) | `{duplicateOfIssueId, comment?}` — "중복" 링크 + 해결 DUPLICATE + 첫 완료 상태 |
+| `POST` | `/api/alm/issues/{issueId}/triage/decline` | EDIT | `{comment?}` — 해결 WONT_DO("하지 않음") + 첫 완료 상태 |
+| `POST` | `/api/alm/issues/{issueId}/triage/snooze` | EDIT | `{until}` — 미래, 최대 1년. 지나면 다시 PENDING |
+
+대기열에 없는 이슈를 처리하면 400 `트리아지 대기열에 없는 이슈입니다`. 권한 서비스 불능은 대기열로 새지 않고 503이다.
+
+## 자동화 규칙 (V36·V37)
+
+프로젝트 단위 "트리거 → 조건(AQL) → 액션"(지라 Automation 패턴). 관리·이력 조회는 **프로젝트 ADMIN**만.
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET`·`POST` | `/api/alm/projects/{projectId}/automation/rules` | 목록(만든 순) / 만들기 → 201 (프로젝트당 100개) |
+| `GET`·`PUT`·`DELETE` | `/api/alm/automation/rules/{ruleId}` | 단건 / 통째로 고치기(`expectedVersion`, 어긋나면 409) / 지우기(이력도) |
+| `GET` | `/api/alm/automation/rules/{ruleId}/runs?limit=50` | 규칙의 최근 실행(최신 순, 최대 200) |
+| `GET` | `/api/alm/projects/{projectId}/automation/runs?limit=50` | 프로젝트 감사 로그 |
+
+```json
+{ "name": "끝나면 막힘 해제", "enabled": true, "allowRuleTrigger": false,
+  "trigger": { "type": "ISSUE_TRANSITIONED", "fromStatuses": [], "toStatuses": ["done"] },
+  "condition": "flagged = true",
+  "actions": [ { "type": "SET_FIELD", "field": "flagged", "value": false },
+               { "type": "COMMENT", "body": "완료되어 플래그를 내렸습니다" },
+               { "type": "NOTIFY", "recipients": ["assignee"], "userIds": [7], "message": "완료 처리됐습니다" } ] }
+```
+
+응답은 위 항목 + `id, projectId, disabledReason, actorId, createdBy, nextRunAt, lastRunAt, consecutiveFailures, version, createdAt, updatedAt`.
+실행 이력 한 줄: `{id, ruleId, projectId, issueId, issueKey, triggerType, outcome, depth, actionsRun, message, startedAt, finishedAt}` —
+`outcome`은 SUCCESS·FAILED·LOOP_BLOCKED·RATE_LIMITED. 조건에 안 맞아 건너뛴 실행은 남기지 않는다. 보존 30일.
+
+- **트리거**: `ISSUE_CREATED` · `ISSUE_TRANSITIONED`(`fromStatuses`/`toStatuses`, 비우면 아무 상태) · `FIELD_CHANGED`(`fields` 하나 이상 —
+  title·description·type·status·priority·assignee·parent·sprint·dueDate·startDate·storyPoints·estimate·resolution·fixVersion·labels·
+  components·flagged·triage) · `SCHEDULED`(`cron`, 서울 시각, 5필드 또는 6필드, **5분보다 자주 불가**, 조건 AQL 필수 = 대상 검색, 회차당 100건).
+- **액션**(최대 10개): `SET_FIELD`(priority·dueDate·startDate·storyPoints·flagged) · `ASSIGN`(`assignee`: reporter·unassigned·user+`userId`) ·
+  `COMMENT`(`body`) · `TRANSITION`(`toStatus` — 워크플로 엔진의 전환 실행을 그대로 탄다: 실행 주체로 평가한 가용 전환 중 도착 상태가 같은 첫 전환, 조건·검증·해결 규칙·후처리 포함. 갈 수 없으면 그 이유로 FAILED) · `LABELS`(`add`/`remove`) · `NOTIFY`(`recipients` assignee·reporter·watchers + `userIds`,
+  `message` 200자 이하 → 인앱 알림 `type: AUTOMATION`, `detail`=문장, 메일 없음). 모르는 종류·필드·상태·우선순위는 저장 때 400.
+- **실행 주체**: 마지막으로 저장한 사람(`actorId`). 액션은 **사람과 같은 서비스 경로**(권한·워크플로 전환 규칙·검증·이력·알림·이벤트)를
+  그 사람 권한으로 탄다 — 권한을 잃으면 실행이 FAILED로 남는다(fail-closed). 조건 AQL도 그 사람이 볼 수 있는 범위에서만 맞는다.
+- **안전장치**: ① 규칙이 만든 변경은 기본적으로 다른 규칙을 깨우지 않는다(`allowRuleTrigger: true`인 규칙만) ② 연쇄 깊이 3단계
+  (`platform.alm.automation.max-depth`) ③ 같은 연쇄 안 같은 (규칙, 이슈)는 한 번(핑퐁 차단) — ②③은 LOOP_BLOCKED로 남는다
+  ④ 규칙당 분당 30회(`rate-per-minute`) — 넘으면 RATE_LIMITED + 자동 비활성 ⑤ 연속 5회 실패(`max-failures`) — 자동 비활성(권한 서비스
+  불능 503은 규칙 잘못이 아니라 세지 않는다) ⑥ 한 실행의 액션은 한 트랜잭션(하나라도 실패하면 전부 되돌림) ⑦ 실행은 커밋 뒤
+  별도 스레드 풀(2개, 대기열 500 — 가득 차면 FAILED로 남김)이라 사람의 요청을 기다리게 하지 않는다. 자동으로 꺼진 규칙은 `disabledReason`이 있고,
+  켜서 저장하면 지워진다. 예약 회차는 조건부 UPDATE로 한 노드만 돈다.
+- 트리거는 같은 프로세스 안의 도메인 이벤트(`event/domain`: `IssueCreatedEvent`·`IssueUpdatedEvent(changedFields)`·`IssueTransitionedEvent`,
+  커밋 뒤 `@TransactionalEventListener`)에 붙는다. Redis Streams 이벤트(아웃박스)와 별개다.
 
 ## OpenAPI
 
@@ -784,6 +931,10 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `ORG_INTERNAL_URI` | `http://localhost:9130` | 플랫폼 메일 허브(org-service)의 내부 API 주소 |
 | `ORG_INTERNAL_TOKEN` | (비어 있음) | 내부 API 토큰(`X-Internal-Token`). 비면 이메일 알림 채널이 꺼진다(알림함만 남음) |
 | `ALM_PUBLIC_URL` | `http://localhost/alm` | 메일 본문 이슈 링크의 기본 주소 |
+| `platform.alm.automation.enabled` | `true` | 자동화 리스너 스위치(설치 단위로 통째로 끈다) |
+| `platform.alm.automation.max-depth` / `rate-per-minute` / `max-failures` | `3` / `30` / `5` | 자동화 안전장치(연쇄 깊이·규칙당 분당 실행·연속 실패) |
+| `platform.alm.automation.threads` / `queue` / `async` | `2` / `500` / `true` | 자동화 실행 풀(테스트는 async=false) |
+| `platform.alm.automation.schedule-polling-enabled` / `schedule-poll-delay` / `schedule-batch` | `true` / `60s` / `100` | 예약 규칙 폴러(인스턴스가 여럿이어도 회차는 한 노드만) |
 
 ## 테스트와 배포
 
@@ -811,6 +962,10 @@ src/main/java/com/platform/almbackend/
 ├─ collab/       댓글·워크로그(CollaborationService)·이슈/웹 링크(IssueLinkService)·활동 기록(IssueActivityService)
 ├─ settings/     레지스트리(RegistryController)·스킴(SchemeController)·프로젝트 설정(ProjectSettingsController)
 ├─ search/aql/   AQL 렉서·파서·해석·Specification
+├─ view/         저장된 보기(V31) — 필터 + 표시 옵션
+├─ estimation/   추정 합계·속도 리포트
+├─ triage/       트리아지 REST·생성 관문(TriageAdmission) — 처리는 issue/IssueTriageService
+├─ automation/   자동화 규칙·실행기·예약 폴러(V36·V37)
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 AlmContentService
 ├─ event/        이벤트 아웃박스 + 커밋 이후 Redis Streams 발행 워커

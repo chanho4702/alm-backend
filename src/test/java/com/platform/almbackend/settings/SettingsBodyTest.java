@@ -21,7 +21,7 @@ class SettingsBodyTest {
                 List.of(new FieldConfig("dueDate", false, false)),
                 List.of(new FieldConfig("assignee", true, true)));
 
-        assertThat(merged).hasSize(13).doesNotContainNull();
+        assertThat(merged).hasSize(SettingsBody.FIELD_IDS.size()).doesNotContainNull();
         assertThat(merged.stream().map(FieldConfig::id)).containsExactlyElementsOf(SettingsBody.FIELD_IDS);
         // 덮어쓰기가 이긴다
         assertThat(merged.get(1)).isEqualTo(new FieldConfig("assignee", true, true));

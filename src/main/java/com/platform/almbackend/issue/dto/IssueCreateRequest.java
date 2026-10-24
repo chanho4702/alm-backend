@@ -29,5 +29,16 @@ public record IssueCreateRequest(
         @Valid IssueDetailsRequest details,
         /** 설명에서 @멘션된 사용자 — 알림 대상(선택) */
         @Schema(description = "설명에서 멘션한 사용자 ID. 알림 대상이다", example = "[7, 42]")
-        List<Long> mentionedUserIds
-) {}
+        List<Long> mentionedUserIds,
+        @Schema(description = "시작일·스토리 포인트(V30). 생략하면 비어 있다")
+        @Valid IssuePlanningRequest planning,
+        /** 트리아지 대기열로 만든다(V35) — 트리아지를 켠 프로젝트에서만. 편집 권한이 없는 사람이 만든 이슈는 이 값과 무관하게 대기열로 간다 */
+        @Schema(description = "true면 트리아지 대기열로 만든다(트리아지를 켠 프로젝트만, 아니면 400). 편집 권한 없이 만든 이슈는 항상 대기열", example = "false")
+        Boolean triage
+) {
+    /** 계획 필드·트리아지 없이 — 기존 호출부(가져오기·복제·테스트)용 */
+    public IssueCreateRequest(String title, String description, String type, String status, String priority,
+                              Long assigneeId, IssueDetailsRequest details, List<Long> mentionedUserIds) {
+        this(title, description, type, status, priority, assigneeId, details, mentionedUserIds, null, null);
+    }
+}
