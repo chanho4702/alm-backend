@@ -419,6 +419,44 @@ class WorkflowEngineTest {
                 .andExpect(jsonPath("$.body.transitions[0].postFunctions[0].type").value("assignToActor"));
     }
 
+    // ── 상태 삭제 저장 — 서버도 지운 상태의 잔여 참조를 정리한다(2026-10-24, 프론트 pruneWorkflowRefs와 같은 규칙) ──
+
+    @Test
+    void 상태를_지우며_저장하면_그_상태를_가리키는_전환_출발_타입_워크플로_배치를_덜고_규칙은_보존한다() throws Exception {
+        String withReview = BASE_STATUSES + ",{\"id\":\"review\",\"name\":\"검토\",\"category\":\"inprogress\",\"order\":4}";
+        String transitions = "[{\"id\":\"t-review\",\"from\":[\"inprogress\"],\"to\":\"review\"},"
+                + "{\"id\":\"t-done\",\"from\":[\"inprogress\",\"review\"],\"to\":\"done\","
+                + "\"conditions\":[{\"type\":\"assignee\"}],\"validators\":[\"assignee\"]},"
+                + "{\"id\":\"t-from-review\",\"from\":[\"review\"],\"to\":\"todo\"},"
+                + "{\"id\":\"t-any\",\"from\":[],\"to\":\"todo\"}]";
+        String typed = ",\"workflowsByType\":{\"bug\":{\"statuses\":[\"todo\",\"inprogress\",\"review\",\"done\"],"
+                + "\"transitions\":[{\"id\":\"b1\",\"from\":[\"todo\"],\"to\":\"review\"},{\"id\":\"b2\",\"from\":[],\"to\":\"done\"}]}}";
+        useCustomBody("{\"statuses\":[" + withReview + "],\"transitions\":" + transitions
+                + ",\"layout\":{\"review\":{\"x\":1,\"y\":2},\"todo\":{\"x\":0,\"y\":0}},\"enabledTypes\":" + ALL_TYPES + typed + "}");
+
+        // 검토를 지우고 나머지는 옛 본문 그대로 보낸다(API 직접 호출 — 프론트 정리를 거치지 않음)
+        String bodyText = putBody("{\"statuses\":[" + BASE_STATUSES + "],\"transitions\":" + transitions
+                        + ",\"layout\":{\"review\":{\"x\":1,\"y\":2},\"todo\":{\"x\":0,\"y\":0}},\"enabledTypes\":" + ALL_TYPES + typed + "}")
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        JsonNode saved = JSON.readTree(bodyText).get("body");
+        List<String> ids = new java.util.ArrayList<>();
+        saved.get("transitions").forEach(t -> ids.add(t.get("id").asText()));
+        assertThat(ids).containsExactly("t-done", "t-any");        // 대상이 검토인 것·출발을 전부 잃은 것은 빠진다
+        JsonNode done = saved.get("transitions").get(0);
+        assertThat(done.get("from").toString()).isEqualTo("[\"inprogress\"]");
+        assertThat(done.get("conditions").get(0).get("type").asText()).isEqualTo("assignee"); // 규칙 보존
+        assertThat(done.get("validators").toString()).isEqualTo("[\"assignee\"]");
+        JsonNode bug = saved.at("/workflowsByType/bug");
+        assertThat(bug.get("statuses").toString()).isEqualTo("[\"todo\",\"inprogress\",\"done\"]");
+        assertThat(bug.get("transitions")).hasSize(1);
+        assertThat(saved.get("layout").has("review")).isFalse();
+
+        // 처음부터 없던 상태(오타)는 정리 대상이 아니다 — 여전히 400
+        putBody(body(BASE_STATUSES, "[{\"id\":\"x\",\"from\":[],\"to\":\"reviw\"}]", ""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("전환의 대상 상태가 워크플로에 없습니다"));
+    }
+
     // ── C5 이슈 타입별 워크플로 ──
 
     /** 기본 3상태 + 진행 중 의미의 "검토" — 타입 워크플로가 기본과 다른 부분집합을 쓰게 한다 */

@@ -93,6 +93,31 @@ class SettingsControllerTest {
         seeder.resetToDefaults();
     }
 
+    @Test
+    void 스킴에서_상태를_지우며_옛_전환을_그대로_보내도_지운_상태_참조는_서버가_정리한다() throws Exception {
+        String created = mvc.perform(post("/api/alm/settings/statuses").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"검수\",\"categoryId\":\"inprogress\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String qa = JSON.readTree(created).get("id").asText();
+        String extra = ",{\"id\":\"" + qa + "\",\"name\":\"검수\",\"category\":\"inprogress\",\"order\":4}";
+        String transitions = "[{\"id\":\"to-qa\",\"from\":[\"inprogress\"],\"to\":\"" + qa + "\"},"
+                + "{\"id\":\"ship\",\"from\":[\"" + qa + "\",\"inprogress\"],\"to\":\"done\",\"validators\":[\"assignee\"]}]";
+        String types = "[\"task\",\"story\",\"bug\",\"epic\",\"subtask\"]";
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":" + defaultBodyWith(extra, transitions, types) + "}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(put("/api/alm/settings/schemes/scheme-default").with(asAdmin(9, "Root"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":" + defaultBodyWith("", transitions, types) + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.transitions.length()").value(1))
+                .andExpect(jsonPath("$.body.transitions[0].id").value("ship"))
+                .andExpect(jsonPath("$.body.transitions[0].from[0]").value("inprogress"))
+                .andExpect(jsonPath("$.body.transitions[0].from.length()").value(1))
+                .andExpect(jsonPath("$.body.transitions[0].validators[0]").value("assignee"));
+    }
+
     private static String defaultBodyWith(String extraStatuses, String transitions, String enabledTypes) {
         return "{\"statuses\":[{\"id\":\"todo\",\"name\":\"할 일\",\"category\":\"todo\",\"order\":1},"
                 + "{\"id\":\"inprogress\",\"name\":\"진행 중\",\"category\":\"inprogress\",\"order\":2},"

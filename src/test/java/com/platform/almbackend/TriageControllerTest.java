@@ -309,6 +309,47 @@ class TriageControllerTest {
                 .andReturn().getResponse().getContentAsString());
     }
 
+    @Test
+    void 검색과_집계의_triage_조건은_AQL과_같이_대기열을_가르고_total도_맞는다() throws Exception {
+        enable();
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON).content(issue("일반 1", ""))).andExpect(status().isCreated());
+        mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON).content(issue("일반 2", ""))).andExpect(status().isCreated());
+        long waiting = JSON.readTree(mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON).content(issue("대기", ",\"triage\":true")))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asLong();
+        long snoozed = JSON.readTree(mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON).content(issue("보류", ",\"triage\":true")))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asLong();
+        mvc.perform(post("/api/alm/issues/{id}/triage/snooze", snoozed).with(asUser(1, "Alice"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"until\":\"" + java.time.Instant.now().plus(java.time.Duration.ofDays(1)) + "\"}"))
+                .andExpect(status().isOk());
+
+        // 기본(조건 없음)은 옛 동작 — 전부
+        mvc.perform(get("/api/alm/issues/search").param("projectIds", String.valueOf(projectId)).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.total").value(4));
+        // 보드·백로그용 — 대기열 밖만, total도 서버가 맞춘다
+        mvc.perform(get("/api/alm/issues/search").param("projectIds", String.valueOf(projectId)).param("triage", "false")
+                        .with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items[*].triageState").value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.nullValue())));
+        // 대기열(보류 포함) — AQL triage = true와 같은 집합
+        mvc.perform(get("/api/alm/issues/search").param("projectIds", String.valueOf(projectId)).param("triage", "true")
+                        .with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items[*].id").value(org.hamcrest.Matchers.containsInAnyOrder((int) waiting, (int) snoozed)));
+        mvc.perform(post("/api/alm/issues/query").with(asUser(1, "Alice")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"aql\":\"project = TR AND triage = true\"}"))
+                .andExpect(jsonPath("$.total").value(2));
+        mvc.perform(get("/api/alm/issues/aggregate").param("groupBy", "status").param("projectIds", String.valueOf(projectId))
+                        .param("triage", "false").with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.total").value(2));
+        mvc.perform(get("/api/alm/issues/search").param("triage", "maybe").with(asUser(1, "Alice")))
+                .andExpect(status().isBadRequest());
+    }
+
     private String updateBody(long id, String status, String title) throws Exception {
         JsonNode current = JSON.readTree(mvc.perform(get("/api/alm/issues/{id}", id).with(asUser(1, "Alice")))
                 .andReturn().getResponse().getContentAsString());

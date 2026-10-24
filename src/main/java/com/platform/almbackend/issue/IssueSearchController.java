@@ -62,6 +62,8 @@ public class IssueSearchController {
             @RequestParam(required = false) String dueTo,
             @Parameter(description = "이 시각 이후 수정된 이슈만(ISO-8601 시각, 포함)", example = "2026-10-01T00:00:00Z")
             @RequestParam(required = false) String updatedSince,
+            @Parameter(description = "트리아지 대기열 — 비우면 조건 없음, true면 대기열 이슈만, false면 대기열 밖만(보드·백로그). AQL triage와 같은 판정")
+            @RequestParam(required = false) Boolean triage,
             @Parameter(description = "정렬 기준 — updated(기본)·created·due·priority·key·title·status·type")
             @RequestParam(required = false) String sort,
             @Parameter(description = "정렬 방향 — desc(기본)·asc") @RequestParam(required = false) String dir,
@@ -71,7 +73,7 @@ public class IssueSearchController {
         return search.search(userId(jwt), new IssueSearchService.Criteria(
                 projectIds, text, statuses, statusCategories, openOnly, priorities, types, assignees, labels,
                 componentIds, sprintId, parentId, fixVersionId, date("dueBefore", dueBefore), date("dueFrom", dueFrom),
-                date("dueTo", dueTo), instant("updatedSince", updatedSince), sort, dir), page, size);
+                date("dueTo", dueTo), instant("updatedSince", updatedSince), sort, dir, triage), page, size);
     }
 
     /**
@@ -104,11 +106,12 @@ public class IssueSearchController {
             @Parameter(description = "마감일 ≥ 이 날짜(YYYY-MM-DD, 포함)") @RequestParam(required = false) String dueFrom,
             @Parameter(description = "마감일 ≤ 이 날짜(YYYY-MM-DD, 포함)") @RequestParam(required = false) String dueTo,
             @Parameter(description = "이 시각 이후 수정(ISO-8601 시각, 포함)") @RequestParam(required = false) String updatedSince,
+            @Parameter(description = "트리아지 대기열 — 검색과 같은 규칙") @RequestParam(required = false) Boolean triage,
             @AuthenticationPrincipal Jwt jwt) {
         return search.aggregate(userId(jwt), new IssueSearchService.Criteria(
                 projectIds, text, statuses, statusCategories, openOnly, priorities, types, assignees, labels,
                 componentIds, sprintId, parentId, fixVersionId, date("dueBefore", dueBefore), date("dueFrom", dueFrom),
-                date("dueTo", dueTo), instant("updatedSince", updatedSince), null, null), groupBy);
+                date("dueTo", dueTo), instant("updatedSince", updatedSince), null, null, triage), groupBy);
     }
 
     /** 라벨 선택지 — 목록 화면이 프로젝트 이슈 전량을 읽어 라벨을 모으지 않게 한다 */

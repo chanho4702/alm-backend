@@ -100,7 +100,21 @@ public class IssueSearchService {
             /** 수정 시각 ≥ updatedSince(포함) */
             Instant updatedSince,
             String sort,
-            String dir) {}
+            String dir,
+            /**
+             * 트리아지 대기열(V35) — null이면 조건 없음(옛 동작), true면 대기열 이슈만, false면 대기열 밖만(보드·백로그 목록).
+             * AQL {@code triage = true|false}와 같은 판정(triage_state 유무 — 보류 중인 SNOOZED도 대기열이다).
+             */
+            Boolean triage) {
+        /** 트리아지 조건 없는 옛 생성자 */
+        public Criteria(List<Long> projectIds, String text, List<String> statuses, List<String> statusCategories,
+                        boolean openOnly, List<String> priorities, List<String> types, List<String> assignees,
+                        List<String> labels, List<Long> componentIds, Long sprintId, Long parentId, Long fixVersionId,
+                        LocalDate dueBefore, LocalDate dueFrom, LocalDate dueTo, Instant updatedSince, String sort, String dir) {
+            this(projectIds, text, statuses, statusCategories, openOnly, priorities, types, assignees, labels, componentIds,
+                    sprintId, parentId, fixVersionId, dueBefore, dueFrom, dueTo, updatedSince, sort, dir, null);
+        }
+    }
 
     public IssuePageResponse search(long userId, Criteria criteria, int page, int size) {
         int safeSize = Math.max(1, Math.min(size, MAX_SIZE));
@@ -252,6 +266,9 @@ public class IssueSearchService {
         if (c.dueFrom() != null) where.add(cb.greaterThanOrEqualTo(root.get("dueDate"), c.dueFrom()));
         if (c.dueTo() != null) where.add(cb.lessThanOrEqualTo(root.get("dueDate"), c.dueTo()));
         if (c.updatedSince() != null) where.add(cb.greaterThanOrEqualTo(root.get("updatedAt"), c.updatedSince()));
+        if (c.triage() != null) {
+            where.add(c.triage() ? cb.isNotNull(root.get("triageState")) : cb.isNull(root.get("triageState")));
+        }
         return cb.and(where.toArray(Predicate[]::new));
     }
 

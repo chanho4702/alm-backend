@@ -81,6 +81,7 @@ public class SchemeService {
         SettingsScheme scheme = requireScheme(id);
         if (name != null) scheme.rename(requireText(name, "스킴 이름을 입력하세요"));
         if (body != null) {
+            body = pruneRemoved(body, queries.parse(scheme.getBody()));
             validate(body);
             List<Long> shared = projectSettings.findBySchemeId(id).stream()
                     .filter(ps -> !ps.isCustom()).map(ProjectSettings::getProjectId).toList();
@@ -181,6 +182,7 @@ public class SchemeService {
         projectService.require(actorId, projectId, AlmAction.ADMIN);
         ProjectSettings ps = entry(projectId);
         if (!ps.isCustom()) throw new IllegalArgumentException("커스텀 설정을 사용 중일 때만 편집할 수 있습니다");
+        body = pruneRemoved(body, queries.parse(ps.getCustomBody()));
         validate(body);
         migrateIssues(actorId, List.of(projectId), body);
         applyToRegistry(body);
@@ -487,33 +489,70 @@ public class SchemeService {
         }
     }
 
+    /**
+     * 검증 <b>전</b> 정리(2026-10-24) — 이번 저장에서 <b>지운</b> 상태(지금 저장본에는 있고 새 본문에는 없는 것)를 가리키는 전환
+     * (대상이면 전환째, 출발이면 그 출발만 — 출발을 전부 잃으면 전환째)·타입별 워크플로 상태 목록·배치를 덜어낸다. 조건·검증·화면·후처리는
+     * 보존한다. 프론트 {@code pruneWorkflowRefs}와 같은 규칙이라 API를 직접 부르는 쪽도 상태를 지우면서 400을 맞지 않는다.
+     *
+     * <p>처음부터 없던 id(오타·다른 프로젝트 상태)는 지우지 않는다 — "지운 상태의 잔여 참조"와 "잘못 적은 참조"를 가르기 위해서다.
+     * 후자는 그대로 검증에 걸려 400이다(조용히 사라지면 클라이언트 버그가 숨는다).
+     */
+    static SettingsBody pruneRemoved(SettingsBody body, SettingsBody previous) {
+        Set<String> removed = new HashSet<>();
+        if (previous != null) for (SettingsBody.WorkflowStatus s : previous.statuses()) removed.add(s.id());
+        for (SettingsBody.WorkflowStatus s : body.statuses()) removed.remove(s.id());
+        if (removed.isEmpty()) return body;
+        java.util.function.Predicate<String> keep = id -> !removed.contains(id);
+        return pruneBy(body, keep, keep);
+    }
+
     /** 사라진 상태의 전이·배치를 남기지 않는다 */
     private static SettingsBody prune(SettingsBody body) {
         Set<String> valid = new HashSet<>();
         for (SettingsBody.WorkflowStatus s : body.statuses()) valid.add(s.id());
-        List<SettingsBody.Transition> transitions = pruneTransitions(body.transitions(), valid);
+        return pruneBy(body, valid::contains, null);
+    }
+
+    /**
+     * @param keep        남길 상태 id
+     * @param scopedKeep  타입별 워크플로 전환에 쓸 판정 — null이면 "부분 집합(비면 전체 유효 상태)" 안에 있어야 남는다(저장 직전 정리).
+     *                    null이 아니면 그것만 본다(검증 전 정리 — 부분 집합 밖 참조는 검증이 400으로 말한다)
+     */
+    private static SettingsBody pruneBy(SettingsBody body, java.util.function.Predicate<String> keep,
+                                        java.util.function.Predicate<String> scopedKeep) {
+        List<SettingsBody.Transition> transitions = pruneTransitions(body.transitions(), keep);
         Map<String, SettingsBody.TypeWorkflow> workflows = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, SettingsBody.TypeWorkflow> e : body.workflowsByType().entrySet()) {
             SettingsBody.TypeWorkflow w = e.getValue();
-            List<String> subset = w.statuses() == null ? List.of() : w.statuses().stream().filter(valid::contains).toList();
-            Set<String> scoped = subset.isEmpty() ? valid : new HashSet<>(subset);
+            if (w == null) {
+                workflows.put(e.getKey(), null); // 검증이 "비어 있습니다"로 말한다
+                continue;
+            }
+            List<String> subset = w.statuses() == null ? List.of() : w.statuses().stream().filter(keep).toList();
+            java.util.function.Predicate<String> scoped = scopedKeep != null ? scopedKeep
+                    : subset.isEmpty() ? keep : new HashSet<>(subset)::contains;
             workflows.put(e.getKey(), new SettingsBody.TypeWorkflow(subset,
                     w.transitions() == null ? null : pruneTransitions(w.transitions(), scoped)));
         }
         Map<String, SettingsBody.Point> layout = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, SettingsBody.Point> e : body.layout().entrySet()) {
-            if (valid.contains(e.getKey()) || "__any__".equals(e.getKey())) layout.put(e.getKey(), e.getValue());
+            if (keep.test(e.getKey()) || "__any__".equals(e.getKey())) layout.put(e.getKey(), e.getValue());
         }
         return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes(),
                 body.enabledPriorities(), body.defaultPriority(), body.fields(), body.fieldsByType(), workflows);
     }
 
     /** 원래 전역 전환(from 비었음)은 그대로 두고, from을 전부 잃은 전환만 버린다 — 규칙(조건·검증·화면·후처리)은 보존 */
-    private static List<SettingsBody.Transition> pruneTransitions(List<SettingsBody.Transition> source, Set<String> valid) {
+    private static List<SettingsBody.Transition> pruneTransitions(List<SettingsBody.Transition> source,
+                                                                  java.util.function.Predicate<String> valid) {
         List<SettingsBody.Transition> transitions = new ArrayList<>();
         for (SettingsBody.Transition t : source) {
-            if (!valid.contains(t.to())) continue;
-            List<String> from = t.from().stream().filter(valid::contains).toList();
+            if (t == null || t.to() == null) {
+                transitions.add(t); // 모양 오류는 검증이 400으로 말한다
+                continue;
+            }
+            if (!valid.test(t.to())) continue;
+            List<String> from = t.from().stream().filter(valid).toList();
             if (!t.isGlobal() && from.isEmpty()) continue;
             transitions.add(t.withFrom(from));
         }
