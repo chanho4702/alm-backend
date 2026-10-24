@@ -38,6 +38,7 @@ public class IssueArchiveController {
     private final IssueRepository issues;
     private final ProjectService projectService;
     private final EventRelay events;
+    private final com.platform.almbackend.event.domain.IssueDomainEventPublisher domainEvents;
     private final IssueResponses responses;
 
     @Operation(summary = "프로젝트 보관함의 이슈를 조회한다")
@@ -56,6 +57,7 @@ public class IssueArchiveController {
         projectService.require(actorId, issue.getProjectId(), AlmAction.EDIT);
         issue.archive(actorId, Instant.now().truncatedTo(ChronoUnit.MICROS));
         events.afterCommit(AlmEvents.issueDeleted(actorId, issue));
+        domainEvents.deleted(actorId, issue, true);
         return IssueResponse.from(issue);
     }
 
@@ -68,6 +70,7 @@ public class IssueArchiveController {
         projectService.require(actorId, issue.getProjectId(), AlmAction.EDIT);
         issue.restore();
         events.afterCommit(AlmEvents.issueCreated(actorId, issue));
+        domainEvents.restored(actorId, issue);
         return IssueResponse.from(issue);
     }
 }

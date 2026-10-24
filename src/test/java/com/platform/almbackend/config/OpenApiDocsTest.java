@@ -194,6 +194,10 @@ class OpenApiDocsTest {
                 // 내 알림 — 프로젝트 권한을 묻지 않는다
                 "get /api/alm/notifications", "post /api/alm/notifications/{id}/read",
                 "post /api/alm/notifications/read-all",
+                // 인박스(V40) — 본인 알림만 다룬다
+                "get /api/alm/notifications/inbox", "post /api/alm/notifications/bulk",
+                "post /api/alm/notifications/{id}/snooze", "delete /api/alm/notifications/{id}/snooze",
+                "post /api/alm/notifications/{id}/archive", "post /api/alm/notifications/{id}/unarchive",
                 // 레지스트리·스킴 읽기 — 로그인이면 된다(쓰기는 전역 관리자라 org를 탄다)
                 "get /api/alm/settings/categories",
                 "get /api/alm/settings/statuses", "get /api/alm/settings/statuses/usage",
@@ -230,13 +234,15 @@ class OpenApiDocsTest {
             Map.entry("SavedFilterService:69 필터 이름 중복(수정)", "put /api/alm/me/filters/{id}"),
             Map.entry("SavedFilterService:99 필터 이름 중복(수정·DB 유니크)", "put /api/alm/me/filters/{id}"),
             Map.entry("SavedViewService 낙관적 락(D1)", "put /api/alm/views/{id}"),
-            Map.entry("AutomationRuleService 낙관적 락", "put /api/alm/automation/rules/{ruleId}"));
+            Map.entry("AutomationRuleService 낙관적 락", "put /api/alm/automation/rules/{ruleId}"),
+            Map.entry("ProjectPlanningService 낙관적 락·첫 저장 경합(V39)", "put /api/alm/projects/{projectId}/planning-settings"));
 
     /** 엔드포인트별 409 사유 — 서비스가 던지는 메시지와 같게 적는다. 둘 이상이면 " / "로 잇는다. */
     private static final Map<String, String> EXPECTED_409 = Map.ofEntries(
             Map.entry("put /api/alm/issues/{issueId}", "버전 충돌 — expectedVersion 불일치"),
             Map.entry("put /api/alm/views/{id}", "버전 충돌 — expectedVersion 불일치"),
             Map.entry("put /api/alm/automation/rules/{ruleId}", "버전 충돌 — expectedVersion 불일치"),
+            Map.entry("put /api/alm/projects/{projectId}/planning-settings", "버전 충돌 — expectedVersion 불일치"),
             Map.entry("put /api/alm/projects/{projectId}", "버전 충돌 — expectedVersion 불일치"),
             Map.entry("put /api/alm/sprints/{sprintId}", "버전 충돌 — expectedVersion 불일치"),
             Map.entry("put /api/alm/versions/{versionId}",

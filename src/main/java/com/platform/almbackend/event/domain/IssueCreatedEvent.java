@@ -12,4 +12,6 @@ public record IssueCreatedEvent(
         /** 생성된 상태 id */
         String status,
         long actorId,
-        Instant at) implements IssueDomainEvent {}
+        Instant at,
+        /** 생성 직후 이슈 version(실시간 무효화 신호용, 2026-10-24) */
+        long version) implements IssueDomainEvent {}

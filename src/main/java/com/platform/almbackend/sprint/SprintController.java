@@ -1,6 +1,7 @@
 package com.platform.almbackend.sprint;
 
 import com.platform.almbackend.sprint.dto.SprintCompleteRequest;
+import com.platform.almbackend.sprint.dto.SprintCompleteResponse;
 import com.platform.almbackend.sprint.dto.SprintCreateRequest;
 import com.platform.almbackend.sprint.dto.SprintResponse;
 import com.platform.almbackend.sprint.dto.SprintUpdateRequest;
@@ -64,9 +65,11 @@ public class SprintController {
     }
 
     @ConflictResponse("진행 중인 스프린트만 완료할 수 있습니다")
-    @Operation(summary = "스프린트를 완료하고 미완료 이슈를 옮긴다")
+    @Operation(summary = "스프린트를 완료하고 미완료 이슈를 옮긴다",
+            description = "이관 대상: moveUnfinishedToSprintId(스프린트) > moveUnfinishedTo(backlog·next) > 계획 설정 defaultCarryOver. "
+                    + "다음 예정 스프린트가 없고 계획 설정 autoCreateNext면 다음 스프린트를 만든다(응답 carryOver.nextSprintAutoCreated).")
     @PostMapping("/api/alm/sprints/{sprintId}/complete")
-    public SprintResponse complete(
+    public SprintCompleteResponse complete(
             @Parameter(description = "스프린트 ID") @PathVariable long sprintId,
             @Valid @RequestBody(required = false) SprintCompleteRequest request,
             @AuthenticationPrincipal Jwt jwt) {

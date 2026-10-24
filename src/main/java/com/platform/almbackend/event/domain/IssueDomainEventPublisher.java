@@ -51,7 +51,27 @@ public class IssueDomainEventPublisher {
 
     public void created(long actorId, Issue issue) {
         publisher.publishEvent(new IssueCreatedEvent(issue.getId(), issue.getProjectId(), issue.getKey(),
-                issue.getType(), issue.getStatus(), actorId, now()));
+                issue.getType(), issue.getStatus(), actorId, now(), version(issue)));
+    }
+
+    /** 삭제 또는 보관(archived) — 화면에서 사라진다. 자동화는 듣지 않는다 */
+    public void deleted(long actorId, Issue issue, boolean archived) {
+        publisher.publishEvent(new IssueDeletedEvent(issue.getId(), issue.getProjectId(), issue.getKey(), archived, actorId, now()));
+    }
+
+    /** 보관함에서 되돌림 — 화면에 다시 나타난다. 생성이 아니라 자동화 ISSUE_CREATED를 깨우지 않는다 */
+    public void restored(long actorId, Issue issue) {
+        publisher.publishEvent(new IssueRestoredEvent(issue.getId(), issue.getProjectId(), issue.getKey(), actorId, now(), version(issue)));
+    }
+
+    /**
+     * 순서만 바뀐 이동(같은 열 안 재정렬·같은 스프린트 안 랭크) — 필드 변경이 아니라 {@link IssueUpdatedEvent}가 나가지 않는 경우에만 낸다.
+     * 같은 랭크 그룹의 다른 이슈 sortOrder도 함께 바뀌었으므로 받는 쪽은 그룹(sprintId) 순서를 다시 읽는다.
+     */
+    public void rankedIfUnchanged(long actorId, Before before, Issue after) {
+        if (!changedFields(before, after).isEmpty()) return;
+        publisher.publishEvent(new IssueRankedEvent(after.getId(), after.getProjectId(), after.getKey(),
+                after.getSprintId(), actorId, now(), version(after)));
     }
 
     /**
@@ -70,7 +90,7 @@ public class IssueDomainEventPublisher {
         Set<String> changed = changedFields(before, after);
         if (!changed.isEmpty()) {
             publisher.publishEvent(new IssueUpdatedEvent(after.getId(), after.getProjectId(), after.getKey(),
-                    changed, actorId, at));
+                    changed, actorId, at, version(after)));
         }
     }
 
@@ -104,6 +124,10 @@ public class IssueDomainEventPublisher {
         return body.statuses().stream().filter(s -> s.id().equals(statusId)).map(SettingsBody.WorkflowStatus::kind)
                 .filter(Objects::nonNull).findFirst()
                 .orElse("done".equals(statusId) ? "complete" : "new");
+    }
+
+    private static long version(Issue issue) {
+        return issue.getVersion() == null ? 0 : issue.getVersion();
     }
 
     private static Instant now() {

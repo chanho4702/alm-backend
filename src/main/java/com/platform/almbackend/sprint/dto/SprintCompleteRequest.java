@@ -20,5 +20,11 @@ public record SprintCompleteRequest(
          * 같은 프로젝트의 끝나지 않은 다른 스프린트만 지정할 수 있다.
          */
         @Positive(message = "moveUnfinishedToSprintId는 양수여야 합니다")
-        Long moveUnfinishedToSprintId
+        Long moveUnfinishedToSprintId,
+        /**
+         * 스프린트 id 대신 이관 방향(V39 사이클): {@code backlog} · {@code next}(다음 예정 스프린트 — 없고 자동 생성이 켜져
+         * 있으면 만들어서). 둘 다 생략하면 프로젝트 계획 설정의 {@code defaultCarryOver}(기본 backlog — 옛 동작). id가 있으면 id가 이긴다.
+         */
+        @jakarta.validation.constraints.Pattern(regexp = "backlog|next", message = "moveUnfinishedTo는 backlog·next 중 하나여야 합니다")
+        String moveUnfinishedTo
 ) {}

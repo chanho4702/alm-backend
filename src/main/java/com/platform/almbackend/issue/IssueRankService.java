@@ -88,6 +88,7 @@ public class IssueRankService {
         }
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         domainEvents.changed(userId, domainBefore, issue, body, used == null || used.transition() == null ? null : used.id());
+        domainEvents.rankedIfUnchanged(userId, domainBefore, issue);
         return IssueResponse.from(issue);
     }
 
@@ -119,6 +120,7 @@ public class IssueRankService {
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
         // 랭크는 상태를 바꾸지 않는다 — 본문(상태 의미)이 필요 없다
         domainEvents.changed(userId, domainBefore, issue, null, null);
+        domainEvents.rankedIfUnchanged(userId, domainBefore, issue);
         return IssueResponse.from(issue);
     }
 }

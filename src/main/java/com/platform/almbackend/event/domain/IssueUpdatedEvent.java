@@ -18,7 +18,9 @@ public record IssueUpdatedEvent(
         String issueKey,
         Set<String> changedFields,
         long actorId,
-        Instant at) implements IssueDomainEvent {
+        Instant at,
+        /** 변경 뒤 이슈 version — 플래그·보드 이동처럼 version을 올리지 않는 변경이면 그대로다(실시간 신호용, 2026-10-24) */
+        long version) implements IssueDomainEvent {
     public IssueUpdatedEvent {
         changedFields = Set.copyOf(changedFields);
     }

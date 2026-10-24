@@ -85,7 +85,7 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/filters/shared` | 인증 | 남이 공유한 저장 필터(조직 전체, V28). 결과는 실행하는 사람 권한으로 걸러진다 |
 | `GET` | `/api/alm/filters/{id}` | 인증 | 저장 필터 단건 — 내 것이거나 공유된 것(비공개 남의 것 404). 남의 공유 필터 수정·삭제는 403 |
 | `POST` | `/api/alm/issues/bulk` | 행마다 EDIT | 일괄 편집 — 보낸 필드만, 행별 트랜잭션·행별 결과(`CONFLICT`면 `currentVersion`). 최대 200건. 아래 "일괄 편집" 절 |
-| `GET` | `/api/alm/issues/search` | 접근 가능한 프로젝트 | 조건 검색·페이징(최대 200). 응답 `truncated`=뒤에 더 있음. 검색어의 `%`·`_`는 글자 그대로 |
+| `GET` | `/api/alm/issues/search` | 접근 가능한 프로젝트 | 조건 검색·페이징(최대 200). 응답 `truncated`=뒤에 더 있음. 검색어의 `%`·`_`는 글자 그대로. `triage=true\|false`(2026-10-24) — 생략하면 조건 없음(옛 동작), `false`면 트리아지 대기열 밖만(보드·백로그 목록 — `total`도 서버가 맞춘다), `true`면 대기열(보류 포함)만. AQL `triage`와 같은 판정. `/issues/aggregate`도 같은 파라미터 |
 | `GET` | `/api/alm/issues/aggregate` | 접근 가능한 프로젝트 | 조건 집계(GROUP BY) — 진행률·통계는 목록 대신 이것으로 센다 |
 | `POST` | `/api/alm/issues/query` | 접근 가능한 프로젝트 | **AQL** 검색 — 아래 "AQL" 절 |
 | `POST` | `/api/alm/issues/query/validate` | 인증 | AQL 문법 검사(에디터 실시간) |
@@ -125,7 +125,11 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/sprints/{sprintId}` | VIEW | 스프린트 단건 |
 | `PUT` | `/api/alm/sprints/{sprintId}` | EDIT | 계획 메타 수정(이름·목표·예정 기간, `expectedVersion`) |
 | `POST` | `/api/alm/sprints/{sprintId}/start` | EDIT | 스프린트 시작(프로젝트당 1개) |
-| `POST` | `/api/alm/sprints/{sprintId}/complete` | EDIT | 스프린트 완료, 미완료 이슈는 지정 스프린트(`moveUnfinishedToSprintId`) 또는 백로그로 |
+| `POST` | `/api/alm/sprints/{sprintId}/complete` | EDIT | 스프린트 완료, 미완료 이슈는 지정 스프린트(`moveUnfinishedToSprintId`) · 방향(`moveUnfinishedTo` backlog·next) · 계획 설정 기본값 순으로. 응답에 `carryOver`(V39) — 아래 "사이클" 절 |
+| `GET` | `/api/alm/projects/{projectId}/stream` | VIEW | 실시간 무효화 신호(SSE) — 아래 "실시간 동기화" 절 |
+| `GET`·`PUT` | `/api/alm/projects/{projectId}/planning-settings` | VIEW·ADMIN | 사이클(스프린트 자동화)·추정 척도(V39) — 아래 "사이클"·"추정 척도" 절 |
+| `GET` | `/api/alm/notifications/inbox` | 인증(본인) | 알림 인박스 — 커서·필터(V40). 아래 "알림 인박스" 절 |
+| `POST`·`DELETE` | `/api/alm/notifications/{id}/snooze`, `POST /{id}/archive`·`/{id}/unarchive`, `POST /api/alm/notifications/bulk` | 인증(본인) | 미루기·보관·일괄 처리(V40) |
 
 ### 상태 아이콘 (V20)
 
@@ -346,6 +350,11 @@ WHERE i.resolution IS NULL
 - 조건·검증 거부는 **400**이다(403은 권한 없음에만 — 2026-10-24 사용자 결정, 기획 §7-9).
 - 전환 id 없이 상태만 오는 경로(PUT·move·bulk)는 같은 대상으로 가는 전환 중 **조건을 충족하는 첫 번째**를 쓰고,
   하나도 못 하면 첫 후보의 이유로 거부한다. 정의되지 않은 이동은 예전 문구 `할 일에서 완료로 옮길 수 없습니다`.
+- **상태를 지우며 저장(2026-10-24)**: 스킴·커스텀 본문 저장은 검증 **전에** 이번 저장에서 지운 상태(지금 저장본에는 있고 새 본문에는
+  없는 것)의 잔여 참조를 서버가 덜어낸다 — 대상이 그 상태인 전환은 통째로, 출발 목록에서는 그 상태만(출발을 전부 잃은 전환은 통째로,
+  원래 전역 전환은 그대로), 타입별 워크플로 상태 목록·배치에서도. 조건·검증·화면·후처리는 보존한다. 프론트 `pruneWorkflowRefs`와 같은
+  규칙이라 API를 직접 부르는 쪽도 400을 맞지 않는다. **처음부터 없던 id(오타)는 덜지 않는다** — 그대로 400(`전환의 대상 상태가 워크플로에
+  없습니다`)이라 클라이언트 버그가 조용히 숨지 않는다. 덜어낸 결과가 규칙을 어기면(예: 타입 워크플로의 유일한 진행 중 상태를 지움) 여전히 400.
 - 저장 검증(스킴/커스텀 저장 400): 대상·출발 상태가 워크플로에 있어야 하고, 위 어휘만, 같은 전환 id 중복 금지,
   `assignToActor`+`clearAssignee` 동시 금지. 해결 해제는 내장 규칙이라 후처리로 두지 않는다.
 
@@ -396,7 +405,9 @@ WHERE i.resolution IS NULL
 `event/domain/` — `IssueCreatedEvent`·`IssueUpdatedEvent`(`changedFields`)·`IssueTransitionedEvent`(`fromStatus`·`toStatus`·
 `fromKind`·`toKind`·`transitionId`·`actorId`·`at`)를 Spring `ApplicationEventPublisher`로 변경 트랜잭션 **안**에서 낸다.
 커밋된 것에만 반응하려면 `@TransactionalEventListener(phase = AFTER_COMMIT)`(DB를 다시 쓰면 `REQUIRES_NEW`). 자동화 규칙
-엔진이 여기에 붙는다. 서비스 간 이벤트는 그대로 아웃박스(V26) → Redis Streams다. 스킴 변경 이관은 사용자의 전환이 아니라
+엔진이 여기에 붙는다. 실시간 스트림(아래)을 위해 2026-10-24에 `IssueDeletedEvent`(`archived` — 삭제·보관)·`IssueRestoredEvent`
+(보관 해제)·`IssueRankedEvent`(필드 변경 없이 순서만 바뀐 이동·랭크)·`SprintChangedEvent`(created·updated·started·completed·deleted)가
+더해졌고 `IssueCreatedEvent`·`IssueUpdatedEvent`에 변경 뒤 `version`이 붙었다. 새 이벤트는 자동화 트리거가 아니다. 서비스 간 이벤트는 그대로 아웃박스(V26) → Redis Streams다. 스킴 변경 이관은 사용자의 전환이 아니라
 발행하지 않는다.
 
 ## AQL — 조건을 조합하는 이슈 질의어
@@ -767,6 +778,141 @@ API·가져오기(CSV)로 만든 이슈는 일반 생성이다(편집 권한 기
 - 트리거는 같은 프로세스 안의 도메인 이벤트(`event/domain`: `IssueCreatedEvent`·`IssueUpdatedEvent(changedFields)`·`IssueTransitionedEvent`,
   커밋 뒤 `@TransactionalEventListener`)에 붙는다. Redis Streams 이벤트(아웃박스)와 별개다.
 
+## 실시간 동기화 — 프로젝트 SSE 스트림 (2026-10-24, Linear식)
+
+보드·백로그·목록을 열어 둔 사람에게 남의 변경을 바로 알린다. **무효화 신호만** 보낸다 — 무엇이(id·종류) 어느 version으로 바뀌었는지.
+본문(제목·설명·필드 값)은 싣지 않는다. 받는 쪽이 REST로 다시 읽고, 그 REST가 권한을 거른다.
+
+`GET /api/alm/projects/{projectId}/stream` (VIEW — 없으면 403, 휴지통·없는 프로젝트 404, org 불능 503. 판정은 스트림을 열기 **전**이고
+오류 본문은 `Accept: text/event-stream`이어도 `{"error"}` JSON이다). EventSource는 Authorization 헤더를 못 실으니 프론트는 fetch
+스트리밍으로 붙는다(agent-service 사무실 스트림과 같은 방식).
+
+```text
+retry:3000
+:connected
+
+id:1729760000000-0          ← 연결 시점의 스트림 위치(없으면 id 줄 없음)
+event:ready
+data:{"projectId":7,"replayed":0,"reset":false,"heartbeatSeconds":15}
+
+id:1729760001234-0
+event:issue
+data:{"type":"issue.updated","projectId":7,"issueId":123,"issueKey":"ALM-12","version":5,"changedFields":["assignee","storyPoints"],"actorId":42,"at":"2026-10-24T03:00:01.234Z"}
+
+id:1729760002000-0
+event:issue
+data:{"type":"issue.transitioned","projectId":7,"issueId":123,"issueKey":"ALM-12","version":6,"changedFields":["status","resolution"],"actorId":42,"at":"…"}
+
+id:1729760003000-0
+event:issue
+data:{"type":"issue.ranked","projectId":7,"issueId":124,"issueKey":"ALM-13","sprintId":12,"version":3,"actorId":42,"at":"…"}
+
+id:1729760004000-0
+event:sprint
+data:{"type":"sprint.completed","projectId":7,"sprintId":12,"version":3,"actorId":42,"at":"…"}
+
+:hb                          ← heartbeat(주석 줄, 15초)
+```
+
+| `type` | 언제 | 받는 쪽이 할 일 |
+|---|---|---|
+| `issue.created` · `issue.restored` | 생성(단건·CSV·복제·트리아지) · 보관 해제 | `GET /issues/{id}` 또는 목록 재조회 |
+| `issue.updated` | 필드 변경(`changedFields` — 어휘는 `IssueDomainEventPublisher.CHANGED_FIELDS`). 플래그·보드 이동처럼 version을 올리지 않는 변경도 있다 | 들고 있는 version보다 크거나 `changedFields`가 화면에 걸리면 재조회 |
+| `issue.transitioned` | 상태가 바뀐 변경(`changedFields`에 status) — 한 변경 = 한 신호 | 보드 열 재배치 |
+| `issue.ranked` | 필드 변경 없이 순서만(같은 열 재정렬·같은 스프린트/백로그 안 랭크). `sprintId`(null=백로그) 그룹 전체가 다시 매겨졌다 | 그 그룹 순서 재조회 |
+| `issue.deleted` · `issue.archived` | 삭제 · 보관함으로(version 없음) | 화면에서 뺀다 |
+| `sprint.created`·`updated`·`started`·`completed`·`deleted` | 스프린트 수명주기. 완료·삭제가 옮긴 이슈는 이슈마다 신호를 내지 않는다 | 스프린트 목록 + 보드·백로그 재조회 |
+| `reset` (`{projectId, reason: gap·overflow}`) | 이어 줄 수 없다(재생 창 밖·저장소 초기화·형식 아닌 id) 또는 느린 소비자 대기열이 넘쳤다 | 화면 전체 재조회 |
+| `revoked` (`{projectId}`) | 5분마다 VIEW를 다시 보는데 잃었다 → 보낸 뒤 닫는다(org 불능이면 판정 보류) | 스트림 재연결 안 함, 화면 갱신 |
+
+- `actorId`는 변경한 사람이다(사이클 자동 생성은 0). 자기 변경 메아리는 받는 쪽이 거른다. 커밋된 변경만 흐른다(롤백·400·409는 신호 없음).
+- **재연결**: 마지막으로 받은 `id`를 `Last-Event-ID` 헤더(또는 `?lastEventId=`)로 보내면 그 다음부터 **그 프로젝트 신호만** 재생하고
+  `ready.replayed`에 수를 싣는다. 재생 창은 스트림 MAXLEN(근사 10000건, 전 프로젝트 합)이고 한 번에 훑는 상한은 1000건 — 넘으면 `reset`.
+  연결은 30분이면 서버가 닫는다(새 토큰으로 재연결 — 권한도 그때 다시 본다).
+- **상한**: 사용자당 5개, 노드당 500개 — 넘으면 429 `{"error"}`(`Retry-After: 30`). 구독자별 대기열 100건 — 넘치면 대기열을 `reset` 하나로
+  바꾼다. 한 번의 전송이 20초 넘게 끝나지 않으면(TCP 창이 찬 클라이언트) heartbeat 틱이 끊고 자리를 돌려준다. 전송은 구독자별 직렬 가상 스레드라
+  느린 구독자 하나가 다른 구독자를 막지 않는다.
+
+**노드 간 팬아웃 — Redis Streams 전용 스트림 `alm:realtime:v1`.** compose의 alm-backend는 지금 1노드(`container_name`)지만, 늘려도 맞게 만든다:
+커밋 뒤(`AFTER_COMMIT`) 단일 발행 스레드가 XADD(MAXLEN ~10000) → 노드마다 마지막으로 본 id부터 XREAD BLOCK(소비 그룹 없음 — 모든 노드가 모든
+신호를 받는다) → 자기 구독자에게. 근거:
+1. 확정 결정이 "서비스 간 이벤트는 Redis Streams"다 — 새 브로커·pub/sub을 들이지 않는다.
+2. pub/sub은 끊긴 사이 신호가 사라지지만 Streams는 엔트리 id가 **노드와 무관한 단일 순서**라 SSE `id`로 그대로 쓰고, 재연결이 다른 노드로
+   가도 XRANGE로 이어 준다.
+3. 기존 아웃박스 스트림(`platform:events:v1`)은 쓰지 않는다 — 1초 폴링·재시도를 거치는 정본 이벤트(검색 색인)라 화면 지연이 길고, 신호 어휘
+   (changedFields·순위·스프린트)가 proto `EventEnvelope`에 없다. 화면 전용 어휘로 공유 proto를 넓히지 않는다. 신호는 잃어도 재조회로 복구되므로
+   best-effort다: Redis에 못 적으면 그 노드 구독자에게만 id 없이 건넨다(경고 로그).
+4. `platform.alm.realtime.fanout=local`이면 한 JVM 안 고리 버퍼(같은 id 형식) — 테스트·Redis 없는 단일 노드용.
+
+게이트웨이 `alm-stream` 라우트(`/api/alm/projects/*/stream`)가 응답 타임아웃을 끄고(-1) CB `alm`(TimeLimiter 꺼짐)을 공유한다 — 불능이면
+일반 alm과 같은 503. nginx는 `location ~ ^/api/alm/projects/[0-9]+/stream$`에서 버퍼링을 끄고 읽기 타임아웃 1h. 서버도 `X-Accel-Buffering: no`.
+
+## 사이클 — 스프린트 자동화 (V39, Linear Cycles)
+
+프로젝트 계획 설정 `GET`·`PUT /api/alm/projects/{projectId}/planning-settings` (읽기 VIEW, 쓰기 ADMIN). 행이 없으면 기본값(`version` 0) —
+**기존 프로젝트 동작은 바뀌지 않는다**(자동 생성 끔·이월 백로그).
+
+```json
+{ "projectId": 7,
+  "sprintAutomation": { "autoCreateNext": true, "lengthDays": 14, "cooldownDays": 2, "defaultCarryOver": "next" },
+  "estimationScale": "tshirt", "customValues": [], "tshirtPoints": { "XS": 1, "S": 2, "M": 3, "L": 5, "XL": 8 },
+  "allowedPoints": [1, 2, 3, 5, 8], "version": 3 }
+```
+
+- `PUT`은 **보낸 항목만** 바뀐다(`sprintAutomation` 안도 키별로), `expectedVersion` 필수(처음이면 0, 어긋나면 409). 범위: 길이 1~90일,
+  쿨다운 0~30일, `defaultCarryOver` next·backlog.
+- **완료 시 자동 생성**: 스프린트를 완료할 때 다른 예정(PLANNED) 스프린트가 없고 `autoCreateNext`면 다음 스프린트를 만든다 — 이름은 완료한
+  스프린트 이름의 끝 숫자 + 1(`Sprint 3` → `Sprint 4`, `결제 7` → `결제 8`, 끝이 숫자가 아니면 `Sprint N`), 예정 시작일 = 완료일(서울) +
+  쿨다운, 예정 종료일 = 시작일 + 길이 − 1. 이관 선택과 무관하게 만든다.
+- **미완료 이관 대상**: `moveUnfinishedToSprintId`(스프린트) > `moveUnfinishedTo`(`backlog`·`next` — 새 필드) > 설정 `defaultCarryOver`.
+  `next`인데 다음 예정 스프린트가 없고 자동 생성도 꺼져 있으면 백로그. 옛 클라이언트(아무것도 안 보냄)는 설정이 없으면 예전처럼 백로그다.
+- 완료 응답은 기존 스프린트 필드 그대로(펼쳐서) + `carryOver`:
+
+```json
+{ "id": 12, "state": "DONE", "completedAt": "2026-10-24T09:00:00Z", "…": "…",
+  "carryOver": { "target": "sprint", "sprintId": 13, "movedCount": 4, "nextSprintId": 13, "nextSprintAutoCreated": true } }
+```
+
+## 추정 척도 (V39)
+
+`estimationScale`: `fibonacci`(0·1·2·3·5·8·13·21) · `tshirt`(XS·S·M·L·XL → 포인트, 기본 1·2·3·5·8, 크기 순으로 커지게 고칠 수 있다) ·
+`linear`(기본 — 제한 없는 수직선 0~9999, 소수 첫째 자리, V30 그대로) · `custom`(`customValues` 1~20개, 0~9999·소수 첫째 자리·중복 불가,
+오름차순으로 저장). **`story_points`(NUMERIC)는 그대로 숫자다** — T셔츠도 매핑한 숫자를 저장하므로 합계·속도(`/estimation/summary`·
+`/reports/velocity`)는 늘 숫자로 센다. 화면은 `tshirtPoints`로 숫자 → 크기 라벨을 붙인다.
+
+- 이슈 생성·수정(일괄 편집·자동화 SET_FIELD 포함)에서 포인트가 **바뀔 때만** 척도를 본다 — 밖이면 400
+  `스토리 포인트 4은(는) 이 프로젝트의 추정 척도(피보나치)에 없습니다 — 허용: 0, 1, 2, 3, 5, 8, 13, 21`. 척도를 바꿔도 손대지 않은 옛 값은
+  그대로 저장된다(다른 필드만 고치는 PUT이 막히지 않는다).
+- `allowedPoints`가 null이면 제한 없음(linear). 다른 척도로 바꿔도 `customValues`·`tshirtPoints`는 남아 되돌리면 그대로다.
+
+## 알림 인박스 (V40, Linear Inbox)
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET` | `/api/alm/notifications/inbox?filter=&cursor=&limit=` | `{items, nextCursor, unreadCount}`. `filter` = all(기본)·unread·mentions·assigned·automation·snoozed·archived, `limit` 1~100(기본 50) |
+| `POST` | `/api/alm/notifications/{id}/snooze` | `{until}` — 미래, 1년 뒤까지. 보관한 알림은 400 |
+| `DELETE` | `/api/alm/notifications/{id}/snooze` | 미루기 취소(원래 자리로) |
+| `POST` | `/api/alm/notifications/{id}/archive` · `/unarchive` | 보관(삭제 대신)·해제 |
+| `POST` | `/api/alm/notifications/bulk` | `{ids: [..최대 200], action: read·unread·archive·unarchive}` → `{updated, unreadCount}`. 남의 id는 조용히 건너뛴다 |
+
+- 정렬은 `sortAt`(처음엔 생성 시각) 내림차순, 같으면 id 내림차순 — 커서는 그 키셋(`<epoch 마이크로초>_<id>`, 불투명 문자열로 다룬다; 잘못되면 400).
+- **미루기**: 미루는 동안 all·unread·종류 필터와 배지(`unreadCount`)에서 빠지고 `snoozed`에만 보인다. 해제 시각이 지나면 **그 시각 자리(맨 위)에
+  읽지 않은 알림으로** 돌아온다(미룰 때 읽지 않음으로 바뀐다). `snoozedUntil`이 과거면 "미루기에서 돌아온" 알림이다.
+- 보관한 알림은 `archived`에만 보인다. 남의 알림 단건 처리는 403 `본인 알림만 … 수 있습니다`.
+- 알림 응답(`NotificationResponse`)에 `snoozedUntil`·`archivedAt`이 뒤에 붙었다(하위 호환). 옛 `GET /api/alm/notifications`(최신 100건)도
+  인박스 첫 쪽과 같은 규칙을 따른다(보관·미뤄 둔 것 제외).
+
+## 이슈 키·브랜치 이름 규칙
+
+git 브랜치 이름은 프론트가 만든다(백엔드 API 없음). 백엔드가 보장하는 재료:
+
+- **이슈 키** = `<프로젝트 키>-<번호>`. 프로젝트 키는 영문으로 시작하는 2~12자 `[A-Za-z][A-Za-z0-9_-]{1,11}`를 **대문자로** 저장하고, 번호는
+  프로젝트 안 1부터 증가한다. 키는 불변이다(이동·이관해도 바뀌지 않는다) — 브랜치에 박아도 된다.
+- **제목 슬러그**(프론트 규칙, 여기 고정): 제목을 소문자로 바꾼 뒤 `[a-z0-9]` 밖 글자를 `-`로 바꾸고, 연속 `-`는 하나로, 앞뒤 `-`는 지운다.
+  **음역하지 않는다** — 한글·기호만 남는 제목이면 슬러그가 비고 브랜치는 키만 쓴다. 길이는 슬러그 40자까지(단어 중간이면 그 앞 `-`에서 자른다).
+  - `로그인 개선 (OAuth2)` → `alm-12-oauth2` · `검색 속도 개선` → `alm-12` · `Fix N+1 in board` → `alm-12-fix-n-1-in-board`
+  - 형식: `<사용자 접두>/<키 소문자>-<슬러그>`(접두는 프론트 설정). 키 부분은 git 참조 규칙에 걸리는 글자가 없다(영숫자·`_`·`-`).
+
 ## OpenAPI
 
 `GET /v3/api-docs`가 이 서비스의 OpenAPI 3.1 스펙(JSON)을 낸다. springdoc(`springdoc-openapi-starter-webmvc-api`)이
@@ -935,6 +1081,11 @@ gateway-server ──REST/JWT──▶ alm-backend ──JPA──▶ PostgreSQL
 | `platform.alm.automation.max-depth` / `rate-per-minute` / `max-failures` | `3` / `30` / `5` | 자동화 안전장치(연쇄 깊이·규칙당 분당 실행·연속 실패) |
 | `platform.alm.automation.threads` / `queue` / `async` | `2` / `500` / `true` | 자동화 실행 풀(테스트는 async=false) |
 | `platform.alm.automation.schedule-polling-enabled` / `schedule-poll-delay` / `schedule-batch` | `true` / `60s` / `100` | 예약 규칙 폴러(인스턴스가 여럿이어도 회차는 한 노드만) |
+| `ALM_REALTIME_FANOUT` | `redis` | 실시간 스트림 노드 간 팬아웃 — `redis`(Redis Stream) · `local`(한 JVM) |
+| `ALM_REALTIME_STREAM` / `ALM_REALTIME_MAX_LEN` | `alm:realtime:v1` / `10000` | 신호 스트림 키·재생 창(근사 MAXLEN) |
+| `ALM_REALTIME_PER_USER_CAP` / `ALM_REALTIME_GLOBAL_CAP` | `5` / `500` | 연결 상한(사용자당·노드당, 넘으면 429) |
+| `platform.alm.realtime.heartbeat` / `timeout` / `recheck-interval` | `15s` / `30m` / `5m` | heartbeat·연결 수명·권한 재확인 주기 |
+| `platform.alm.realtime.queue-capacity` / `replay-limit` / `write-stall` | `100` / `1000` / `20s` | 구독자 대기열(넘치면 reset)·재생 상한·전송 정체 끊기 |
 
 ## 테스트와 배포
 
@@ -966,6 +1117,8 @@ src/main/java/com/platform/almbackend/
 ├─ estimation/   추정 합계·속도 리포트
 ├─ triage/       트리아지 REST·생성 관문(TriageAdmission) — 처리는 issue/IssueTriageService
 ├─ automation/   자동화 규칙·실행기·예약 폴러(V36·V37)
+├─ realtime/     프로젝트 SSE 스트림 — 허브·Redis Streams 팬아웃·도메인 이벤트 → 무효화 신호
+├─ planning/     프로젝트 계획 설정(V39) — 사이클(스프린트 자동화)·추정 척도
 ├─ permission/   org-service gRPC 권한 어댑터
 ├─ grpc/         search-service용 AlmContentService
 ├─ event/        이벤트 아웃박스 + 커밋 이후 Redis Streams 발행 워커

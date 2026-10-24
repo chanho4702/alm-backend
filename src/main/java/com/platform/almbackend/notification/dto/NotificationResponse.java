@@ -12,7 +12,11 @@ public record NotificationResponse(
         Notification.Type type,
         String detail,
         boolean read,
-        Instant createdAt) {
+        Instant createdAt,
+        /** 미루기 해제 시각(V40) — 지났으면 인박스로 돌아온 알림이다. 미룬 적 없으면 null */
+        Instant snoozedUntil,
+        /** 보관 시각(V40). 보관 안 했으면 null */
+        Instant archivedAt) {
 
     public static NotificationResponse from(Notification notification) {
         return new NotificationResponse(
@@ -23,6 +27,8 @@ public record NotificationResponse(
                 notification.getType(),
                 notification.getDetail(),
                 notification.isRead(),
-                notification.getCreatedAt());
+                notification.getCreatedAt(),
+                notification.getSnoozedUntil(),
+                notification.getArchivedAt());
     }
 }

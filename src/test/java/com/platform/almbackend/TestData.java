@@ -20,7 +20,7 @@ final class TestData {
         for (String table : new String[] {
                 "automation_run", "automation_rule", "saved_view", "saved_filter", "notification", "issue_watcher",
                 "issue_activity", "issue_change_log", "issue_link", "issue_comment", "issue_label", "issue_component",
-                "issue", "sprint", "component", "board", "project_settings", "project"}) {
+                "issue", "sprint", "component", "board", "project_settings", "project_planning", "project"}) {
             jdbc.update("delete from " + table);
         }
     }

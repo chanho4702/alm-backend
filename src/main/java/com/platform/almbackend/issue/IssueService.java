@@ -63,6 +63,7 @@ public class IssueService {
     private final IssueRankGroups rankGroups;
     private final WorkflowEngine workflow;
     private final IssueDomainEventPublisher domainEvents;
+    private final com.platform.almbackend.planning.ProjectPlanningService planningSettings;
     private final TriageAdmission triageAdmission;
 
     @Transactional(readOnly = true)
@@ -113,6 +114,8 @@ public class IssueService {
         if (sprintId != null) sprintService.requireSprintInProject(sprintId, projectId);
         IssuePlanning.Values planning = IssuePlanning.merge(request.planning(), null, null);
         IssuePlanning.requireOrder(planning.startDate(), details == null ? null : details.dueDate());
+        // 추정 척도(V39) — 척도 밖 포인트는 400
+        planningSettings.assertPoints(projectId, planning.storyPoints());
         long order = issues.findMaxSortOrderInRankGroup(projectId, sprintId) + 1;
         List<Long> componentIds = componentService.validateForIssue(projectId, details == null ? null : details.componentIds());
         Issue fresh = Issue.of(
@@ -220,6 +223,11 @@ public class IssueService {
                 : componentService.validateForIssue(issue.getProjectId(), details.componentIds());
         IssuePlanning.Values planning = IssuePlanning.merge(request.planning(), issue.getStartDate(), issue.getStoryPoints());
         IssuePlanning.requireOrder(planning.startDate(), dueDate);
+        // 추정 척도(V39) — 값이 바뀔 때만 본다(척도를 바꿔도 손대지 않은 옛 값은 그대로 저장된다)
+        if (planning.storyPoints() != null && (issue.getStoryPoints() == null
+                || planning.storyPoints().compareTo(issue.getStoryPoints()) != 0)) {
+            planningSettings.assertPoints(issue.getProjectId(), planning.storyPoints());
+        }
         SettingsBody body = settings.body(issue.getProjectId());
         SettingsBody.ResolvedWorkflow flow = body.workflowFor(nextType);
         String requested = request.status() == null ? issue.getStatus() : request.status().trim();
@@ -304,6 +312,7 @@ public class IssueService {
         locks.lockProject(snapshot.getProjectId());
         Issue issue = locks.lockIssue(issueId);
         events.afterCommit(AlmEvents.issueDeleted(userId, issue));
+        domainEvents.deleted(userId, issue, false);
         issues.clearParentByParentId(issueId);
         attachmentService.deleteAllForIssue(issueId);
         issues.delete(issue);

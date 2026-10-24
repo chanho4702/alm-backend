@@ -71,6 +71,14 @@ public class Sprint {
         return sprint;
     }
 
+    /** 사이클 자동 생성(V39) — 예정 기간까지 정해 만든다 */
+    public static Sprint planned(long projectId, long sprintNumber, String name, LocalDate plannedStart, LocalDate plannedEnd) {
+        Sprint sprint = of(projectId, sprintNumber, name);
+        sprint.plannedStart = plannedStart;
+        sprint.plannedEnd = plannedEnd;
+        return sprint;
+    }
+
     public void start(Instant now) {
         if (state != SprintState.PLANNED) {
             throw new IllegalStateException("계획 상태의 스프린트만 시작할 수 있습니다");

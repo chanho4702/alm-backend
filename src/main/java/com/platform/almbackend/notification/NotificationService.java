@@ -5,6 +5,9 @@ import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssueWatcher;
 import com.platform.almbackend.domain.Notification;
+import com.platform.almbackend.notification.dto.NotificationBulkRequest;
+import com.platform.almbackend.notification.dto.NotificationBulkResponse;
+import com.platform.almbackend.notification.dto.NotificationInboxResponse;
 import com.platform.almbackend.notification.dto.NotificationResponse;
 import com.platform.almbackend.notification.dto.WatchersResponse;
 import com.platform.almbackend.permission.AlmAction;
@@ -16,7 +19,7 @@ import com.platform.almbackend.repository.NotificationRepository;
 import com.platform.common.error.ServiceUnavailableException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -157,11 +160,116 @@ public class NotificationService {
 
     // ── 알림 ──
 
-    /** 알림함을 열 때 메일 주소 스냅샷도 갱신한다 — 발송 시점에는 수신자의 토큰이 없다 */
+    /**
+     * 알림함을 열 때 메일 주소 스냅샷도 갱신한다 — 발송 시점에는 수신자의 토큰이 없다.
+     * 인박스(V40)의 첫 쪽과 같은 규칙이다: 보관한 것·지금 미뤄 둔 것은 빠지고, 미루기에서 돌아온 것은 해제 시각 자리에 선다.
+     */
     public List<NotificationResponse> mine(long userId, String jwtEmail) {
         preferences.rememberEmail(userId, jwtEmail);
-        return notifications.findByUserIdOrderByCreatedAtDescIdDesc(userId, PageRequest.of(0, PAGE))
+        return notifications.inbox(userId, now(), ALL_TYPES, false, CURSOR_START, Long.MAX_VALUE, Limit.of(PAGE))
                 .stream().map(NotificationResponse::from).toList();
+    }
+
+    // ── 인박스(V40) ──
+
+    /** 필터 어휘 — 프론트 탭과 1:1 */
+    public static final List<String> FILTERS = List.of("all", "unread", "mentions", "assigned", "automation", "snoozed", "archived");
+    static final int INBOX_MAX = 100;
+    static final java.time.Duration SNOOZE_MAX = java.time.Duration.ofDays(366);
+    private static final List<Notification.Type> ALL_TYPES = List.of(Notification.Type.values());
+    /** 커서 없음 = 먼 미래부터(PG timestamptz 범위 안) */
+    private static final Instant CURSOR_START = Instant.parse("9999-12-31T00:00:00Z");
+
+    @Transactional(readOnly = true)
+    public NotificationInboxResponse inbox(long userId, String filter, String cursor, Integer limit) {
+        String f = filter == null || filter.isBlank() ? "all" : filter.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!FILTERS.contains(f)) {
+            throw new IllegalArgumentException("알 수 없는 알림 필터입니다: " + filter + " (" + String.join("·", FILTERS) + ")");
+        }
+        int size = limit == null ? 50 : limit;
+        if (size < 1 || size > INBOX_MAX) throw new IllegalArgumentException("limit은 1~" + INBOX_MAX + " 사이여야 합니다");
+        Instant cursorAt = CURSOR_START;
+        long cursorId = Long.MAX_VALUE;
+        if (cursor != null && !cursor.isBlank()) {
+            String[] parts = cursor.trim().split("_");
+            try {
+                if (parts.length != 2) throw new NumberFormatException();
+                long micros = Long.parseLong(parts[0]);
+                cursorAt = Instant.EPOCH.plus(micros, ChronoUnit.MICROS);
+                cursorId = Long.parseLong(parts[1]);
+            } catch (NumberFormatException | ArithmeticException | java.time.DateTimeException e) {
+                throw new IllegalArgumentException("잘못된 커서입니다");
+            }
+        }
+        Instant now = now();
+        Limit page = Limit.of(size + 1);
+        List<Notification> rows = switch (f) {
+            case "snoozed" -> notifications.snoozed(userId, now, cursorAt, cursorId, page);
+            case "archived" -> notifications.archived(userId, cursorAt, cursorId, page);
+            case "unread" -> notifications.inbox(userId, now, ALL_TYPES, true, cursorAt, cursorId, page);
+            case "mentions" -> notifications.inbox(userId, now, List.of(Notification.Type.MENTIONED), false, cursorAt, cursorId, page);
+            case "assigned" -> notifications.inbox(userId, now, List.of(Notification.Type.ASSIGNED), false, cursorAt, cursorId, page);
+            case "automation" -> notifications.inbox(userId, now, List.of(Notification.Type.AUTOMATION), false, cursorAt, cursorId, page);
+            default -> notifications.inbox(userId, now, ALL_TYPES, false, cursorAt, cursorId, page);
+        };
+        String next = null;
+        if (rows.size() > size) {
+            rows = rows.subList(0, size);
+            Notification last = rows.get(size - 1);
+            next = ChronoUnit.MICROS.between(Instant.EPOCH, last.getSortAt()) + "_" + last.getId();
+        }
+        return new NotificationInboxResponse(rows.stream().map(NotificationResponse::from).toList(), next,
+                notifications.countUnread(userId, now));
+    }
+
+    public NotificationBulkResponse bulk(long userId, NotificationBulkRequest request) {
+        List<Long> ids = request.ids().stream().filter(Objects::nonNull).distinct().toList();
+        String action = request.action().trim().toLowerCase(java.util.Locale.ROOT);
+        int updated = switch (action) {
+            case "read" -> notifications.markRead(userId, ids);
+            case "unread" -> notifications.markUnread(userId, ids);
+            case "archive" -> notifications.archive(userId, ids, now());
+            case "unarchive" -> notifications.unarchive(userId, ids);
+            default -> throw new IllegalArgumentException("알 수 없는 일괄 처리입니다: " + request.action() + " (read·unread·archive·unarchive)");
+        };
+        return new NotificationBulkResponse(updated, notifications.countUnread(userId, now()));
+    }
+
+    public NotificationResponse snooze(long userId, long notificationId, Instant until) {
+        Notification notification = requireOwn(userId, notificationId, "미룰");
+        Instant now = now();
+        if (until == null || !until.isAfter(now)) throw new IllegalArgumentException("미루기 시각은 지금보다 뒤여야 합니다");
+        if (until.isAfter(now.plus(SNOOZE_MAX))) throw new IllegalArgumentException("미루기는 1년 뒤까지만 할 수 있습니다");
+        if (notification.getArchivedAt() != null) throw new IllegalArgumentException("보관한 알림은 미룰 수 없습니다");
+        notification.snooze(until.truncatedTo(ChronoUnit.MICROS));
+        return NotificationResponse.from(notification);
+    }
+
+    public NotificationResponse unsnooze(long userId, long notificationId) {
+        Notification notification = requireOwn(userId, notificationId, "미루기를 취소할");
+        notification.unsnooze();
+        return NotificationResponse.from(notification);
+    }
+
+    public NotificationResponse archive(long userId, long notificationId) {
+        Notification notification = requireOwn(userId, notificationId, "보관할");
+        notification.archive(now());
+        return NotificationResponse.from(notification);
+    }
+
+    public NotificationResponse unarchive(long userId, long notificationId) {
+        Notification notification = requireOwn(userId, notificationId, "보관을 해제할");
+        notification.unarchive();
+        return NotificationResponse.from(notification);
+    }
+
+    private Notification requireOwn(long userId, long notificationId, String verb) {
+        Notification notification = notifications.findById(notificationId)
+                .orElseThrow(() -> new NotFoundException("알림을 찾을 수 없습니다: " + notificationId));
+        if (!notification.getUserId().equals(userId)) {
+            throw new ForbiddenException("본인 알림만 " + verb + " 수 있습니다");
+        }
+        return notification;
     }
 
     public void markRead(long userId, long notificationId) {

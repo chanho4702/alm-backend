@@ -99,6 +99,18 @@ platform:
       # 발행된 행 보존 기간(장애 분석용). 미발행·포기한 행은 지우지 않는다
       retention: ${EVENTS_OUTBOX_RETENTION:7d}
   alm:
+    # 프로젝트 실시간 스트림(SSE, 2026-10-24) — 무효화 신호(id·version·종류)만, 본문 없음.
+    # fanout: redis(기본, 노드 간 팬아웃 = Redis Stream alm:realtime:v1 — 재연결 재생 창 max-len) · local(한 JVM)
+    realtime:
+      fanout: ${ALM_REALTIME_FANOUT:redis}
+      stream: ${ALM_REALTIME_STREAM:alm:realtime:v1}
+      max-len: ${ALM_REALTIME_MAX_LEN:10000}
+      per-user-cap: ${ALM_REALTIME_PER_USER_CAP:5}
+      global-cap: ${ALM_REALTIME_GLOBAL_CAP:500}
+      # 게이트웨이(alm-stream 라우트 response-timeout -1)·nginx(proxy_read_timeout 1h)보다 훨씬 짧게
+      heartbeat: 15s
+      timeout: 30m
+      recheck-interval: 5m
     mail:
       # 보낸 사람 주소·SMTP 설정은 org-service의 메일 설정이 정본이다(2026-09-07). 여기 남은 것은
       # 메일 본문의 이슈 링크가 가리킬 곳뿐 — 사용자가 브라우저로 여는 주소여야 한다.

@@ -13,6 +13,7 @@ import com.platform.almbackend.repository.IssueRepository;
 import com.platform.almbackend.repository.ProjectRepository;
 import com.platform.almbackend.repository.SprintRepository;
 import com.platform.almbackend.sprint.dto.SprintCompleteRequest;
+import com.platform.almbackend.sprint.dto.SprintCompleteResponse;
 import com.platform.almbackend.sprint.dto.SprintCreateRequest;
 import com.platform.almbackend.sprint.dto.SprintUpdateRequest;
 import com.platform.almbackend.sprint.dto.SprintResponse;
@@ -45,6 +46,14 @@ public class SprintService {
     private final IssueChangeLogService changeLog;
     private final com.platform.almbackend.settings.SchemeService settings;
     private final EntityManager entityManager;
+    private final com.platform.almbackend.planning.ProjectPlanningService planning;
+    private final org.springframework.context.ApplicationEventPublisher domainEvents;
+
+    /** 사이클 자동 생성 이름 규칙 — 끝 숫자를 하나 올린다("Sprint 3" → "Sprint 4", "결제 7" → "결제 8") */
+    private static final java.util.regex.Pattern TRAILING_NUMBER = java.util.regex.Pattern.compile("^(.*?)(\\d{1,9})\\s*$");
+    private static final java.time.ZoneId ZONE = java.time.ZoneId.of("Asia/Seoul");
+    /** 자동 생성은 사람이 한 일이 아니다 — 받는 쪽이 "내가 한 변경" 메아리로 거르지 않게 0으로 */
+    private static final long SYSTEM_ACTOR = 0L;
 
     @Transactional(readOnly = true)
     public List<SprintResponse> list(long userId, long projectId) {
@@ -69,7 +78,9 @@ public class SprintService {
         String name = request == null || request.name() == null || request.name().isBlank()
                 ? "Sprint " + number
                 : request.name().trim();
-        return SprintResponse.from(sprints.save(Sprint.of(projectId, number, name)));
+        Sprint saved = sprints.save(Sprint.of(projectId, number, name));
+        changed(userId, saved, "created");
+        return SprintResponse.from(saved);
     }
 
     /**
@@ -89,6 +100,7 @@ public class SprintService {
         }
         locked.editPlan(request.name().trim(), blankToNull(request.goal()),
                 request.plannedStart(), request.plannedEnd());
+        changed(userId, locked, "updated");
         return SprintResponse.from(locked);
     }
 
@@ -113,6 +125,7 @@ public class SprintService {
         } catch (DataIntegrityViolationException e) {
             throw new ConflictException("이미 진행 중인 스프린트가 있습니다");
         }
+        changed(userId, locked, "started");
         return SprintResponse.from(locked);
     }
 
@@ -120,7 +133,7 @@ public class SprintService {
      * 완료하면 미완료 이슈는 요청이 지정한 스프린트로, 지정이 없으면 백로그 맨 뒤로 옮긴다.
      * 완료 판정 기준은 프로젝트 워크플로의 complete 분류 상태다(요청의 doneStatuses는 받되 쓰지 않는다). 이관 대상 검증이 실패하면 완료 자체가 일어나지 않는다(한 트랜잭션).
      */
-    public SprintResponse complete(long userId, long sprintId, SprintCompleteRequest request) {
+    public SprintCompleteResponse complete(long userId, long sprintId, SprintCompleteRequest request) {
         Sprint sprint = requireSprint(sprintId);
         projectService.require(userId, sprint.getProjectId(), AlmAction.EDIT);
         lockProject(sprint.getProjectId());
@@ -132,6 +145,9 @@ public class SprintService {
         // 낡은 클라이언트가 보낸 목록이 완료 이슈를 다음 스프린트로 옮겨 번다운·벨로시티를 오염시켰다(감사 A-18)
         Set<String> doneStatuses = settings.completeStatusIds(sprint.getProjectId());
         Long targetSprintId = request == null ? null : request.moveUnfinishedToSprintId();
+        com.platform.almbackend.planning.PlanningSettings plan = planning.settingsOf(locked.getProjectId());
+        String carryMode = targetSprintId != null ? "sprint"
+                : request != null && request.moveUnfinishedTo() != null ? request.moveUnfinishedTo() : plan.defaultCarryOver();
         if (targetSprintId != null) {
             if (targetSprintId == sprintId) {
                 throw new IllegalArgumentException("완료하는 스프린트로는 이관할 수 없습니다");
@@ -146,6 +162,15 @@ public class SprintService {
         // 마이크로초로 잘라 저장한다 — DB(timestamptz)는 마이크로초까지만 담아서, 자르지 않으면
         // 메모리 값(나노초)과 조회 값이 달라지고 위 동일성 규칙이 깨진다.
         Instant completedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        // 사이클(V39): 다음 예정 스프린트 — 없고 자동 생성이 켜져 있으면 만든다(이관 선택과 무관하게)
+        Sprint next = nextPlanned(locked.getProjectId(), sprintId);
+        boolean autoCreated = false;
+        if (next == null && plan.autoCreateNext()) {
+            next = createNextCycle(locked, plan, completedAt);
+            autoCreated = true;
+        }
+        if ("next".equals(carryMode) && next != null) targetSprintId = next.getId();
+        int moved = 0;
         long targetOrder = issues.findMaxSortOrderInRankGroup(locked.getProjectId(), targetSprintId);
         List<Issue> retained = new ArrayList<>();
         for (Issue issue : issues.findRankGroup(locked.getProjectId(), sprintId)) {
@@ -154,9 +179,11 @@ public class SprintService {
             } else if (targetSprintId == null) {
                 issue.moveToBacklog(++targetOrder);
                 changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId, completedAt);
+                moved++;
             } else {
                 issue.moveToSprint(targetSprintId, ++targetOrder);
                 changeLog.recordChanges(userId, issue, issue.getStatus(), sprintId, completedAt);
+                moved++;
             }
         }
         // 남은 이슈 사이에 구멍이 생기므로 스프린트 그룹도 다시 조밀하게 만든다.
@@ -164,7 +191,10 @@ public class SprintService {
             retained.get(i).resequence(i + 1L);
         }
         locked.complete(completedAt);
-        return SprintResponse.from(locked);
+        changed(userId, locked, "completed");
+        return new SprintCompleteResponse(SprintResponse.from(locked), new SprintCompleteResponse.CarryOver(
+                targetSprintId == null ? "backlog" : "sprint", targetSprintId, moved,
+                next == null ? null : next.getId(), autoCreated));
     }
 
     /**
@@ -195,7 +225,40 @@ public class SprintService {
             }
         }
         issues.flush();
+        changed(userId, locked, "deleted");
         sprints.delete(locked);
+    }
+
+    /** 다음 예정 스프린트 — 완료하는 것을 뺀 PLANNED 중 번호가 가장 작은 것 */
+    private Sprint nextPlanned(long projectId, long completingId) {
+        return sprints.findByProjectIdOrderBySprintNumberAsc(projectId).stream()
+                .filter(s -> s.getState() == SprintState.PLANNED && s.getId() != completingId)
+                .findFirst().orElse(null);
+    }
+
+    /**
+     * 사이클 자동 생성 — 이름은 완료한 스프린트 이름의 끝 숫자 + 1(끝이 숫자가 아니면 "Sprint N"), 예정 시작일 = 완료일(서울) +
+     * 쿨다운, 예정 종료일 = 시작일 + 길이 - 1. 프로젝트 행 잠금 안이라 번호가 겹치지 않는다.
+     */
+    private Sprint createNextCycle(Sprint completed, com.platform.almbackend.planning.PlanningSettings plan, Instant completedAt) {
+        long number = sprints.findMaxSprintNumberByProjectId(completed.getProjectId()) + 1;
+        java.time.LocalDate start = java.time.LocalDate.ofInstant(completedAt, ZONE).plusDays(plan.cooldownDays());
+        java.time.LocalDate end = start.plusDays(plan.lengthDays() - 1L);
+        Sprint saved = sprints.save(Sprint.planned(completed.getProjectId(), number, nextName(completed.getName(), number), start, end));
+        changed(SYSTEM_ACTOR, saved, "created");
+        return saved;
+    }
+
+    public static String nextName(String previous, long number) {
+        java.util.regex.Matcher m = TRAILING_NUMBER.matcher(previous == null ? "" : previous);
+        String name = m.matches() ? m.group(1) + (Long.parseLong(m.group(2)) + 1) : "Sprint " + number;
+        return name.length() > 120 ? "Sprint " + number : name;
+    }
+
+    private void changed(long actorId, Sprint sprint, String kind) {
+        domainEvents.publishEvent(new com.platform.almbackend.event.domain.SprintChangedEvent(sprint.getId(),
+                sprint.getProjectId(), kind, sprint.getVersion() == null ? 0 : sprint.getVersion(), actorId,
+                Instant.now().truncatedTo(ChronoUnit.MICROS)));
     }
 
     @Transactional(readOnly = true)
