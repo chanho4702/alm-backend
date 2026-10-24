@@ -241,6 +241,30 @@ public class Issue {
      *   <li>해결 → 다른 사유: 해결일은 그대로다(처음 해결한 때가 해결일이다).</li>
      * </ul>
      */
+    /** 해결 규칙({@code ResolutionRule})이 정한 값을 넣는다 — 해결일은 {@link #applyResolution}이 맞춘다 */
+    public void changeResolution(IssueResolution next) {
+        applyResolution(next);
+    }
+
+    /** 전환 화면·후처리가 담당자를 바꾼다(전환 실행 경로 — 버전은 {@link #bumpVersion}으로 따로 올린다) */
+    public void assignTo(Long assigneeId) {
+        this.assigneeId = assigneeId;
+    }
+
+    /** 전환 화면에서 마감일을 바꾼다 */
+    public void changeDueDate(LocalDate dueDate) {
+        this.dueDate = dueDate;
+    }
+
+    /**
+     * 사용자가 편집 폼에서 보는 값(담당자·마감일·수정 버전)을 전환이 바꿨을 때 — 열려 있던 남의 폼이 그 값을 조용히
+     * 되돌리지 않게 409를 받도록 버전을 올린다. 상태·순서·해결만 바뀐 이동은 올리지 않는다(드래그가 남의 저장을
+     * 409로 만들지 않는다는 기존 규칙).
+     */
+    public void bumpVersion() {
+        this.version += 1;
+    }
+
     private void applyResolution(IssueResolution next) {
         if (next == null) {
             this.resolvedAt = null;

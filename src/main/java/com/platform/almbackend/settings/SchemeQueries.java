@@ -84,7 +84,8 @@ public class SchemeQueries {
         }
         // 필드 구성은 읽을 때 정규화되므로 원본을 그대로 넘긴다 — 여기서 미리 훑으면 이중 정규화다
         return new SettingsBody(enriched, body.transitions(), body.layout(), body.enabledTypes(),
-                body.enabledPriorities(), body.defaultPriority(), body.rawFields(), body.rawFieldsByType());
+                body.enabledPriorities(), body.defaultPriority(), body.rawFields(), body.rawFieldsByType(),
+                body.workflowsByType());
     }
 
     public String kindOf(String categoryId) {
@@ -168,7 +169,8 @@ public class SchemeQueries {
                     : s);
         }
         return new SettingsBody(next, body.transitions(), body.layout(), body.enabledTypes(),
-                body.enabledPriorities(), body.defaultPriority(), body.rawFields(), body.rawFieldsByType());
+                body.enabledPriorities(), body.defaultPriority(), body.rawFields(), body.rawFieldsByType(),
+                body.workflowsByType());
     }
 
     /** 타입을 지우면 모든 본문의 활성 목록과 타입별 필드 덮어쓰기에서도 뺀다 */
@@ -185,15 +187,18 @@ public class SchemeQueries {
     }
 
     private static boolean usesType(SettingsBody body, String typeId) {
-        return body.enabledTypes().contains(typeId) || body.rawFieldsByType().containsKey(typeId);
+        return body.enabledTypes().contains(typeId) || body.rawFieldsByType().containsKey(typeId)
+                || body.workflowsByType().containsKey(typeId);
     }
 
     private static SettingsBody withoutType(SettingsBody body, String typeId) {
         Map<String, List<SettingsBody.FieldConfig>> byType = new LinkedHashMap<>(body.fieldsByType());
         byType.remove(typeId);
+        Map<String, SettingsBody.TypeWorkflow> workflows = new LinkedHashMap<>(body.workflowsByType());
+        workflows.remove(typeId);
         return new SettingsBody(body.statuses(), body.transitions(), body.layout(),
                 body.enabledTypes().stream().filter(t -> !t.equals(typeId)).toList(),
-                body.enabledPriorities(), body.defaultPriority(), body.fields(), byType);
+                body.enabledPriorities(), body.defaultPriority(), body.fields(), byType, workflows);
     }
 
     /** 우선순위를 지우면 모든 본문의 활성 목록에서 빼고, 기본이었다면 남은 첫 항목으로 */

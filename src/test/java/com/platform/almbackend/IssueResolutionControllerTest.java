@@ -25,8 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 해결(Resolution) 계약. "왜 끝났는가"(완료됨/하지 않음/중복/재현 불가)를 서버가 보존한다.
- * 완료 카테고리 판정은 워크플로 스킴을 가진 프론트 소유라, 서버는 값의 유효성만 지키고
- * 기본값·해제 규칙은 프론트가 적용해 보낸다.
+ * 2026-10-24부터 기본값·해제 규칙도 서버가 정본이다(완료로 들어가면 DONE, 나가면 비움) —
+ * 규칙 자체는 WorkflowEngineTest가 모든 경로에서 검증한다.
  */
 @SpringBootTest
 @ActiveProfiles("test")

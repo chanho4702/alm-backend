@@ -29,6 +29,14 @@ public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecific
     @EntityGraph(attributePaths = "labels")
     List<Issue> findByProjectIdOrderBySortOrderAscKeyAsc(long projectId);
     List<Issue> findByParentId(long parentId);
+
+    /** 하위 이슈 수(보관 제외) — 전환 조건 "하위 이슈 모두 완료"(완료 상태가 하나도 없는 워크플로용). idx_issue_parent를 탄다 */
+    long countByParentId(long parentId);
+
+    /** 완료 의미가 아닌 하위 이슈 수(보관 제외) — 전환 조건 "하위 이슈 모두 완료". idx_issue_parent를 탄다 */
+    @Query("select count(i) from Issue i where i.parentId = :parentId and i.status not in :doneStatuses")
+    long countOpenChildren(@Param("parentId") long parentId,
+                           @Param("doneStatuses") java.util.Collection<String> doneStatuses);
     List<Issue> findByIdGreaterThanOrderByIdAsc(long afterId, Limit limit);
     List<Issue> findByProjectIdAndIdGreaterThanOrderByIdAsc(long projectId, long afterId, Limit limit);
     long deleteByProjectId(long projectId);

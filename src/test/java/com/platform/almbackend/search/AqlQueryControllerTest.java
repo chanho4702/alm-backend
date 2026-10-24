@@ -78,7 +78,7 @@ class AqlQueryControllerTest {
         // ALM-2 진행 중·스프린트 안·본인 담당·예상 3.5시간
         create(almId, "보드 개선", "설명", "story", "inprogress", "medium", 1L,
                 "\"labels\":[\"frontend\"],\"sprintId\":" + sprintId + ",\"estimateHours\":3.50");
-        // ALM-3 완료·해결 있음·"결제"가 제목에 — 해결은 생성이 아니라 수정 때만 붙는다
+        // ALM-3 완료·해결 있음·"결제"가 제목에 — 완료 상태로 만들면 서버 규칙(A1)이 해결 "완료"를 붙인다
         long resolved = create(almId, "결제 문서 정리", "설명", "task", "done", "low", 2L, "");
         mvc.perform(put("/api/alm/issues/{id}", resolved).with(asUser(1, "테스터"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -89,7 +89,7 @@ class AqlQueryControllerTest {
         // ALM-4 담당자 없음·마감 하루 뒤
         create(almId, "검색 느림", "설명", "task", "todo", "lowest", null,
                 "\"labels\":[\"api v2\"],\"dueDate\":\"" + today.plusDays(1) + "\"");
-        // ALM-5 완료·박민수 담당(이름 중복 확장 시험에 쓴다)
+        // ALM-5 완료·박민수 담당(이름 중복 확장 시험에 쓴다) — 완료로 만들었으니 해결도 붙는다(A1)
         create(almId, "권한 정리", "설명", "task", "done", "medium", 4L, "\"labels\":[]");
         // ALM-6 보관 — 기본 검색에서 빠진다
         long archived = create(almId, "옛날 이슈", "설명", "task", "todo", "low", 3L, "\"labels\":[]");
@@ -145,9 +145,9 @@ class AqlQueryControllerTest {
         // 방금 만든 이슈뿐이라 14일 전보다 오래된 건 없다
         assertThat(query("resolution IS EMPTY AND updated < -14d ORDER BY updated", 1).get("total").asLong())
                 .isZero();
-        // 반대쪽은 해결이 붙은 ALM-3만 빠진다
+        // 반대쪽은 해결이 붙은 완료 이슈(ALM-3·ALM-5)만 빠진다 — 완료 상태면 서버가 해결을 붙인다(A1)
         JsonNode recent = query("resolution IS EMPTY AND updated > -14d ORDER BY updated", 1);
-        assertThat(titles(recent)).doesNotContain("결제 문서 정리").hasSize(5);
+        assertThat(titles(recent)).doesNotContain("결제 문서 정리", "권한 정리").hasSize(4);
     }
 
     // ── 해석 ──
@@ -441,13 +441,14 @@ class AqlQueryControllerTest {
 
     @Test
     void 해결일은_해결이_붙은_이슈에만_있고_비교와_IS_EMPTY가_된다() throws Exception {
-        // 픽스처에서 해결이 붙은 건 ALM-3 하나뿐이고, 그 순간이 해결일이다
-        assertThat(titles(query("resolved >= -7d", 1))).containsExactly("결제 문서 정리");
-        assertThat(titles(query("resolved IS NOT EMPTY", 1))).containsExactly("결제 문서 정리");
+        // 픽스처에서 해결이 붙은 건 완료 상태로 만든 ALM-3·ALM-5이고, 그 순간이 해결일이다
+        assertThat(titles(query("resolved >= -7d", 1))).containsExactlyInAnyOrder("결제 문서 정리", "권한 정리");
+        assertThat(titles(query("resolved IS NOT EMPTY", 1))).containsExactlyInAnyOrder("결제 문서 정리", "권한 정리");
         assertThat(titles(query("project = ALM AND resolved IS EMPTY", 1)))
-                .containsExactlyInAnyOrder("로그인 버그", "보드 개선", "검색 느림", "권한 정리");
-        // 상태가 완료여도 해결 사유가 없으면 해결일이 없다 — 상태와 해결은 다른 축이다
-        assertThat(titles(query("status = 완료 AND resolved IS EMPTY", 1))).containsExactly("권한 정리");
+                .containsExactlyInAnyOrder("로그인 버그", "보드 개선", "검색 느림");
+        // 완료 의미 상태인데 해결일이 빈 이슈는 없다 — 서버가 해결 규칙의 정본이다(2026-10-24 A1, 예전에는
+        // "상태와 해결은 다른 축"이라 보드로 완료시킨 이슈가 여기 걸렸다)
+        assertThat(query("status = 완료 AND resolved IS EMPTY", 1).get("total").asLong()).isZero();
         // 미래로 밀면 아무것도 안 남는다(빈 값이 조용히 섞이지 않는다)
         assertThat(query("resolved > +1d", 1).get("total").asLong()).isZero();
     }
@@ -468,11 +469,11 @@ class AqlQueryControllerTest {
         String firstResolvedAt = first.get("resolvedAt").asText();
         assertThat(firstResolvedAt).isNotBlank();
 
-        // 해결을 푼다 — 해결일도 같이 비워진다
+        // 해결을 푼다 — 완료에서 나가면 해결과 해결일이 같이 비워진다(A1: 완료 안에서는 해결을 비울 수 없다)
         long id = first.get("id").asLong();
         int version = first.get("version").asInt();
-        edit(id, version, "결제 문서 정리", "task", "done", "low", 2L, "");
-        assertThat(query("resolved IS NOT EMPTY", 1).get("total").asLong()).isZero();
+        edit(id, version, "결제 문서 정리", "task", "todo", "low", 2L, "");
+        assertThat(titles(query("resolved IS NOT EMPTY", 1))).containsExactly("권한 정리");
         assertThat(one("결제 문서 정리").get("resolvedAt").isNull()).isTrue();
 
         // 다시 붙이면 그때 시각으로 새로 적힌다(옛 값이 되살아나지 않는다)

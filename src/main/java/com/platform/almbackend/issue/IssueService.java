@@ -5,6 +5,8 @@ import com.platform.common.error.NotFoundException;
 import com.platform.almbackend.domain.Issue;
 import com.platform.almbackend.domain.IssueResolution;
 import com.platform.almbackend.domain.Project;
+import com.platform.almbackend.event.domain.IssueDomainEventPublisher;
+import com.platform.almbackend.workflow.WorkflowEngine;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
@@ -58,6 +60,8 @@ public class IssueService {
     private final ComponentService componentService;
     private final IssueLocks locks;
     private final IssueRankGroups rankGroups;
+    private final WorkflowEngine workflow;
+    private final IssueDomainEventPublisher domainEvents;
 
     @Transactional(readOnly = true)
     public List<IssueResponse> list(long userId, long projectId) {
@@ -90,7 +94,8 @@ public class IssueService {
         String type = normalizeType(request.type() == null ? settings.defaultType(projectId) : request.type());
         settings.assertTypeEnabled(projectId, type);
         IssueDetailsRequest details = request.details();
-        assertRequiredFields(settings.body(projectId), type, request, details);
+        SettingsBody body = settings.body(projectId);
+        assertRequiredFields(body, type, request, details);
         Long parentId = details == null ? null : details.parentId();
         validateParent(projectId, null, type, parentId);
         Long sprintId = details == null ? null : details.sprintId();
@@ -104,7 +109,7 @@ public class IssueService {
                 request.title().trim(),
                 normalizeDescription(request.description()),
                 type,
-                requireStatus(projectId, request.status()),
+                requireStatus(body, type, request.status()),
                 settings.resolvePriority(projectId, request.priority()),
                 request.assigneeId() == null ? componentService.resolveDefaultAssignee(project, componentIds) : request.assigneeId(),
                 userId,
@@ -115,6 +120,9 @@ public class IssueService {
                 normalizeLabels(details == null ? null : details.labels()),
                 order);
         fresh.replaceComponents(componentIds);
+        // 완료 의미 상태로 만들면 해결 = 완료(A1, 목업 createIssue와 같다)
+        fresh.changeResolution(ResolutionRule.resolve(false, SchemeService.isComplete(body, fresh.getStatus()),
+                null, false, null, null));
         Long fixVersionId = details == null ? null : details.fixVersionId();
         if (fixVersionId != null) {
             versionService.requireAssignable(fixVersionId, projectId);
@@ -126,6 +134,7 @@ public class IssueService {
         notifications.onIssueCreated(userId, issue);
         notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueCreated(userId, issue));
+        domainEvents.created(userId, issue);
         return IssueResponse.from(issue);
     }
 
@@ -182,7 +191,6 @@ public class IssueService {
         }
         LocalDate dueDate = details == null ? issue.getDueDate() : details.dueDate();
         BigDecimal estimateHours = details == null ? issue.getEstimateHours() : details.estimateHours();
-        IssueResolution resolution = details == null ? issue.getResolution() : details.resolution();
         Long fixVersionId = details == null ? issue.getFixVersionId() : details.fixVersionId();
         if (fixVersionId != null && !Objects.equals(fixVersionId, issue.getFixVersionId())) {
             versionService.requireAssignable(fixVersionId, issue.getProjectId());
@@ -193,13 +201,37 @@ public class IssueService {
         List<Long> componentIds = details == null || details.componentIds() == null
                 ? List.copyOf(issue.getComponentIds())
                 : componentService.validateForIssue(issue.getProjectId(), details.componentIds());
-        String status = request.status() == null ? issue.getStatus() : requireStatus(issue.getProjectId(), request.status());
-        settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
+        SettingsBody body = settings.body(issue.getProjectId());
+        SettingsBody.ResolvedWorkflow flow = body.workflowFor(nextType);
+        String requested = request.status() == null ? issue.getStatus() : request.status().trim();
+        String status;
+        WorkflowEngine.Evaluated used = null;
+        if (!flow.has(issue.getStatus()) && requested.equals(issue.getStatus())) {
+            // 타입을 바꿨더니 새 타입 워크플로(C5)에 지금 상태가 없다 — 설정 변경 이관과 같은 규칙으로 옮긴다.
+            // 화면은 미리 대상 상태를 물어 status로 보낼 수 있다(그 경우 아래 분기에서 그 값이 검증된다).
+            status = settings.mappedStatus(
+                    body.statuses().stream().filter(x -> x.id().equals(issue.getStatus())).findFirst().orElse(null),
+                    issue.getStatus(), flow.statuses());
+        } else {
+            SchemeService.assertValidStatus(body, nextType, requested);
+            status = requested;
+            // 전환 규칙(조건 포함)은 지금 상태가 그 워크플로 안에 있을 때만 — 밖이면 타입 변경에 따른 이관이다
+            if (!status.equals(issue.getStatus()) && flow.has(issue.getStatus())) {
+                used = workflow.choose(userId, issue, flow, status);
+            }
+        }
+        // 해결(A1) — 화면이 들고 있던 값을 그대로 다시 보내므로 "현재 값과 다를 때만" 지정으로 본다
+        boolean explicitResolution = details != null && !Objects.equals(details.resolution(), issue.getResolution());
+        IssueResolution resolution = ResolutionRule.resolve(
+                SchemeService.isComplete(body, issue.getStatus()), SchemeService.isComplete(body, status),
+                issue.getResolution(), explicitResolution, details == null ? null : details.resolution(),
+                WorkflowEngine.defaultResolution(used));
         // 상태나 스프린트가 바뀌면 대상 컬럼 맨 뒤로 보낸다. 정밀 배치는 move/rank가 한다.
         Long previousSprintId = issue.getSprintId();
         String previousStatus = issue.getStatus();
         Long previousAssigneeId = issue.getAssigneeId();
         IssueActivityService.Snapshot snapshotBefore = IssueActivityService.Snapshot.of(issue);
+        IssueDomainEventPublisher.Before domainBefore = IssueDomainEventPublisher.Before.of(issue);
         boolean regrouped = !Objects.equals(status, issue.getStatus())
                 || !Objects.equals(sprintId, previousSprintId);
         long order = issue.getSortOrder();
@@ -219,6 +251,9 @@ public class IssueService {
                 labels,
                 order);
         issue.replaceComponents(componentIds);
+        // 전환 검증은 요청 값을 반영한 뒤, 후처리는 검증 뒤(지라와 같은 순서)
+        workflow.assertValidators(used, issue);
+        workflow.applyPostFunctions(used, issue, userId);
         if (regrouped) {
             List<Issue> source = Objects.equals(previousSprintId, sprintId)
                     ? List.of()
@@ -233,6 +268,7 @@ public class IssueService {
         notifications.onIssueUpdated(userId, issue, previousStatus, previousAssigneeId);
         notifications.notifyMentioned(userId, issue, request.mentionedUserIds(), Instant.now());
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
+        domainEvents.changed(userId, domainBefore, issue, body, used == null || used.transition() == null ? null : used.id());
         return IssueResponse.from(issue);
     }
 
@@ -253,8 +289,13 @@ public class IssueService {
 
     /** 상태 id는 프로젝트 워크플로에 있어야 한다. 비면 워크플로의 첫 '할 일' 상태 */
     public String requireStatus(long projectId, String value) {
-        String status = value == null || value.isBlank() ? settings.defaultStatus(projectId) : value.trim();
-        settings.assertValidStatus(projectId, status);
+        return requireStatus(settings.body(projectId), null, value);
+    }
+
+    /** 이슈 타입의 워크플로(C5, 없으면 프로젝트 기본) 기준 — 비면 그 워크플로의 첫 '할 일' 상태 */
+    public static String requireStatus(SettingsBody body, String typeId, String value) {
+        String status = value == null || value.isBlank() ? SchemeService.defaultStatus(body, typeId) : value.trim();
+        SchemeService.assertValidStatus(body, typeId, status);
         return status;
     }
 

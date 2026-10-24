@@ -8,6 +8,8 @@ import com.platform.almbackend.issue.dto.IssueImportResponse;
 import com.platform.almbackend.issue.dto.IssueMoveRequest;
 import com.platform.almbackend.issue.dto.IssueRankRequest;
 import com.platform.almbackend.issue.dto.IssueResponse;
+import com.platform.almbackend.issue.dto.IssueTransitionRequest;
+import com.platform.almbackend.issue.dto.IssueTransitionsResponse;
 import com.platform.almbackend.issue.dto.IssueUpdateRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +32,7 @@ public class IssueController {
     private final IssueImportService imports;
     private final IssueRankService ranking;
     private final IssueCloneService cloner;
+    private final IssueTransitionService transitions;
 
     @Operation(summary = "프로젝트의 이슈 목록을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues")
@@ -103,6 +106,28 @@ public class IssueController {
             @Valid @RequestBody IssueMoveRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return ranking.move(userId(jwt), issueId, request);
+    }
+
+    @Operation(summary = "이슈의 가용 전환 목록 — 지금 상태에서 갈 수 있는 전환과 조건 충족 여부",
+            description = "조건(담당자만·역할·하위 이슈 완료) 때문에 못 하는 전환도 available=false와 unavailableReason으로 준다. "
+                    + "전환 목록이 빈 워크플로는 다른 모든 상태로 가는 암묵 전환(id = implicit:<상태 ID>)을 준다. 프로젝트 VIEW가 필요하다.")
+    @GetMapping("/api/alm/issues/{issueId}/transitions")
+    public IssueTransitionsResponse transitions(
+            @Parameter(description = "이슈 ID") @PathVariable long issueId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return transitions.available(userId(jwt), issueId);
+    }
+
+    @Operation(summary = "전환을 실행한다 — 전환 화면 값(해결·담당자·수정 버전·마감일)과 코멘트를 한 요청으로",
+            description = "조건·검증 미충족은 400 {\"error\"}(권한 없음 403과 구분). 화면에 없는 칸을 보내면 400. "
+                    + "expectedVersion을 주면 어긋날 때 409. 완료 의미 상태로 가면 해결이 기본 \"완료\"(또는 화면 값·후처리 값)로, "
+                    + "완료에서 나가면 비워진다.")
+    @PostMapping("/api/alm/issues/{issueId}/transitions")
+    public IssueResponse transition(
+            @Parameter(description = "이슈 ID") @PathVariable long issueId,
+            @Valid @RequestBody IssueTransitionRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return transitions.transition(userId(jwt), issueId, request);
     }
 
     @Operation(summary = "백로그·스프린트 안에서 이슈 순서를 바꾼다")

@@ -205,28 +205,45 @@ public class SchemeService {
     }
 
     public void assertValidStatus(long projectId, String statusId) {
-        if (body(projectId).statuses().stream().noneMatch(s -> s.id().equals(statusId))) {
-            throw new IllegalArgumentException("이 프로젝트에 없는 상태입니다: " + statusId);
-        }
+        assertValidStatus(body(projectId), null, statusId);
     }
 
-    /** 목록이 비면 모두 허용(호환 기본값), 정의돼 있으면 목록에 있는 이동만 */
-    public void assertTransitionAllowed(long projectId, String from, String to) {
-        if (from.equals(to)) return;
-        SettingsBody body = body(projectId);
-        if (body.transitions().isEmpty()) return;
-        boolean allowed = body.transitions().stream().anyMatch(t ->
-                t.to().equals(to) && (t.from() == null || t.from().isEmpty() || t.from().contains(from)));
-        if (!allowed) {
-            throw new IllegalArgumentException(statusName(body, from) + "에서 " + statusName(body, to) + "로 옮길 수 없습니다");
+    /**
+     * 상태가 이 이슈 타입의 워크플로에 있는가 — 프로젝트에 없으면 "프로젝트에 없는 상태", 프로젝트에는 있지만
+     * 타입별 워크플로(C5)에 없으면 "이 이슈 타입의 워크플로에 없는 상태"로 거부한다.
+     */
+    public static void assertValidStatus(SettingsBody body, String typeId, String statusId) {
+        if (body.statuses().stream().noneMatch(s -> s.id().equals(statusId))) {
+            throw new IllegalArgumentException("이 프로젝트에 없는 상태입니다: " + statusId);
+        }
+        if (typeId != null && !body.workflowFor(typeId).has(statusId)) {
+            throw new IllegalArgumentException("이 이슈 타입의 워크플로에 없는 상태입니다: " + statusName(body, statusId));
         }
     }
 
     public String defaultStatus(long projectId) {
-        return body(projectId).statuses().stream()
-                .sorted((a, b) -> Integer.compare(a.order(), b.order()))
-                .filter(s -> "new".equals(s.kind())).map(SettingsBody.WorkflowStatus::id)
-                .findFirst().orElse("todo");
+        return defaultStatus(body(projectId), null);
+    }
+
+    /** 워크플로(타입별이 있으면 그것)의 첫 '할 일' 의미 상태 — 없으면 첫 상태 */
+    public static String defaultStatus(SettingsBody body, String typeId) {
+        List<SettingsBody.WorkflowStatus> sorted = body.workflowFor(typeId).statuses();
+        return sorted.stream().filter(s -> "new".equals(s.kind())).map(SettingsBody.WorkflowStatus::id)
+                .findFirst()
+                .orElse(sorted.isEmpty() ? "todo" : sorted.get(0).id());
+    }
+
+    /**
+     * 워크플로에 없는 상태를 새 워크플로의 상태로 옮길 곳 — 설정 변경 이관과 같은 규칙: 같은 카테고리의 첫 상태 →
+     * 같은 의미의 첫 상태 → 첫 상태. {@code previous}는 옛 구성에서 그 상태의 정의(없으면 null).
+     */
+    public String mappedStatus(SettingsBody.WorkflowStatus previous, String statusId,
+                               List<SettingsBody.WorkflowStatus> target) {
+        String oldCategory = previous != null ? previous.category() : statusId;
+        String oldKind = previous != null && previous.kind() != null ? previous.kind() : queries.kindOf(statusId);
+        return target.stream().filter(s -> s.category().equals(oldCategory)).findFirst()
+                .or(() -> target.stream().filter(s -> queries.kindOf(s.category()).equals(oldKind)).findFirst())
+                .orElse(target.get(0)).id();
     }
 
     /** 프로젝트의 "완료" 의미 상태 id 전부 — 스프린트 완료·릴리스가 doneStatuses를 안 보내면 이걸 쓴다 */
@@ -242,7 +259,12 @@ public class SchemeService {
     /** 완료 의미인가 — 해결 규칙 */
     @Transactional(readOnly = true)
     public boolean isComplete(long projectId, String statusId) {
-        return body(projectId).statuses().stream()
+        return isComplete(body(projectId), statusId);
+    }
+
+    /** 완료 의미인가 — 레지스트리로 해석된 본문 기준. 본문에 없는 옛 id는 'done'만 완료로 본다(V29 백필과 같다) */
+    public static boolean isComplete(SettingsBody body, String statusId) {
+        return body.statuses().stream()
                 .filter(s -> s.id().equals(statusId)).map(s -> "complete".equals(s.kind())).findFirst()
                 .orElse("done".equals(statusId));
     }
@@ -309,6 +331,91 @@ public class SchemeService {
             throw new IllegalArgumentException("기본 우선순위는 활성화된 우선순위 중에서 골라야 합니다");
         }
         validateFields(body);
+        validateWorkflows(body);
+    }
+
+    /**
+     * 전환 규칙(C1~C3)과 타입별 워크플로(C5) — 대상·출발 상태가 워크플로에 있어야 하고, 조건·검증·화면 칸·후처리는
+     * 정해진 어휘만 받는다. 해결 칸과 해결 후처리는 완료 의미로 가는 전환에만 쓸 수 있다.
+     */
+    private void validateWorkflows(SettingsBody body) {
+        Map<String, String> kindById = new java.util.HashMap<>();
+        for (SettingsBody.WorkflowStatus status : body.statuses()) kindById.put(status.id(), queries.kindOf(status.category()));
+        validateTransitions(body.transitions(), kindById);
+        for (Map.Entry<String, SettingsBody.TypeWorkflow> entry : body.workflowsByType().entrySet()) {
+            String typeId = entry.getKey();
+            if (typeId == null || typeId.isBlank() || types.findById(typeId).isEmpty()) {
+                throw new IllegalArgumentException("없는 이슈 타입입니다: " + typeId);
+            }
+            SettingsBody.TypeWorkflow workflow = entry.getValue();
+            if (workflow == null) throw new IllegalArgumentException("이슈 타입 워크플로가 비어 있습니다: " + typeName(typeId));
+            List<String> subset = workflow.statuses() == null ? List.of() : workflow.statuses();
+            Map<String, String> scoped = new java.util.HashMap<>();
+            for (String id : subset) {
+                if (!kindById.containsKey(id)) {
+                    throw new IllegalArgumentException(typeName(typeId) + " 워크플로에 프로젝트에 없는 상태가 있습니다: " + id);
+                }
+                scoped.put(id, kindById.get(id));
+            }
+            if (subset.isEmpty()) scoped.putAll(kindById);
+            if (!new HashSet<>(scoped.values()).containsAll(RegistryService.KINDS)) {
+                throw new IllegalArgumentException(typeName(typeId) + " 워크플로에도 카테고리(할 일/진행 중/완료)마다 상태가 최소 1개 필요합니다");
+            }
+            if (workflow.transitions() != null) validateTransitions(workflow.transitions(), scoped);
+        }
+    }
+
+    private static void validateTransitions(List<SettingsBody.Transition> transitions, Map<String, String> kindById) {
+        Set<String> ids = new HashSet<>();
+        for (SettingsBody.Transition t : transitions) {
+            if (t == null || t.to() == null || !kindById.containsKey(t.to())) {
+                throw new IllegalArgumentException("전환의 대상 상태가 워크플로에 없습니다");
+            }
+            if (t.id() != null && !t.id().isBlank() && !ids.add(t.id())) {
+                throw new IllegalArgumentException("같은 전환 id가 두 번 있습니다: " + t.id());
+            }
+            for (String from : t.from()) {
+                if (!kindById.containsKey(from)) throw new IllegalArgumentException("전환의 출발 상태가 워크플로에 없습니다: " + from);
+            }
+            boolean toComplete = "complete".equals(kindById.get(t.to()));
+            for (SettingsBody.Condition c : t.conditions()) {
+                if (c == null || !SettingsBody.CONDITION_TYPES.contains(c.type())) {
+                    throw new IllegalArgumentException("없는 전환 조건입니다: " + (c == null ? null : c.type()));
+                }
+                if ("role".equals(c.type()) && !"ADMIN".equals(c.role()) && !"EDIT".equals(c.role())) {
+                    throw new IllegalArgumentException("역할 조건은 ADMIN 또는 EDIT여야 합니다");
+                }
+            }
+            Set<String> seen = new HashSet<>();
+            for (String field : t.validators()) {
+                if (!SettingsBody.VALIDATOR_FIELDS.contains(field)) throw new IllegalArgumentException("전환 검증에 쓸 수 없는 필드입니다: " + field);
+                if (!seen.add(field)) throw new IllegalArgumentException("같은 필드를 두 번 넣을 수 없습니다: " + SettingsBody.fieldName(field));
+            }
+            seen.clear();
+            for (String field : t.screenFields()) {
+                if (!SettingsBody.SCREEN_FIELDS.contains(field)) throw new IllegalArgumentException("전환 화면에 넣을 수 없는 칸입니다: " + field);
+                if (!seen.add(field)) throw new IllegalArgumentException("같은 칸을 두 번 넣을 수 없습니다: " + field);
+                if ("resolution".equals(field) && !toComplete) {
+                    throw new IllegalArgumentException("해결 칸은 완료 상태로 가는 전환에만 넣을 수 있습니다");
+                }
+            }
+            for (SettingsBody.PostFunction f : t.postFunctions()) {
+                if (f == null || !SettingsBody.POST_FUNCTION_TYPES.contains(f.type())) {
+                    throw new IllegalArgumentException("없는 후처리입니다: " + (f == null ? null : f.type()));
+                }
+                if ("setResolution".equals(f.type())) {
+                    if (!toComplete) throw new IllegalArgumentException("해결 설정 후처리는 완료 상태로 가는 전환에만 쓸 수 있습니다");
+                    try {
+                        com.platform.almbackend.domain.IssueResolution.valueOf(f.value() == null ? "" : f.value());
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("없는 해결 값입니다: " + f.value());
+                    }
+                }
+            }
+            boolean assigns = t.postFunctions().stream().anyMatch(f -> "assignToActor".equals(f.type()));
+            boolean clears = t.postFunctions().stream().anyMatch(f -> "clearAssignee".equals(f.type()));
+            if (assigns && clears) throw new IllegalArgumentException("담당자를 나로 지정하면서 비울 수는 없습니다");
+        }
     }
 
     /**
@@ -384,43 +491,59 @@ public class SchemeService {
     private static SettingsBody prune(SettingsBody body) {
         Set<String> valid = new HashSet<>();
         for (SettingsBody.WorkflowStatus s : body.statuses()) valid.add(s.id());
-        List<SettingsBody.Transition> transitions = new ArrayList<>();
-        for (SettingsBody.Transition t : body.transitions()) {
-            if (!valid.contains(t.to())) continue;
-            List<String> from = t.from() == null ? List.of() : t.from().stream().filter(valid::contains).toList();
-            if (t.from() != null && !t.from().isEmpty() && from.isEmpty()) continue;
-            transitions.add(new SettingsBody.Transition(t.id(), t.name(), from, t.to()));
+        List<SettingsBody.Transition> transitions = pruneTransitions(body.transitions(), valid);
+        Map<String, SettingsBody.TypeWorkflow> workflows = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, SettingsBody.TypeWorkflow> e : body.workflowsByType().entrySet()) {
+            SettingsBody.TypeWorkflow w = e.getValue();
+            List<String> subset = w.statuses() == null ? List.of() : w.statuses().stream().filter(valid::contains).toList();
+            Set<String> scoped = subset.isEmpty() ? valid : new HashSet<>(subset);
+            workflows.put(e.getKey(), new SettingsBody.TypeWorkflow(subset,
+                    w.transitions() == null ? null : pruneTransitions(w.transitions(), scoped)));
         }
         Map<String, SettingsBody.Point> layout = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, SettingsBody.Point> e : body.layout().entrySet()) {
             if (valid.contains(e.getKey()) || "__any__".equals(e.getKey())) layout.put(e.getKey(), e.getValue());
         }
         return new SettingsBody(body.statuses(), transitions, layout, body.enabledTypes(),
-                body.enabledPriorities(), body.defaultPriority(), body.fields(), body.fieldsByType());
+                body.enabledPriorities(), body.defaultPriority(), body.fields(), body.fieldsByType(), workflows);
+    }
+
+    /** 원래 전역 전환(from 비었음)은 그대로 두고, from을 전부 잃은 전환만 버린다 — 규칙(조건·검증·화면·후처리)은 보존 */
+    private static List<SettingsBody.Transition> pruneTransitions(List<SettingsBody.Transition> source, Set<String> valid) {
+        List<SettingsBody.Transition> transitions = new ArrayList<>();
+        for (SettingsBody.Transition t : source) {
+            if (!valid.contains(t.to())) continue;
+            List<String> from = t.from().stream().filter(valid::contains).toList();
+            if (!t.isGlobal() && from.isEmpty()) continue;
+            transitions.add(t.withFrom(from));
+        }
+        return transitions;
     }
 
     /** 새 구성에 없는 상태의 이슈를 옮긴다 — 반드시 구성을 바꾸기 전에(옛 구성으로 의미를 읽는다) */
+    /**
+     * 이슈 타입별 워크플로(C5)도 본다 — 이슈의 상태가 <b>그 타입의</b> 새 워크플로에 없으면 옮긴다. 옮긴 결과 완료 의미에
+     * 들고 나면 해결 규칙(A1)을 같이 적용한다(해결이 상태와 따로 놀지 않게).
+     */
     private void migrateIssues(long actorId, List<Long> projectIds, SettingsBody newBody) {
         if (projectIds.isEmpty()) return;
-        Set<String> valid = new HashSet<>();
-        for (SettingsBody.WorkflowStatus s : newBody.statuses()) valid.add(s.id());
-        List<SettingsBody.WorkflowStatus> sorted = newBody.statuses().stream()
-                .sorted((a, b) -> Integer.compare(a.order(), b.order())).toList();
+        SettingsBody enrichedNew = queries.enrich(newBody);
+        Map<String, SettingsBody.ResolvedWorkflow> byType = new java.util.HashMap<>();
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
         for (long projectId : projectIds) {
             SettingsBody old = body(projectId);
             for (Issue issue : issues.findByProjectIdOrderBySortOrderAscKeyAsc(projectId)) {
-                if (valid.contains(issue.getStatus())) continue;
+                SettingsBody.ResolvedWorkflow workflow = byType.computeIfAbsent(issue.getType(), enrichedNew::workflowFor);
+                if (workflow.has(issue.getStatus())) continue;
                 SettingsBody.WorkflowStatus previous = old.statuses().stream()
                         .filter(s -> s.id().equals(issue.getStatus())).findFirst().orElse(null);
-                String oldCategory = previous != null ? previous.category() : issue.getStatus();
-                String oldKind = previous != null ? previous.kind() : queries.kindOf(issue.getStatus());
-                SettingsBody.WorkflowStatus fallback = sorted.stream()
-                        .filter(s -> s.category().equals(oldCategory)).findFirst()
-                        .or(() -> sorted.stream().filter(s -> queries.kindOf(s.category()).equals(oldKind)).findFirst())
-                        .orElse(sorted.get(0));
+                String target = mappedStatus(previous, issue.getStatus(), workflow.statuses());
                 String previousStatus = issue.getStatus();
-                issue.moveToStatus(fallback.id());
+                boolean wasComplete = previous != null ? "complete".equals(previous.kind()) : "done".equals(previousStatus);
+                boolean isComplete = workflow.status(target).map(s -> "complete".equals(s.kind())).orElse(false);
+                issue.moveToStatus(target);
+                issue.changeResolution(com.platform.almbackend.issue.ResolutionRule.resolve(
+                        wasComplete, isComplete, issue.getResolution(), false, null, null));
                 changeLog.recordChanges(actorId, issue, previousStatus, issue.getSprintId(), now);
             }
         }

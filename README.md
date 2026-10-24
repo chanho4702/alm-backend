@@ -94,7 +94,9 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `POST` | `/api/alm/me/filters` | 인증(본인) | 저장 필터 생성(이름 중복 409, `kind=aql`이면 문법 검사) |
 | `PUT` | `/api/alm/me/filters/{id}` | 인증(본인) | 저장 필터 수정(보낸 항목만) |
 | `DELETE` | `/api/alm/me/filters/{id}` | 인증(본인) | 저장 필터 삭제 |
-| `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 |
+| `POST` | `/api/alm/issues/{issueId}/move` | EDIT | 보드 컬럼 이동·순서 변경 — 전환 규칙(조건·검증·후처리)과 해결 규칙을 탄다. 아래 "워크플로 엔진" 절 |
+| `GET` | `/api/alm/issues/{issueId}/transitions` | VIEW | 가용 전환 — 조건까지 평가, 못 하는 것도 이유와 함께(`available`·`unavailableReason`·`screenFields`) |
+| `POST` | `/api/alm/issues/{issueId}/transitions` | EDIT | 전환 실행 — 전환 화면 값(해결·담당자·수정 버전·마감일)과 코멘트를 한 요청으로. 조건·검증 거부는 400 |
 | `POST` | `/api/alm/issues/{issueId}/rank` | EDIT | 백로그/스프린트 랭크 이동 |
 | `DELETE` | `/api/alm/issues/{issueId}` | EDIT | 이슈 삭제 |
 | `GET` | `/api/alm/projects/{projectId}/versions` | VIEW | 버전 목록 |
@@ -229,6 +231,168 @@ org-service `member_profile`(V7)로 옮겼다. `user_preference`의 `avatar_key`
 
 `code`: `OK`·`CONFLICT`·`FORBIDDEN`·`NOT_FOUND`·`INVALID`(규칙 위반·없는 상태 등)·`UNAVAILABLE`(권한 서비스 불능)·`ERROR`.
 볼 수 없는 프로젝트의 이슈·없는 이슈는 `key`가 null이다.
+
+## 워크플로 엔진 — 해결 규칙·전환·조건·검증·후처리 (2026-10-24)
+
+상태가 바뀌는 **모든 경로**(`PUT /issues/{id}`, `POST /issues/{id}/move`, `POST /issues/bulk`, `POST /issues/{id}/transitions`,
+스킴 변경에 따른 이관)가 같은 규칙을 탄다 — `workflow/WorkflowEngine`(전환 고르기·조건·검증·후처리)과
+`issue/ResolutionRule`(해결). 규칙은 스킴/커스텀 본문(JSON) 안에 있어 **마이그레이션이 없다**(V29 백필만).
+
+### 해결(resolution) 규칙 — 서버가 정본
+
+| 상황 | 결과 |
+|---|---|
+| 완료 의미(kind=complete) 상태로 **들어감** | 해결 = 기본값(`DONE`, 전환 후처리 `setResolution`이 있으면 그 값), 해결일 = 지금 |
+| 완료에서 **나감** | 해결·해결일 비움 |
+| 완료 안에서 해결을 다른 값으로 지정 | 그 값. 해결일은 처음 해결한 시각 그대로 |
+| 완료 안에서 해결을 `null`로 지정 | 기본값(`DONE`) — 완료 이슈는 해결이 비지 않는다 |
+| 완료가 아닌 상태에 해결을 지정 | **400** `완료된 이슈에만 해결을 설정할 수 있습니다` |
+| 완료 상태로 **생성** | 해결 = `DONE` |
+
+"지정"의 판정: `PUT`은 화면이 들고 있던 값을 그대로 다시 보내므로(REST 어댑터가 현재 값을 실어 보낸다)
+**`details.resolution`이 서버의 현재 값과 다를 때만** 지정으로 본다. 그래서 완료 → 할 일로 되돌리며 옛 `DONE`을
+그대로 실어 보내도 거부하지 않고 비운다. 보드 이동·일괄 편집은 해결을 지정하지 않는다. 프론트 목업
+`applyResolutionRule`(`mock/rules.ts`)과 같은 규칙이고, REST 어댑터 주석("기본값·해제 규칙은 프론트 몫",
+`store/api/issues.ts`)은 이제 틀리다 — 프론트는 값을 보내기만 하면 된다.
+
+### V29 해결 백필
+
+`V29__resolution_backfill.sql` — 완료 의미 상태(`status_def → status_category.kind = 'complete'`, 레지스트리에 없는
+옛 id는 `done`만)인데 해결이 빈 이슈(보관 포함)를 `DONE`으로 채운다. 해결일은 **현재 상태로 들어온 마지막 상태
+변경 시각**(`issue_change_log`, `field='STATUS' AND to_value = 현재 상태`), 이력이 없으면 `updated_at`. `updated_at`은
+건드리지 않는다. 반대 방향(완료가 아닌데 해결이 남은 이슈)은 바꾸지 않는다 — 그런 이슈는 다음 상태 변경 때 규칙이 비운다.
+
+운영 반영 전 영향 건수(같은 술어):
+
+```sql
+SELECT count(*) FROM issue i
+WHERE i.resolution IS NULL
+  AND (EXISTS (SELECT 1 FROM status_def d JOIN status_category c ON c.id = d.category_id
+               WHERE d.id = i.status AND c.kind = 'complete')
+       OR (i.status = 'done' AND NOT EXISTS (SELECT 1 FROM status_def d WHERE d.id = i.status)));
+```
+
+### 가용 전환 — `GET /api/alm/issues/{issueId}/transitions` (VIEW)
+
+지금 상태에서 갈 수 있는 전환. 조건 때문에 못 하는 전환도 **숨기지 않고** `available: false` + 이유를 준다.
+편집 권한이 없거나 보관된 프로젝트면 전부 `available: false`(이유는 403 문구). 자기 자신으로 가는 전환은 뺀다.
+전환 목록이 빈 워크플로(= 모든 상태 ↔ 모든 상태, 지라 기본 워크플로와 같은 뜻)는 다른 모든 상태로 가는 암묵 전환
+(`id = "implicit:<상태 id>"`, `isGlobal: true`)을 준다. 지라 `getTransitions`의 `isGlobal`·`isAvailable`·`hasScreen`과 같은 뜻.
+
+```json
+{
+  "issueId": 1024, "status": "inprogress", "version": 3, "typeWorkflow": false,
+  "transitions": [
+    { "id": "t-done", "name": "끝내기", "to": "done", "toName": "완료", "toKind": "complete", "toIcon": "check-circle",
+      "isGlobal": false, "available": false, "unavailableReason": "담당자만 이 전환을 할 수 있습니다",
+      "hasScreen": true, "screenFields": ["resolution", "comment", "dueDate"],
+      "requiredFields": ["dueDate"], "missingFields": ["dueDate"] },
+    { "id": "t-reset", "name": "처음으로", "to": "todo", "toName": "할 일", "toKind": "new", "toIcon": "circle",
+      "isGlobal": true, "available": true, "unavailableReason": null,
+      "hasScreen": false, "screenFields": [], "requiredFields": [], "missingFields": [] }
+  ]
+}
+```
+
+- `name`: 전환 이름, 비어 있으면 대상 상태 이름. `requiredFields`: 전환 검증 필드, `missingFields`: 그중 지금 빈 것
+  (화면 칸으로 채우지 않으면 실행이 400). `typeWorkflow`: 이슈 타입별 워크플로가 적용됐는가.
+
+### 전환 실행 — `POST /api/alm/issues/{issueId}/transitions` (EDIT)
+
+```json
+{
+  "transitionId": "t-done",
+  "expectedVersion": 3,
+  "fields": { "resolution": "WONT_DO", "dueDate": "2026-11-01" },
+  "comment": "범위에서 뺍니다"
+}
+```
+
+- 응답은 `IssueResponse`(저장 후). 한 트랜잭션: 조건 → 화면 값 반영 → 검증 → 상태 + 해결 규칙 → 후처리 → 코멘트.
+- `fields`는 **그 전환의 `screenFields`에 있는 칸만**(키를 보낸 것만 바뀐다): `resolution`(null이면 기본값),
+  `assigneeId`·`fixVersionId`·`dueDate`(null이면 해제). 화면에 없는 칸 → 400 `이 전환 화면에 없는 칸입니다: 담당자`,
+  화면에 `comment`가 없는데 코멘트 → 400.
+- `expectedVersion`은 선택 — 주면 어긋날 때 409. 버전은 편집 폼이 보는 값(담당자·수정 버전·마감일)이 바뀐 때만 오른다
+  (상태·해결만 바뀐 전환은 보드 이동처럼 그대로).
+- 거부: 없는 전환 400 `없는 전환입니다: x`, 지금 상태에서 못 하는 전환 400 `지금 상태(할 일)에서는 할 수 없는 전환입니다: 끝내기`,
+  조건·검증 미충족 400(아래 문구), 프로젝트 권한 없음 403, org 불능 503.
+- **A4 결정(권장안 채택)**: 완료로 옮길 때 창은 **전환 화면이 설정된 전환에서만** 띄운다. 화면 없는 전환·보드 이동은 창 없이
+  해결 `DONE`이 자동으로 붙는다(지라 기본 `hasScreen: false`와 같다).
+
+### 전환 규칙 — 스킴/커스텀 본문 `transitions[]`
+
+```json
+{ "id": "t-done", "name": "끝내기", "from": ["inprogress"], "to": "done",
+  "conditions":    [{ "type": "assignee" }, { "type": "role", "role": "ADMIN" }, { "type": "subtasksDone" }],
+  "validators":    ["dueDate", "fixVersion"],
+  "screenFields":  ["resolution", "comment", "assignee", "fixVersion", "dueDate"],
+  "postFunctions": [{ "type": "assignToActor" }, { "type": "setResolution", "value": "WONT_DO" }] }
+```
+
+| 항목 | 값 | 미충족·거부 문구(400) |
+|---|---|---|
+| 조건 `assignee` | 실행자 = 담당자 | `담당자만 이 전환을 할 수 있습니다` |
+| 조건 `role` | `ADMIN`·`EDIT` — org-service `PROJECT` 판정(gRPC, 불능이면 503) | `프로젝트 관리자만 이 전환을 할 수 있습니다` |
+| 조건 `subtasksDone` | 하위 이슈(보관 제외)가 모두 완료 의미 | `완료되지 않은 하위 이슈가 N개 있습니다` |
+| 검증 | `description`·`assignee`·`labels`·`components`·`parent`·`sprint`·`dueDate`·`fixVersion`·`estimate` | `마감일은 필수입니다`(생성 필수 검사와 같은 문구) |
+| 화면 칸 | `resolution`(완료로 가는 전환만)·`comment`·`assignee`·`fixVersion`·`dueDate` | — |
+| 후처리 | `assignToActor`(담당자 = 실행자)·`clearAssignee`·`setResolution`(완료로 가는 전환만, 기본 해결 값) | — |
+
+- 조건·검증 거부는 **400**이다(403은 권한 없음에만 — 2026-10-24 사용자 결정, 기획 §7-9).
+- 전환 id 없이 상태만 오는 경로(PUT·move·bulk)는 같은 대상으로 가는 전환 중 **조건을 충족하는 첫 번째**를 쓰고,
+  하나도 못 하면 첫 후보의 이유로 거부한다. 정의되지 않은 이동은 예전 문구 `할 일에서 완료로 옮길 수 없습니다`.
+- 저장 검증(스킴/커스텀 저장 400): 대상·출발 상태가 워크플로에 있어야 하고, 위 어휘만, 같은 전환 id 중복 금지,
+  `assignToActor`+`clearAssignee` 동시 금지. 해결 해제는 내장 규칙이라 후처리로 두지 않는다.
+
+### 이슈 타입별 워크플로 — 본문 `workflowsByType` (C5)
+
+```json
+"workflowsByType": {
+  "bug": { "statuses": ["todo", "review", "done"], "transitions": [] }
+}
+```
+
+- 타입 키가 없으면 프로젝트 기본 워크플로(폴백). 키는 레지스트리 타입 id 그대로(`fieldsByType`과 같은 규칙).
+- `statuses`는 프로젝트 `statuses`의 **부분집합**(비면 전부) — 상태 정의는 프로젝트 목록 하나뿐이라 보드 열·완료 판정·
+  리포트는 지금처럼 그 목록을 본다. 부분집합도 의미(할 일/진행 중/완료)마다 상태가 하나 이상 있어야 한다.
+- `transitions`: `null`(생략)이면 프로젝트 전환 중 이 상태들 사이의 것만, `[]`이면 모두 허용, 목록이면 그것.
+- 생성: 기본 상태는 그 타입 워크플로의 첫 '할 일' 상태. 그 워크플로에 없는 상태를 보내면 400
+  `이 이슈 타입의 워크플로에 없는 상태입니다: 진행 중`.
+- **타입 변경 매핑**: 새 타입 워크플로에 지금 상태가 없을 때 — 화면이 대상 상태를 골라 `status`로 보내면 그 값(전환 규칙은
+  적용하지 않는다, 이관이다), 지금 상태를 그대로 보내면 서버가 **같은 카테고리의 첫 상태 → 같은 의미의 첫 상태 → 첫 상태**로
+  옮긴다(설정 변경 이관과 같은 규칙). 해결 규칙은 함께 적용된다.
+- 스킴/커스텀 저장으로 타입 워크플로가 바뀌면 그 타입의 이슈 중 새 워크플로에 없는 상태의 이슈를 같은 규칙으로 이관한다.
+
+### 보드 열 매핑 — `columns_json` (C4)
+
+`GET/PUT /api/alm/boards/{id}` 응답에 세 필드가 더해졌다(기존 `columns`는 그대로):
+
+```json
+{
+  "columnMode": "mapped",
+  "columns": [{ "id": "col-1a2b3c4d", "status": "inprogress", "name": "진행", "statuses": ["inprogress", "review"], "wipLimit": 3 }],
+  "resolvedColumns": [{ "id": "col-1a2b3c4d", "name": "진행", "statuses": ["inprogress", "review"], "wipLimit": 3 },
+                      { "id": "col-9f8e7d6c", "name": "끝", "statuses": ["done"], "wipLimit": null }],
+  "unmappedStatuses": ["todo"]
+}
+```
+
+- `columnMode: "status"`(구 형식): 열 = 상태 1:1, `columns`는 예전처럼 상태별 이름·WIP 덮어쓰기만. `resolvedColumns`는 워크플로
+  상태 전부를 order 순으로(id = 상태 id), `unmappedStatuses`는 빈 목록.
+- `columnMode: "mapped"`: `PUT`의 `columns`에 **`statuses[]`가 하나라도 있으면** 매핑 형식이고 모든 열에 있어야 한다.
+  열 하나에 여러 상태, 상태는 한 열에만(`상태 하나는 한 열에만 넣을 수 있습니다: done`), 없는 상태 400. 열 `id`는 비우면 서버가
+  붙인다. 어느 열에도 없는 상태는 `unmappedStatuses`이고 **그 상태의 이슈는 `GET /boards/{id}/issues`에 나오지 않는다**.
+  워크플로에서 빠진 상태는 읽을 때 열에서 뺀다. 구 형식으로 되돌리려면 `statuses` 없는 열 목록을 보낸다.
+- 열에 놓을 때의 대상 상태(기획 C4 "가용 전환 중 첫 번째")는 화면이 고른다 — 열의 `statuses` 중 `GET .../transitions`에서
+  `available`인 첫 번째로 `move`를 부른다.
+
+### 도메인 이벤트(서비스 내부)
+
+`event/domain/` — `IssueCreatedEvent`·`IssueUpdatedEvent`(`changedFields`)·`IssueTransitionedEvent`(`fromStatus`·`toStatus`·
+`fromKind`·`toKind`·`transitionId`·`actorId`·`at`)를 Spring `ApplicationEventPublisher`로 변경 트랜잭션 **안**에서 낸다.
+커밋된 것에만 반응하려면 `@TransactionalEventListener(phase = AFTER_COMMIT)`(DB를 다시 쓰면 `REQUIRES_NEW`). 자동화 규칙
+엔진이 여기에 붙는다. 서비스 간 이벤트는 그대로 아웃박스(V26) → Redis Streams다. 스킴 변경 이관은 사용자의 전환이 아니라
+발행하지 않는다.
 
 ## AQL — 조건을 조합하는 이슈 질의어
 
@@ -476,12 +640,12 @@ order   := field ("ASC" | "DESC")?
 
   | 상태 | 설명 문구 | 붙는 오퍼레이션 | 개수 |
   |------|----------|----------------|------|
-  | 400 | 요청 검증 실패 | 요청 본문(`@RequestBody`·`MultipartFile`)이 있는 것 | 47 |
-  | 401 | 인증 실패 — 토큰 없음·만료·무효 | 전부 | 122 |
-  | 403 | 권한 없음 | 전부 | 122 |
-  | 404 | 대상 없음 | 경로 변수가 있는 것 | 92 |
+  | 400 | 요청 검증 실패 | 요청 본문(`@RequestBody`·`MultipartFile`)이 있는 것 | 48 |
+  | 401 | 인증 실패 — 토큰 없음·만료·무효 | 전부 | 124 |
+  | 403 | 권한 없음 | 전부 | 124 |
+  | 404 | 대상 없음 | 경로 변수가 있는 것 | 94 |
   | 409 | 버전 충돌 — expectedVersion 불일치 | `expectedVersion`을 받는 PUT | 4 |
-  | 503 | 권한 서비스(org) 불능 | org gRPC로 권한을 판정하는 것 | 100 |
+  | 503 | 권한 서비스(org) 불능 | org gRPC로 권한을 판정하는 것 | 102 |
 
   **400은 본문을 받는 엔드포인트를 기준으로 붙인 것이지, 400이 날 수 있는 모든 경로를 빠짐없이 적은 목록이 아니다.**
   읽는 사람이 본문을 잘못 보내 실제로 400을 만들 수 있는 자리를 표시한 것으로 읽어야 한다 — 예를 들어

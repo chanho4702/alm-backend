@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SettingsBodyTest {
 
     private static SettingsBody bodyWith(List<FieldConfig> fields, Map<String, List<FieldConfig>> byType) {
-        return new SettingsBody(List.of(), List.of(), Map.of(), List.of(), null, null, fields, byType);
+        return new SettingsBody(List.of(), List.of(), Map.of(), List.of(), null, null, fields, byType, null);
     }
 
     @Test

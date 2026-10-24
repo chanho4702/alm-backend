@@ -34,7 +34,7 @@ public record IssueDetailsRequest(
         @Digits(integer = 8, fraction = 2, message = "예상 시간은 소수 둘째 자리까지 입력하세요")
         BigDecimal estimateHours,
         /** 완료 사유. 정의된 값만 받고(그 외 400), null이면 해제 */
-        @Schema(description = "완료 사유. 정의된 값만 받고 null이면 해제한다")
+        @Schema(description = "완료 사유. 정의된 값만 받는다. 서버 규칙: 완료 상태로 들어가면 기본 DONE, 나가면 비움, 완료가 아닌 상태에 지정하면 400(현재 값과 같으면 지정으로 보지 않는다)")
         IssueResolution resolution,
         /** 수정 버전. null이면 해제. 같은 프로젝트의 보관되지 않은 버전만 */
         @Schema(description = "수정 버전 ID. 같은 프로젝트의 보관되지 않은 버전만 지정할 수 있고 null이면 해제", example = "5")

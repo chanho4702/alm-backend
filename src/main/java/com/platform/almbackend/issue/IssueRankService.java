@@ -2,6 +2,9 @@ package com.platform.almbackend.issue;
 
 import com.platform.almbackend.collab.IssueActivityService;
 import com.platform.almbackend.domain.Issue;
+import com.platform.almbackend.event.domain.IssueDomainEventPublisher;
+import com.platform.almbackend.settings.SettingsBody;
+import com.platform.almbackend.workflow.WorkflowEngine;
 import com.platform.almbackend.event.AlmEvents;
 import com.platform.almbackend.event.EventRelay;
 import com.platform.almbackend.history.IssueChangeLogService;
@@ -39,6 +42,8 @@ public class IssueRankService {
     private final IssueLocks locks;
     private final IssueRankGroups rankGroups;
     private final IssueService issueService;
+    private final WorkflowEngine workflow;
+    private final IssueDomainEventPublisher domainEvents;
 
     /**
      * 보드 컬럼 이동. `sortOrder`는 랭크 그룹(프로젝트+스프린트) 하나에만 존재하는 단일 순서열이고
@@ -50,11 +55,23 @@ public class IssueRankService {
         projectService.require(userId, snapshot.getProjectId(), AlmAction.EDIT);
         locks.lockProject(snapshot.getProjectId());
         Issue issue = locks.lockIssue(issueId);
-        String status = issueService.requireStatus(issue.getProjectId(), request.status());
-        settings.assertTransitionAllowed(issue.getProjectId(), issue.getStatus(), status);
+        SettingsBody body = settings.body(issue.getProjectId());
+        SettingsBody.ResolvedWorkflow flow = body.workflowFor(issue.getType());
+        String status = IssueService.requireStatus(body, issue.getType(), request.status());
+        // 같은 열 안 순서 변경은 전환이 아니다. 지금 상태가 워크플로 밖(옛 데이터)이면 규칙 없이 옮긴다(이관)
+        WorkflowEngine.Evaluated used = status.equals(issue.getStatus()) || !flow.has(issue.getStatus())
+                ? null : workflow.choose(userId, issue, flow, status);
         String previousStatus = issue.getStatus();
         IssueActivityService.Snapshot moveSnapshot = IssueActivityService.Snapshot.of(issue);
+        IssueDomainEventPublisher.Before domainBefore = IssueDomainEventPublisher.Before.of(issue);
         issue.moveTo(status, issue.getSortOrder());
+        // 해결(A1): 보드 이동은 해결을 지정하지 않는다 — 완료로 들어가면 기본값, 나가면 비움
+        issue.changeResolution(ResolutionRule.resolve(
+                SchemeService.isComplete(body, previousStatus), SchemeService.isComplete(body, status),
+                issue.getResolution(), false, null, WorkflowEngine.defaultResolution(used)));
+        workflow.assertValidators(used, issue);
+        // 후처리가 담당자를 바꾸면 편집 폼이 보는 값이 바뀐 것이라 버전을 올린다(남의 열린 폼이 되돌리지 않게)
+        if (workflow.applyPostFunctions(used, issue, userId)) issue.bumpVersion();
         List<Issue> group = rankGroups.without(issue, issue.getSprintId());
         int insertAt = IssueRankGroups.indexOfInColumn(group, request.beforeId(), status);
         if (insertAt < 0) insertAt = IssueRankGroups.afterLastOfStatus(group, status);
@@ -65,9 +82,10 @@ public class IssueRankService {
         // 상태가 실제로 바뀐 이동만 편집과 같은 알림을 탄다. 같은 컬럼 안의 순서 변경은 알리지 않는다.
         // 담당자는 이동으로 바뀌지 않으므로 현재 값을 '이전 담당자'로 넘겨 배정 알림이 나가지 않게 한다.
         if (!Objects.equals(previousStatus, status)) {
-            notifications.onIssueUpdated(userId, issue, previousStatus, issue.getAssigneeId());
+            notifications.onIssueUpdated(userId, issue, previousStatus, moveSnapshot.assigneeId());
         }
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
+        domainEvents.changed(userId, domainBefore, issue, body, used == null || used.transition() == null ? null : used.id());
         return IssueResponse.from(issue);
     }
 
@@ -83,6 +101,7 @@ public class IssueRankService {
         Long sprintId = request == null ? null : request.sprintId();
         if (sprintId != null) sprintService.requireSprintInProject(sprintId, issue.getProjectId());
         Long previousSprintId = issue.getSprintId();
+        IssueDomainEventPublisher.Before domainBefore = IssueDomainEventPublisher.Before.of(issue);
         List<Issue> source = Objects.equals(previousSprintId, sprintId)
                 ? List.of()
                 : rankGroups.without(issue, previousSprintId);
@@ -96,6 +115,8 @@ public class IssueRankService {
         IssueRankGroups.resequence(source);
         changeLog.recordChanges(userId, issue, issue.getStatus(), previousSprintId);
         events.afterCommit(AlmEvents.issueUpdated(userId, issue));
+        // 랭크는 상태를 바꾸지 않는다 — 본문(상태 의미)이 필요 없다
+        domainEvents.changed(userId, domainBefore, issue, null, null);
         return IssueResponse.from(issue);
     }
 }
