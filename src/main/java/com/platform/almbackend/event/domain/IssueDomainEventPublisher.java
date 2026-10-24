@@ -64,6 +64,12 @@ public class IssueDomainEventPublisher {
         publisher.publishEvent(new IssueRestoredEvent(issue.getId(), issue.getProjectId(), issue.getKey(), actorId, now(), version(issue)));
     }
 
+    /** 커밋이 새로 이어졌다(V41) — 자동화 COMMIT_LINKED, 실시간 issue.updated(development) */
+    public void commitsLinked(long actorId, Issue issue, int commits) {
+        publisher.publishEvent(new IssueCommitsLinkedEvent(issue.getId(), issue.getProjectId(), issue.getKey(), commits,
+                actorId, now(), version(issue)));
+    }
+
     /**
      * 순서만 바뀐 이동(같은 열 안 재정렬·같은 스프린트 안 랭크) — 필드 변경이 아니라 {@link IssueUpdatedEvent}가 나가지 않는 경우에만 낸다.
      * 같은 랭크 그룹의 다른 이슈 sortOrder도 함께 바뀌었으므로 받는 쪽은 그룹(sprintId) 순서를 다시 읽는다.

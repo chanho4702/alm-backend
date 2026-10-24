@@ -1,5 +1,6 @@
 package com.platform.almbackend.automation;
 
+import com.platform.almbackend.event.domain.IssueCommitsLinkedEvent;
 import com.platform.almbackend.event.domain.IssueCreatedEvent;
 import com.platform.almbackend.event.domain.IssueTransitionedEvent;
 import com.platform.almbackend.event.domain.IssueUpdatedEvent;
@@ -38,6 +39,13 @@ class AutomationListener {
     void on(IssueUpdatedEvent event) {
         safely(new AutomationEngine.Trigger(AutomationSpec.FIELD_CHANGED, event.projectId(), event.issueId(),
                 event.actorId(), null, null, event.changedFields()));
+    }
+
+    /** 커밋이 새로 이어졌다(V41) — 같은 커밋을 다시 보내 새 연결이 없으면 이벤트가 없다 */
+    @TransactionalEventListener(fallbackExecution = true)
+    void on(IssueCommitsLinkedEvent event) {
+        safely(new AutomationEngine.Trigger(AutomationSpec.COMMIT_LINKED, event.projectId(), event.issueId(),
+                event.actorId(), null, null, null));
     }
 
     private void safely(AutomationEngine.Trigger trigger) {

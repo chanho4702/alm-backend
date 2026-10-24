@@ -1,5 +1,6 @@
 package com.platform.almbackend.realtime;
 
+import com.platform.almbackend.event.domain.IssueCommitsLinkedEvent;
 import com.platform.almbackend.event.domain.IssueCreatedEvent;
 import com.platform.almbackend.event.domain.IssueDeletedEvent;
 import com.platform.almbackend.event.domain.IssueRankedEvent;
@@ -24,6 +25,9 @@ import java.util.List;
 @Slf4j
 @RequiredArgsConstructor
 public class RealtimeSignalListener {
+    /** 커밋 연결 신호의 changedFields 값 — 자동화 FIELD_CHANGED 어휘(CHANGED_FIELDS)가 아니다 */
+    public static final String DEVELOPMENT = "development";
+
     private final RealtimeBus bus;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
@@ -39,6 +43,13 @@ public class RealtimeSignalListener {
         String kind = fields.contains("status") ? "transitioned" : "updated";
         publish(new RealtimeSignal(null, "issue", kind, e.projectId(), e.issueId(), e.issueKey(), null,
                 e.version(), fields, e.actorId(), e.at()));
+    }
+
+    /** 커밋 연결(V41) — 필드 변경은 아니지만 개발 패널이 다시 읽어야 한다. changedFields는 화면 전용 값 "development" */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void on(IssueCommitsLinkedEvent e) {
+        publish(new RealtimeSignal(null, "issue", "updated", e.projectId(), e.issueId(), e.issueKey(), null,
+                e.version(), List.of(DEVELOPMENT), e.actorId(), e.at()));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)

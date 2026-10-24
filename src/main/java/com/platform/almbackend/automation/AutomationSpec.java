@@ -30,7 +30,9 @@ public final class AutomationSpec {
     public static final String ISSUE_TRANSITIONED = "ISSUE_TRANSITIONED";
     public static final String FIELD_CHANGED = "FIELD_CHANGED";
     public static final String SCHEDULED = "SCHEDULED";
-    public static final List<String> TRIGGERS = List.of(ISSUE_CREATED, ISSUE_TRANSITIONED, FIELD_CHANGED, SCHEDULED);
+    /** 커밋이 이슈에 새로 이어졌다(V41 커밋 연결) — 받을 항목 없음. 실행 주체 권한으로 액션이 돈다 */
+    public static final String COMMIT_LINKED = "COMMIT_LINKED";
+    public static final List<String> TRIGGERS = List.of(ISSUE_CREATED, ISSUE_TRANSITIONED, FIELD_CHANGED, SCHEDULED, COMMIT_LINKED);
 
     public static final String SET_FIELD = "SET_FIELD";
     public static final String ASSIGN = "ASSIGN";
@@ -56,7 +58,7 @@ public final class AutomationSpec {
     @JsonIgnoreProperties(ignoreUnknown = true)
     @Schema(description = "트리거 — type에 따라 쓰는 항목이 다르다")
     public record Trigger(
-            @Schema(description = "ISSUE_CREATED·ISSUE_TRANSITIONED·FIELD_CHANGED·SCHEDULED", example = "ISSUE_TRANSITIONED")
+            @Schema(description = "ISSUE_CREATED·ISSUE_TRANSITIONED·FIELD_CHANGED·SCHEDULED·COMMIT_LINKED", example = "ISSUE_TRANSITIONED")
             String type,
             @Schema(description = "ISSUE_TRANSITIONED: 출발 상태(비우면 아무 상태)", example = "[\"inprogress\"]")
             List<String> fromStatuses,

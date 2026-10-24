@@ -130,6 +130,10 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET`·`PUT` | `/api/alm/projects/{projectId}/planning-settings` | VIEW·ADMIN | 사이클(스프린트 자동화)·추정 척도(V39) — 아래 "사이클"·"추정 척도" 절 |
 | `GET` | `/api/alm/notifications/inbox` | 인증(본인) | 알림 인박스 — 커서·필터(V40). 아래 "알림 인박스" 절 |
 | `POST`·`DELETE` | `/api/alm/notifications/{id}/snooze`, `POST /{id}/archive`·`/{id}/unarchive`, `POST /api/alm/notifications/bulk` | 인증(본인) | 미루기·보관·일괄 처리(V40) |
+| `GET`·`PUT` | `/api/alm/projects/{projectId}/settings/repositories` | VIEW·ADMIN | 프로젝트 저장소 등록(V41, 통째 교체·최대 20) — 아래 "개발 기록" 절 |
+| `POST` | `/api/alm/dev/commits` | 키마다 대상 프로젝트 EDIT | 커밋 수집·이슈 연결(V41, 최대 500건, 멱등) |
+| `GET` | `/api/alm/issues/{issueId}/development` | VIEW | 이슈 개발 정보 — 커밋(최신 순)·PR·요약 |
+| `GET` | `/api/alm/projects/{projectId}/commits` | VIEW | 프로젝트 최근 커밋(`cursor`·`limit` 기본 50·최대 100) |
 
 ### 상태 아이콘 (V20)
 
@@ -763,7 +767,8 @@ API·가져오기(CSV)로 만든 이슈는 일반 생성이다(편집 권한 기
 
 - **트리거**: `ISSUE_CREATED` · `ISSUE_TRANSITIONED`(`fromStatuses`/`toStatuses`, 비우면 아무 상태) · `FIELD_CHANGED`(`fields` 하나 이상 —
   title·description·type·status·priority·assignee·parent·sprint·dueDate·startDate·storyPoints·estimate·resolution·fixVersion·labels·
-  components·flagged·triage) · `SCHEDULED`(`cron`, 서울 시각, 5필드 또는 6필드, **5분보다 자주 불가**, 조건 AQL 필수 = 대상 검색, 회차당 100건).
+  components·flagged·triage) · `SCHEDULED`(`cron`, 서울 시각, 5필드 또는 6필드, **5분보다 자주 불가**, 조건 AQL 필수 = 대상 검색, 회차당 100건) ·
+  `COMMIT_LINKED`(커밋이 이슈에 **새로** 이어졌을 때 — 받을 항목 없음, 재전송으로는 안 깨어난다. V41).
 - **액션**(최대 10개): `SET_FIELD`(priority·dueDate·startDate·storyPoints·flagged) · `ASSIGN`(`assignee`: reporter·unassigned·user+`userId`) ·
   `COMMENT`(`body`) · `TRANSITION`(`toStatus` — 워크플로 엔진의 전환 실행을 그대로 탄다: 실행 주체로 평가한 가용 전환 중 도착 상태가 같은 첫 전환, 조건·검증·해결 규칙·후처리 포함. 갈 수 없으면 그 이유로 FAILED) · `LABELS`(`add`/`remove`) · `NOTIFY`(`recipients` assignee·reporter·watchers + `userIds`,
   `message` 200자 이하 → 인앱 알림 `type: AUTOMATION`, `detail`=문장, 메일 없음). 모르는 종류·필드·상태·우선순위는 저장 때 400.
@@ -817,7 +822,7 @@ data:{"type":"sprint.completed","projectId":7,"sprintId":12,"version":3,"actorId
 | `type` | 언제 | 받는 쪽이 할 일 |
 |---|---|---|
 | `issue.created` · `issue.restored` | 생성(단건·CSV·복제·트리아지) · 보관 해제 | `GET /issues/{id}` 또는 목록 재조회 |
-| `issue.updated` | 필드 변경(`changedFields` — 어휘는 `IssueDomainEventPublisher.CHANGED_FIELDS`). 플래그·보드 이동처럼 version을 올리지 않는 변경도 있다 | 들고 있는 version보다 크거나 `changedFields`가 화면에 걸리면 재조회 |
+| `issue.updated` | 필드 변경(`changedFields` — 어휘는 `IssueDomainEventPublisher.CHANGED_FIELDS`). 플래그·보드 이동처럼 version을 올리지 않는 변경도 있다. 커밋 연결(V41)은 `changedFields: ["development"]`(이 어휘 밖, version 불변) | 들고 있는 version보다 크거나 `changedFields`가 화면에 걸리면 재조회 |
 | `issue.transitioned` | 상태가 바뀐 변경(`changedFields`에 status) — 한 변경 = 한 신호 | 보드 열 재배치 |
 | `issue.ranked` | 필드 변경 없이 순서만(같은 열 재정렬·같은 스프린트/백로그 안 랭크). `sprintId`(null=백로그) 그룹 전체가 다시 매겨졌다 | 그 그룹 순서 재조회 |
 | `issue.deleted` · `issue.archived` | 삭제 · 보관함으로(version 없음) | 화면에서 뺀다 |
@@ -901,6 +906,77 @@ data:{"type":"sprint.completed","projectId":7,"sprintId":12,"version":3,"actorId
 - 보관한 알림은 `archived`에만 보인다. 남의 알림 단건 처리는 403 `본인 알림만 … 수 있습니다`.
 - 알림 응답(`NotificationResponse`)에 `snoozedUntil`·`archivedAt`이 뒤에 붙었다(하위 호환). 옛 `GET /api/alm/notifications`(최신 100건)도
   인박스 첫 쪽과 같은 규칙을 따른다(보관·미뤄 둔 것 제외).
+
+## 개발 기록 — 커밋 연결 (V41, 2026-10-25)
+
+git 커밋을 수집해 **메시지 안 이슈 키**로 이슈에 잇는다(지라 Development 패널). 인증은 다른 API와 같은 JWT다 — 사람은 PAT
+(게이트웨이가 JWT로 교환, 스코프 `alm:write`), AI 직원은 agent-service MCP `link_commits`(페르소나 토큰). 커밋 메시지 키워드로
+상태를 바꾸는 기능은 없다(`fixes PLAT-12`도 연결만 한다).
+
+**저장소 등록** — `PUT /api/alm/projects/{projectId}/settings/repositories`(프로젝트 ADMIN, PAT는 `admin` 스코프도 필요 — 게이트웨이
+관리 경로 표의 `/api/alm/projects/*/settings/**`), `GET`은 VIEW. 보낸 목록이 곧 등록 상태다(최대 20).
+
+```json
+{ "repositories": [ { "name": "alm-backend", "url": "https://github.com/chanho4702/alm-backend", "defaultBranch": "main" } ] }
+→ [ { "id": 3, "name": "alm-backend", "url": "https://github.com/chanho4702/alm-backend", "defaultBranch": "main" } ]
+```
+
+URL은 정규화해 저장·대조한다: 호스트 소문자, 끝 `/`·`.git` 제거, SSH `git@host:owner/repo.git` → `https://host/owner/repo`.
+계정 정보(`https://token@…`)·`?`·`#`는 400. `name` 생략 → `owner/repo`, `defaultBranch` 생략 → `main`.
+
+**수집** — `POST /api/alm/dev/commits`
+
+```json
+{ "repository": "https://github.com/chanho4702/alm-backend", "branch": "main",
+  "commits": [ { "sha": "<16진 40자 또는 64자>", "message": "feat: 커밋 연결 [PLAT-12]
+
+Refs: PLAT-13",
+                 "authorName": "chanho", "authorEmail": "c@x.com", "authoredAt": "2026-10-25T03:00:00Z",
+                 "branch": "main", "url": null } ] }
+→ { "repository": "https://github.com/chanho4702/alm-backend", "received": 1, "stored": 1, "duplicates": 0, "skipped": 0,
+    "invalid": 0, "linksCreated": 1,
+    "results": [ { "sha": "…", "shortSha": "3dc8bbc", "status": "STORED", "reason": null, "commitId": 41,
+                   "linked": [ { "issueId": 12, "issueKey": "PLAT-12" } ], "alreadyLinked": [],
+                   "skipped": [ { "issueKey": "PLAT-13", "reason": "NO_PERMISSION" } ] } ] }
+```
+
+- **키 파싱**(`IssueKeyParser`): **등록된 프로젝트 키만** 키다(`UTF-8`·`ISO-8601`은 무시, 결과에도 안 싣는다). 대소문자 무시(→ 대문자),
+  번호 앞 0 제거, 영숫자·`_`에 붙은 것은 아니다(`xPLAT-1`·`PLAT-1a`). `[PLAT-12]`·`(PLAT-12)`·`Refs: PLAT-12`·`fixes PLAT-12`·
+  `feat/PLAT-12-login` 모두 잡는다. 프로젝트 키에 `-`가 들 수 있어 `-`로 이어진 접두에서 **가장 긴 등록 키**를 고른다(`MY-APP-3`).
+  메시지당 20개.
+- **권한**: 연결은 키가 가리키는 이슈 프로젝트의 **EDIT**로 프로젝트마다 한 번 판정한다. 안 되는 키만 `skipped`에 이유와 함께 —
+  `ISSUE_NOT_FOUND`(없는·보관된 이슈, 휴지통 프로젝트) · `NO_PERMISSION` · `PROJECT_ARCHIVED`. 커밋 행은 이어진 이슈가 있거나
+  저장소를 등록한 프로젝트 하나에 EDIT가 있을 때만 저장한다 — 아니면 `SKIPPED` + `NO_LINKABLE_ISSUE`. org 불능은 **요청 전체 503**
+  (한 트랜잭션이라 아무것도 남지 않는다 — 빈 결과로 삼키지 않는다).
+- **멱등**: 커밋 (저장소, sha)·연결 (이슈, 커밋) 모두 `ON CONFLICT DO NOTHING`. 같은 묶음 재전송은 `DUPLICATE`·`alreadyLinked`이고
+  활동·이벤트도 다시 나가지 않는다. 커밋 행은 불변(처음 받은 제목·브랜치가 남는다).
+- **형식**: 커밋마다 판정 — sha(전체 16진)·`message`·`authoredAt` 없음, 같은 요청 안 sha 중복, 잘못된 `url` → 그 커밋만 `INVALID` +
+  `reason`(문장). 요청 전체 400: 저장소 URL 오류, 커밋 0건·500건 초과. 제목은 첫 줄(300자), 본문은 빈 줄 건너뛴 20줄·2000자.
+  `url` 생략 → `<저장소>/commit/<sha>`.
+- **새 연결이 생긴 이슈마다**: 활동 `commit_linked`(“커밋 N건 연결: abc1234, …”) 한 줄, 실시간 `issue.updated`
+  `changedFields: ["development"]`(version 불변 — 화면 전용 값, 자동화 `FIELD_CHANGED` 어휘 아님), 자동화 트리거 `COMMIT_LINKED`.
+
+**이슈 개발 정보** — `GET /api/alm/issues/{issueId}/development`(VIEW)
+
+```json
+{ "issueId": 12, "issueKey": "PLAT-12",
+  "summary": { "commits": 3, "repositories": 1, "pullRequests": 1, "lastCommitAt": "2026-10-22T01:00:00Z" },
+  "commits": [ { "id": 41, "source": "COMMIT", "repositoryName": "chanho4702/alm-backend", "repositoryUrl": "https://github.com/…",
+                 "sha": "…", "shortSha": "3dc8bbc", "title": "…", "message": "본문 앞부분", "authorName": "…", "authorEmail": "…",
+                 "authoredAt": "…", "branch": "main", "url": "https://github.com/…/commit/…", "issues": null },
+               { "id": null, "source": "WEB_LINK", "sha": "0123456…", "shortSha": "0123456", "title": "…", "url": "…", … } ],
+  "truncated": false,
+  "pullRequests": [ { "id": 5, "url": "https://github.com/…/pull/9", "title": "PR", "createdBy": 7, "createdAt": "…" } ] }
+```
+
+수집 커밋은 작성 시각 최신 순(최대 200, 넘으면 `truncated`). 기존 웹 링크와 통합한다: `kind=PR` → `pullRequests`(MCP `link_pr`),
+`kind=COMMIT`(워커 run 종결 시 커밋 파서가 붙이던 옛 연결) → `source: "WEB_LINK"`로 수집 커밋 뒤에(같은 URL의 수집 커밋이 있으면 뺀다).
+
+**프로젝트 최근 커밋** — `GET /api/alm/projects/{projectId}/commits?cursor=&limit=`(VIEW) → `{ items: [CommitView…], nextCursor }`.
+대상 = 이 프로젝트가 등록한 저장소의 커밋 ∪ 이 프로젝트 이슈(보관 제외)에 이어진 커밋, `(authoredAt, id)` 최신 순 키셋.
+항목의 `issues`는 이어진 이슈 중 **호출자가 볼 수 있는 프로젝트 것만**. `nextCursor`가 null이면 끝, 깨진 커서는 400.
+
+AQL `development`/`hasCommits` 필드는 아직 없다.
 
 ## 이슈 키·브랜치 이름 규칙
 
@@ -1117,6 +1193,7 @@ src/main/java/com/platform/almbackend/
 ├─ estimation/   추정 합계·속도 리포트
 ├─ triage/       트리아지 REST·생성 관문(TriageAdmission) — 처리는 issue/IssueTriageService
 ├─ automation/   자동화 규칙·실행기·예약 폴러(V36·V37)
+├─ dev/          개발 기록 — 저장소 등록·커밋 수집·이슈 키 파싱·개발 정보(V41)
 ├─ realtime/     프로젝트 SSE 스트림 — 허브·Redis Streams 팬아웃·도메인 이벤트 → 무효화 신호
 ├─ planning/     프로젝트 계획 설정(V39) — 사이클(스프린트 자동화)·추정 척도
 ├─ permission/   org-service gRPC 권한 어댑터

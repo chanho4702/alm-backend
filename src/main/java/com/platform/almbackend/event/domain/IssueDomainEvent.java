@@ -17,7 +17,7 @@ import java.time.Instant;
  * <p>본문(제목·설명)은 싣지 않는다. 필요한 리스너가 {@code issueId}로 다시 읽는다(Redis 이벤트와 같은 원칙).
  */
 public sealed interface IssueDomainEvent permits IssueCreatedEvent, IssueUpdatedEvent, IssueTransitionedEvent,
-        IssueDeletedEvent, IssueRestoredEvent, IssueRankedEvent {
+        IssueDeletedEvent, IssueRestoredEvent, IssueRankedEvent, IssueCommitsLinkedEvent {
     long issueId();
 
     long projectId();
