@@ -10,7 +10,10 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 
-/** 프로젝트 개발 설정(V43) — git 브랜치 이름 접두. 행이 없으면 접두 없음. 검증은 서비스가 한다 */
+/**
+ * 프로젝트 개발 설정(V43) — git 브랜치 이름 접두. 행이 없으면 접두 없음. 읽기 전용 매핑이다 — 쓰기는
+ * {@code ProjectDevSettingsRepository}의 조건부 한 문장(낙관적 락)만 쓴다. 검증은 서비스가 한다.
+ */
 @Entity
 @Table(name = "project_dev_settings")
 @Getter
@@ -28,18 +31,4 @@ public class ProjectDevSettings {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
-
-    public static ProjectDevSettings of(long projectId) {
-        ProjectDevSettings settings = new ProjectDevSettings();
-        settings.projectId = projectId;
-        settings.branchPrefix = "";
-        settings.version = 0;
-        return settings;
-    }
-
-    public void apply(String branchPrefix, Instant now) {
-        this.branchPrefix = branchPrefix;
-        this.updatedAt = now;
-        this.version += 1;
-    }
 }

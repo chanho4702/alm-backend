@@ -31,6 +31,7 @@ class DevSettingsTest {
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
     @Autowired TestConfig.FakePermissionClient permissions;
+    @Autowired com.platform.almbackend.dev.DevSettingsService service;
     MockMvc mvc;
     long projectId;
 
@@ -65,6 +66,22 @@ class DevSettingsTest {
         save("fix", 0).andExpect(status().isConflict()).andExpect(jsonPath("$.error").isNotEmpty());
         // 빈 값 = 접두 없음
         save("", 1).andExpect(status().isOk()).andExpect(jsonPath("$.branchPrefix").value(""))
+                .andExpect(jsonPath("$.version").value(2));
+    }
+
+    /** 같은 version으로 동시에 저장하면 하나만 이기고 나머지는 409 — 첫 저장(행 없음)과 갱신 둘 다 */
+    @Test
+    void 같은_version의_동시_저장은_하나만_이긴다() throws Exception {
+        DevSettingsRace.Outcome first = DevSettingsRace.run(service, projectId, 0, 8);
+        org.assertj.core.api.Assertions.assertThat(first.unexpected()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(first.succeeded()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(first.conflicted()).isEqualTo(7);
+
+        DevSettingsRace.Outcome second = DevSettingsRace.run(service, projectId, 1, 8);
+        org.assertj.core.api.Assertions.assertThat(second.unexpected()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(second.succeeded()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(second.conflicted()).isEqualTo(7);
+        mvc.perform(get("/api/alm/projects/{id}/settings/development", projectId).with(asUser(1, "Alice")))
                 .andExpect(jsonPath("$.version").value(2));
     }
 

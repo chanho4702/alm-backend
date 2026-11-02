@@ -8,6 +8,7 @@ import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.repository.ProjectDevSettingsRepository;
 import com.platform.common.error.ConflictException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,27 +39,37 @@ public class DevSettingsService {
                 .orElse(new DevSettingsResponse(projectId, "", 0));
     }
 
+    /**
+     * 낙관적 락은 <b>조건부 쓰기 한 문장</b>이 판정한다 — 읽고 비교한 뒤 저장하면 같은 expectedVersion의 동시 PUT 둘이
+     * 모두 통과해 뒤엣것이 앞엣것을 덮는다(lost update). 있는 행은 {@code UPDATE … WHERE version = ?},
+     * 없는 행은 {@code INSERT … ON CONFLICT DO NOTHING}이고, 어느 쪽이든 0행이면 경합에서 진 것이라 409다.
+     */
     public DevSettingsResponse update(long userId, long projectId, DevSettingsRequest request) {
         projectService.require(userId, projectId, AlmAction.ADMIN);
         if (request == null || request.expectedVersion() == null) {
             throw new IllegalArgumentException("expectedVersion이 필요합니다");
         }
-        ProjectDevSettings row = repository.findById(projectId).orElse(null);
-        int current = row == null ? 0 : row.getVersion();
-        if (current != request.expectedVersion()) {
-            throw new ConflictException("다른 사용자가 먼저 개발 설정을 수정했습니다. 현재 " + current
-                    + ", 요청 " + request.expectedVersion());
-        }
+        int expected = request.expectedVersion();
         String prefix = normalizePrefix(request.branchPrefix());
-        if (row == null) row = ProjectDevSettings.of(projectId);
-        row.apply(prefix, Instant.now().truncatedTo(ChronoUnit.MICROS));
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        int written;
         try {
-            repository.saveAndFlush(row);
-        } catch (DataIntegrityViolationException e) {
-            // 행이 없던 두 요청이 동시에 처음 저장했다
+            written = expected == 0
+                    ? repository.insertIfAbsent(projectId, prefix, now)
+                    : repository.updateIfVersion(projectId, expected, prefix, now);
+        } catch (DataIntegrityViolationException | ConcurrencyFailureException e) {
+            // DB가 동시 쓰기를 직렬화하다 거절했다(유니크 충돌·동시 갱신) — 같은 경합 패배다.
+            // 이 트랜잭션은 이미 실패 상태라(PostgreSQL) 현재 version을 다시 읽지 않는다
             throw new ConflictException("다른 사용자가 먼저 개발 설정을 수정했습니다. 새로 고친 뒤 다시 저장하세요");
         }
-        return toResponse(row);
+        if (written == 0) throw conflict(projectId, expected);
+        return repository.findById(projectId).map(DevSettingsService::toResponse)
+                .orElseThrow(() -> conflict(projectId, expected));
+    }
+
+    private ConflictException conflict(long projectId, int expected) {
+        int current = repository.findById(projectId).map(ProjectDevSettings::getVersion).orElse(0);
+        return new ConflictException("다른 사용자가 먼저 개발 설정을 수정했습니다. 현재 " + current + ", 요청 " + expected);
     }
 
     /**
