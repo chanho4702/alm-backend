@@ -1,5 +1,6 @@
 package com.platform.almbackend.search.aql;
 
+import com.platform.almbackend.domain.IssueCommit;
 import com.platform.almbackend.domain.PriorityDef;
 import com.platform.almbackend.domain.StatusCategory;
 import com.platform.almbackend.domain.StatusDef;
@@ -173,6 +174,7 @@ final class AqlSpecification {
             case "triage" -> anyOf(values, v -> session.bool(v)
                     ? cb.isNotNull(root.get("triageState"))
                     : cb.isNull(root.get("triageState")));
+            case "hasCommits" -> anyOf(values, v -> session.bool(v) ? hasCommits() : cb.not(hasCommits()));
             // 해결일은 비어 있을 수 있다 — NULL을 남기면 NOT(…)이 정확한 여집합이 못 된다(클래스 주석)
             case "resolved" -> anyOf(values, v -> cb.and(cb.isNotNull(root.get("resolvedAt")),
                     instantWindow(root.get("resolvedAt"), session.moment(v))));
@@ -411,6 +413,14 @@ final class AqlSpecification {
         Join<Object, Object> element = other.join(attribute);
         sub.select(other.get("id"))
                 .where(cb.and(cb.equal(other.get("id"), root.get("id")), element.in(values)));
+        return cb.exists(sub);
+    }
+
+    /** 커밋 연결(V41 issue_commit)이 하나라도 있는가 — 조인하면 커밋 수만큼 행이 불어나 EXISTS로 */
+    private Predicate hasCommits() {
+        Subquery<Long> sub = query.subquery(Long.class);
+        Root<IssueCommit> link = sub.from(IssueCommit.class);
+        sub.select(link.get("id")).where(cb.equal(link.get("issueId"), root.get("id")));
         return cb.exists(sub);
     }
 

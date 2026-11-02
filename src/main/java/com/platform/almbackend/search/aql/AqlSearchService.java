@@ -155,6 +155,7 @@ public class AqlSearchService {
             case "archived" -> List.of(new Candidate("false", "활성"), new Candidate("true", "보관됨"));
             case "flagged" -> List.of(new Candidate("true", "막힘"), new Candidate("false", "막힘 아님"));
             case "triage" -> List.of(new Candidate("true", "트리아지 대기"), new Candidate("false", "워크플로 안"));
+            case "hasCommits" -> List.of(new Candidate("true", "커밋 있음"), new Candidate("false", "커밋 없음"));
             default -> List.of();
         };
     }

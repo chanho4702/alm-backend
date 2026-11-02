@@ -1,6 +1,8 @@
 package com.platform.almbackend.dev;
 
 import com.platform.almbackend.dev.DevDtos.CommitPage;
+import com.platform.almbackend.dev.DevDtos.DevSettingsRequest;
+import com.platform.almbackend.dev.DevDtos.DevSettingsResponse;
 import com.platform.almbackend.dev.DevDtos.DevelopmentResponse;
 import com.platform.almbackend.dev.DevDtos.IngestRequest;
 import com.platform.almbackend.dev.DevDtos.IngestResponse;
@@ -34,6 +36,7 @@ import static com.platform.almbackend.issue.IssueController.userId;
 public class DevController {
     private final CodeRepositoryService repositories;
     private final DevCommitService commits;
+    private final DevSettingsService settings;
 
     @Operation(summary = "프로젝트에 등록된 저장소 목록", description = "프로젝트 VIEW")
     @GetMapping("/api/alm/projects/{projectId}/settings/repositories")
@@ -48,6 +51,22 @@ public class DevController {
                                                         @RequestBody RepositoriesRequest request,
                                                         @AuthenticationPrincipal Jwt jwt) {
         return repositories.replace(userId(jwt), projectId, request);
+    }
+
+    @Operation(summary = "프로젝트 개발 설정(브랜치 이름 접두) 조회", description = "프로젝트 VIEW. 저장한 적 없으면 접두 없음·version 0")
+    @GetMapping("/api/alm/projects/{projectId}/settings/development")
+    public DevSettingsResponse devSettings(@Parameter(description = "프로젝트 ID") @PathVariable long projectId,
+                                           @AuthenticationPrincipal Jwt jwt) {
+        return settings.get(userId(jwt), projectId);
+    }
+
+    @Operation(summary = "프로젝트 개발 설정(브랜치 이름 접두) 수정",
+            description = "프로젝트 ADMIN. 접두는 영숫자·. _ - /, 50자 이하(git 참조 규칙). expectedVersion이 어긋나면 409")
+    @PutMapping("/api/alm/projects/{projectId}/settings/development")
+    public DevSettingsResponse updateDevSettings(@Parameter(description = "프로젝트 ID") @PathVariable long projectId,
+                                                 @RequestBody DevSettingsRequest request,
+                                                 @AuthenticationPrincipal Jwt jwt) {
+        return settings.update(userId(jwt), projectId, request);
     }
 
     @Operation(summary = "커밋을 수집해 메시지 안 이슈 키로 이슈에 잇는다",

@@ -393,6 +393,33 @@ class WorkflowEngineTest {
         move(id, "done").andExpect(status().isOk()).andExpect(jsonPath("$.resolution").value("WONT_DO"));
     }
 
+    /** 시작일·스토리 포인트(V30)도 전환 검증으로 걸 수 있다 — 비어 있으면 거부, 채워 두면 통과 */
+    @Test
+    void 시작일과_스토리_포인트를_전환_검증으로_건다() throws Exception {
+        useCustomBody(body(BASE_STATUSES, "[{\"id\":\"t-plan\",\"name\":\"계획 확정\",\"from\":[],\"to\":\"inprogress\","
+                + "\"validators\":[\"startDate\",\"storyPoints\"]}]", ""));
+        long empty = createIssue("계획 없음", "task", "todo", null).get("id").asLong();
+
+        mvc.perform(get("/api/alm/issues/{id}/transitions", empty).with(asUser(1, "Alice")))
+                .andExpect(jsonPath("$.transitions[?(@.id=='t-plan')].missingFields[0]").value("startDate"))
+                .andExpect(jsonPath("$.transitions[?(@.id=='t-plan')].missingFields[1]").value("storyPoints"));
+        transition(empty, 1, "{\"transitionId\":\"t-plan\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("시작일은 필수입니다"));
+
+        String created = mvc.perform(post("/api/alm/projects/{id}/issues", projectId).with(asUser(1, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"계획 있음\",\"description\":\"\",\"type\":\"task\",\"status\":\"todo\","
+                                + "\"priority\":\"MEDIUM\",\"details\":{},"
+                                + "\"planning\":{\"startDate\":\"2026-11-02\",\"storyPoints\":3}}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long planned = JSON.readTree(created).get("id").asLong();
+        transition(planned, 1, "{\"transitionId\":\"t-plan\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("inprogress"));
+    }
+
     @Test
     void 전환_규칙의_어휘를_벗어난_본문은_저장_거부() throws Exception {
         customize();

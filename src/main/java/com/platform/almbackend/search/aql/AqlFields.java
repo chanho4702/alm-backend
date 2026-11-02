@@ -97,7 +97,9 @@ public final class AqlFields {
             new Field("storyPoints", List.of("스토리포인트", "포인트"), Kind.NUMBER, NUMBER_OPS, true, true, true),
             new Field("flagged", List.of("플래그", "막힘"), Kind.BOOL, List.of("=", "!="), false, false, true),
             // V35 — 트리아지 대기열에 있는가(보류 포함). 대기열 이슈도 검색에는 나온다(보드·백로그에서만 빠진다)
-            new Field("triage", List.of("트리아지"), Kind.BOOL, List.of("=", "!="), false, false, true));
+            new Field("triage", List.of("트리아지"), Kind.BOOL, List.of("=", "!="), false, false, true),
+            // V41 — 커밋이 하나라도 이어졌는가(issue_commit). 지라 development[commits] > 0에 해당
+            new Field("hasCommits", List.of("커밋있음", "커밋"), Kind.BOOL, List.of("=", "!="), false, false, true));
 
     private static final Map<String, Field> INDEX = index();
 

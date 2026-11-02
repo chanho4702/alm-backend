@@ -24,6 +24,20 @@ public final class DevDtos {
     @Schema(description = "등록된 저장소")
     public record RepositoryResponse(long id, String name, String url, String defaultBranch) {}
 
+    // ── 개발 설정(V43) ──
+
+    @Schema(description = "프로젝트 개발 설정 수정 — expectedVersion이 어긋나면 409")
+    public record DevSettingsRequest(
+            @Schema(description = "git 브랜치 이름 접두. 빈 문자열 = 접두 없음. 끝 /는 지운다", example = "feature")
+            String branchPrefix,
+            @Schema(description = "읽은 version(행이 없으면 0)", example = "0") Integer expectedVersion) {}
+
+    @Schema(description = "프로젝트 개발 설정 — 브랜치 이름은 [<branchPrefix>/]<키 소문자>-<슬러그>")
+    public record DevSettingsResponse(
+            long projectId,
+            @Schema(description = "브랜치 이름 접두(없으면 빈 문자열)", example = "feature") String branchPrefix,
+            @Schema(description = "낙관적 락 버전 — 저장한 적 없으면 0", example = "1") int version) {}
+
     // ── 수집 ──
 
     @Schema(description = "커밋 한 건")

@@ -266,6 +266,8 @@ public class WorkflowEngine {
             case "dueDate" -> issue.getDueDate() != null;
             case "fixVersion" -> issue.getFixVersionId() != null;
             case "estimate" -> issue.getEstimateHours() != null;
+            case "startDate" -> issue.getStartDate() != null;
+            case "storyPoints" -> issue.getStoryPoints() != null;
             default -> true;
         };
     }

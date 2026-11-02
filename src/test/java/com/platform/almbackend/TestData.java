@@ -21,7 +21,7 @@ final class TestData {
                 "issue_commit", "dev_commit", "project_code_repository",
                 "automation_run", "automation_rule", "saved_view", "saved_filter", "notification", "issue_watcher",
                 "issue_activity", "issue_change_log", "issue_link", "issue_comment", "issue_label", "issue_component",
-                "issue", "sprint", "component", "board", "project_settings", "project_planning", "project"}) {
+                "issue", "sprint", "component", "board", "project_settings", "project_planning", "project_dev_settings", "project"}) {
             jdbc.update("delete from " + table);
         }
     }

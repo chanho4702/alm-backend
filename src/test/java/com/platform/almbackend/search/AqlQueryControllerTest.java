@@ -49,6 +49,7 @@ class AqlQueryControllerTest {
     @Autowired SprintRepository sprints;
     @Autowired TestConfig.FakePermissionClient permissions;
     @Autowired TestConfig.FakeMemberDirectory directory;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private long almId;
     private long opsId;
@@ -56,6 +57,7 @@ class AqlQueryControllerTest {
     @BeforeEach
     void reset() throws Exception {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        jdbc.update("DELETE FROM issue_commit");
         issues.deleteAllInBatch();
         sprints.deleteAllInBatch();
         projects.deleteAllInBatch();
@@ -451,6 +453,26 @@ class AqlQueryControllerTest {
         assertThat(query("status = 완료 AND resolved IS EMPTY", 1).get("total").asLong()).isZero();
         // 미래로 밀면 아무것도 안 남는다(빈 값이 조용히 섞이지 않는다)
         assertThat(query("resolved > +1d", 1).get("total").asLong()).isZero();
+    }
+
+    /** V41 커밋 연결 — 커밋이 하나라도 이어진 이슈만. 커밋이 둘이어도 행이 불지 않는다(EXISTS) */
+    @Test
+    void hasCommits는_커밋이_이어진_이슈만_고른다() throws Exception {
+        long bug = one("로그인 버그").get("id").asLong();
+        long board = one("보드 개선").get("id").asLong();
+        java.time.Instant now = java.time.Instant.now();
+        jdbc.update("INSERT INTO issue_commit (issue_id, commit_id, linked_by, linked_at) VALUES (?, ?, 1, ?)",
+                bug, 901L, java.sql.Timestamp.from(now));
+        jdbc.update("INSERT INTO issue_commit (issue_id, commit_id, linked_by, linked_at) VALUES (?, ?, 1, ?)",
+                bug, 902L, java.sql.Timestamp.from(now));
+        jdbc.update("INSERT INTO issue_commit (issue_id, commit_id, linked_by, linked_at) VALUES (?, ?, 1, ?)",
+                board, 901L, java.sql.Timestamp.from(now));
+
+        assertThat(titles(query("hasCommits = true ORDER BY key ASC", 1))).containsExactly("로그인 버그", "보드 개선");
+        // 한국어 별칭·부정 — 커밋 없는 활성 이슈 전부(보관 제외)
+        assertThat(titles(query("커밋있음 = false AND project = ALM ORDER BY key ASC", 1)))
+                .containsExactly("결제 문서 정리", "검색 느림", "권한 정리");
+        assertThat(query("hasCommits != true AND project = ALM", 1).get("total").asLong()).isEqualTo(3);
     }
 
     @Test

@@ -99,7 +99,8 @@ public record SettingsBody(
 
     /** 전환 검증(필수 필드)으로 걸 수 있는 필드 — 첨부·링크·해결·우선순위(항상 값이 있다)는 뺀다 */
     public static final List<String> VALIDATOR_FIELDS = List.of(
-            "description", "assignee", "labels", "components", "parent", "sprint", "dueDate", "fixVersion", "estimate");
+            "description", "assignee", "labels", "components", "parent", "sprint", "dueDate", "fixVersion", "estimate",
+            "startDate", "storyPoints");
 
     public static final Set<String> CONDITION_TYPES = Set.of("assignee", "role", "subtasksDone");
     public static final Set<String> POST_FUNCTION_TYPES = Set.of("assignToActor", "clearAssignee", "setResolution");
