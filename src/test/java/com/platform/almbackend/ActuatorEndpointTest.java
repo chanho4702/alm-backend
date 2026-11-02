@@ -78,4 +78,12 @@ class ActuatorEndpointTest {
         mvc.perform(get("/actuator/env")).andExpect(status().isUnauthorized());
         mvc.perform(get("/actuator/beans")).andExpect(status().isUnauthorized());
     }
+
+    /** 401에도 플랫폼 오류 본문 {"error"}가 실린다(P-11) — 프론트가 이 키로 한국어 메시지를 고른다. */
+    @Test
+    void 토큰_없는_401에도_error_본문이_실린다() throws Exception {
+        mvc.perform(get("/api/alm/projects"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").isNotEmpty());
+    }
 }

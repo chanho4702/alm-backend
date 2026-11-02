@@ -5,6 +5,7 @@ import com.platform.almbackend.directory.MemberDirectory;
 import com.platform.almbackend.permission.GrpcPermissionClient;
 import com.platform.almbackend.permission.PermissionClient;
 import com.platform.common.grpc.InternalTokenClientInterceptor;
+import com.platform.common.security.PlatformSecurityErrorHandlers;
 import com.platform.proto.org.v1.PermissionServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
@@ -38,7 +39,14 @@ public class SecurityConfig {
                         // 계정 상태 게이트는 /api/alm/**에만 걸려 있어 이 경로는 org를 부르지 않는다(WebMvcConfig).
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyRequest().authenticated())
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                // 401/403에도 플랫폼 본문 {"error"}를 싣는다(P-11). Security 기본은 본문이 없다.
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(converter))
+                        .authenticationEntryPoint(PlatformSecurityErrorHandlers.authenticationEntryPoint())
+                        .accessDeniedHandler(PlatformSecurityErrorHandlers.accessDeniedHandler()))
+                .exceptionHandling(e -> e
+                        .authenticationEntryPoint(PlatformSecurityErrorHandlers.authenticationEntryPoint())
+                        .accessDeniedHandler(PlatformSecurityErrorHandlers.accessDeniedHandler()));
         return http.build();
     }
 

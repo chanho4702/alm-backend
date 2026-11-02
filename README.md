@@ -131,6 +131,7 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `GET` | `/api/alm/notifications/inbox` | 인증(본인) | 알림 인박스 — 커서·필터(V40). 아래 "알림 인박스" 절 |
 | `POST`·`DELETE` | `/api/alm/notifications/{id}/snooze`, `POST /{id}/archive`·`/{id}/unarchive`, `POST /api/alm/notifications/bulk` | 인증(본인) | 미루기·보관·일괄 처리(V40) |
 | `GET`·`PUT` | `/api/alm/projects/{projectId}/settings/repositories` | VIEW·ADMIN | 프로젝트 저장소 등록(V41, 통째 교체·최대 20) — 아래 "개발 기록" 절 |
+| `GET`·`PUT` | `/api/alm/projects/{projectId}/settings/development` | VIEW·ADMIN | 프로젝트 개발 설정(V43) — `{projectId, branchPrefix, version}`. PUT `{branchPrefix, expectedVersion}`(어긋나면 409). 아래 "이슈 키·브랜치 이름 규칙" |
 | `POST` | `/api/alm/dev/commits` | 키마다 대상 프로젝트 EDIT | 커밋 수집·이슈 연결(V41, 최대 500건, 멱등) |
 | `GET` | `/api/alm/issues/{issueId}/development` | VIEW | 이슈 개발 정보 — 커밋(최신 순)·PR·요약 |
 | `GET` | `/api/alm/projects/{projectId}/commits` | VIEW | 프로젝트 최근 커밋(`cursor`·`limit` 기본 50·최대 100) |
@@ -347,7 +348,7 @@ WHERE i.resolution IS NULL
 | 조건 `assignee` | 실행자 = 담당자 | `담당자만 이 전환을 할 수 있습니다` |
 | 조건 `role` | `ADMIN`·`EDIT` — org-service `PROJECT` 판정(gRPC, 불능이면 503) | `프로젝트 관리자만 이 전환을 할 수 있습니다` |
 | 조건 `subtasksDone` | 하위 이슈(보관 제외)가 모두 완료 의미 | `완료되지 않은 하위 이슈가 N개 있습니다` |
-| 검증 | `description`·`assignee`·`labels`·`components`·`parent`·`sprint`·`dueDate`·`fixVersion`·`estimate` | `마감일은 필수입니다`(생성 필수 검사와 같은 문구) |
+| 검증 | `description`·`assignee`·`labels`·`components`·`parent`·`sprint`·`dueDate`·`fixVersion`·`estimate`·`startDate`·`storyPoints`(2026-11-01) | `마감일은 필수입니다`(생성 필수 검사와 같은 문구) |
 | 화면 칸 | `resolution`(완료로 가는 전환만)·`comment`·`assignee`·`fixVersion`·`dueDate` | — |
 | 후처리 | `assignToActor`(담당자 = 실행자)·`clearAssignee`·`setResolution`(완료로 가는 전환만, 기본 해결 값) | — |
 
@@ -658,7 +659,8 @@ order   := field ("ASC" | "DESC")?
   (보드 이동과 같은 규칙 — 보드에서 플래그를 켰다고 열어 둔 편집 폼이 409가 되지 않는다. PUT 본문에 없는 값이라 오래된
   폼 저장이 되돌리지도 않는다). 이유를 주면 `플래그 추가: …` 코멘트가 남는다. 일괄 편집 `changes.flagged`도 된다.
 - **AQL**: `startDate`(별칭 `시작일`, DATE), `storyPoints`(`스토리포인트`·`포인트`, NUMBER), `flagged`(`플래그`·`막힘`, BOOL),
-  `triage`(`트리아지`, BOOL — 대기열 이슈). 시작일·포인트는 `IS EMPTY`·정렬 가능. 자동완성 사전(`/query/fields`)에 그대로 실린다
+  `triage`(`트리아지`, BOOL — 대기열 이슈), `hasCommits`(`커밋있음`·`커밋`, BOOL — V41 커밋 연결이 하나라도 있는가, EXISTS라 커밋 수만큼 행이 불지 않는다, 2026-11-01).
+  시작일·포인트는 `IS EMPTY`·정렬 가능. 자동완성 사전(`/query/fields`)에 그대로 실린다
   — 프론트 목업 평가기도 같은 필드를 더한다.
 
 ```json
@@ -987,7 +989,9 @@ git 브랜치 이름은 프론트가 만든다(백엔드 API 없음). 백엔드�
 - **제목 슬러그**(프론트 규칙, 여기 고정): 제목을 소문자로 바꾼 뒤 `[a-z0-9]` 밖 글자를 `-`로 바꾸고, 연속 `-`는 하나로, 앞뒤 `-`는 지운다.
   **음역하지 않는다** — 한글·기호만 남는 제목이면 슬러그가 비고 브랜치는 키만 쓴다. 길이는 슬러그 40자까지(단어 중간이면 그 앞 `-`에서 자른다).
   - `로그인 개선 (OAuth2)` → `alm-12-oauth2` · `검색 속도 개선` → `alm-12` · `Fix N+1 in board` → `alm-12-fix-n-1-in-board`
-  - 형식: `<사용자 접두>/<키 소문자>-<슬러그>`(접두는 프론트 설정). 키 부분은 git 참조 규칙에 걸리는 글자가 없다(영숫자·`_`·`-`).
+  - 형식: `[<접두>/]<키 소문자>-<슬러그>`. 키 부분은 git 참조 규칙에 걸리는 글자가 없다(영숫자·`_`·`-`).
+- **접두**(V43, 2026-11-01): 프로젝트 설정 `branchPrefix`(`GET/PUT /projects/{id}/settings/development`, 쓰기 ADMIN). 행이 없으면 접두 없음·version 0.
+  앞뒤 공백·끝 `/`는 지우고, 영숫자·`. _ - /` 50자 이하만 받는다 — `/`로 시작·`//`·`..` 금지, `/`로 나눈 각 부분은 `.`·`-`로 시작하거나 `.`·`.lock`으로 끝날 수 없다(400, 문구는 프론트 `branchPrefixError`와 같다).
 
 ## OpenAPI
 
