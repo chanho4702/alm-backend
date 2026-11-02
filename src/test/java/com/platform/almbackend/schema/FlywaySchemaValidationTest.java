@@ -42,6 +42,7 @@ class FlywaySchemaValidationTest {
     @Autowired ProjectRepository projects;
     @Autowired IssueRepository issues;
     @Autowired SprintRepository sprints;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Test
     @Transactional
@@ -104,5 +105,13 @@ class FlywaySchemaValidationTest {
         projects.flush();
 
         assertThat(issues.findById(issue.getId())).isEmpty();
+    }
+
+    /** V42 — 확장을 만들 수 있는 롤(테스트컨테이너는 superuser)이면 텍스트 검색 trigram 인덱스 셋이 생긴다 */
+    @Test
+    void 텍스트_검색_trigram_인덱스가_생긴다() {
+        assertThat(jdbc.queryForList("select indexname from pg_indexes where tablename = 'issue' and indexname like '%_trgm'",
+                String.class))
+                .containsExactlyInAnyOrder("idx_issue_title_trgm", "idx_issue_description_trgm", "idx_issue_key_trgm");
     }
 }
