@@ -14,7 +14,7 @@ search-service는 내부 gRPC로 이슈 원문을 가져가 `alm-issue` 인덱�
 배포는 [infra README](https://github.com/chanho4702/infra-settings/blob/main/infra/README.md)를 참고한다.
 
 지라 코어 대비 기능 갭 분석과 이 서비스에 필요한 계약 확장(스프린트 목표·기간, 완료 시 이관
-대상, 상태 변경 이력·리포트 집계)은 alm-front `docs/roadmap/2026-08-28-jira-parity-requirements.md`에
+대상, 상태 변경 이력·리포트 집계)은 alm-front `docs/roadmap/2026-08-28-core-feature-gap-requirements.md`에
 정리돼 있다.
 
 ## 한눈에 보기
