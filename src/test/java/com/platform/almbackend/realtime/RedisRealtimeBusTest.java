@@ -129,11 +129,19 @@ class RedisRealtimeBusTest {
         List<RealtimeSignal> got = new CopyOnWriteArrayList<>();
         a.onReceive(got::add);
         await("읽기 시작", a::ready);
-        for (int i = 0; i < 400; i++) a.publish(signal(7, i));
-        await("400", () -> got.size() == 400);
+        // 하나씩 내고 받은 뒤 다음을 낸다. publish는 크기 제한된 실행기 큐로 비동기 처리돼, 한꺼번에 400개를 몰면
+        // 넘친 신호는 id 없이 이 노드에만 전달되고(설계된 폴백) 스트림 순서도 발행 순서와 어긋난다 — "400개 수신"이나
+        // "395번 다음 4개"가 느린 머신(CI)에서 성립하지 않던 플래키 원인. 한 개씩이면 모두 Redis를 거쳐 id 순서가 고정된다.
+        for (int i = 0; i < 400; i++) {
+            int expected = i + 1;
+            a.publish(signal(7, i));
+            await("신호 " + i, () -> got.size() == expected);
+        }
+        assertThat(got).allSatisfy(s -> assertThat(s.id()).isNotNull());
 
         assertThat(a.since(got.get(0).id(), 7, 1000).gap()).isTrue();
-        assertThat(a.since(got.get(395).id(), 7, 1000).signals()).hasSize(4);
+        assertThat(a.since(got.get(395).id(), 7, 1000).signals()).extracting(RealtimeSignal::issueId)
+                .containsExactly(396L, 397L, 398L, 399L);
     }
 
     @Test
