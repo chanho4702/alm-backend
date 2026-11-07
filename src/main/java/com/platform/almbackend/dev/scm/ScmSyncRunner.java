@@ -54,7 +54,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ScmSyncRunner {
     public static final Duration LEASE = Duration.ofMinutes(15);
     static final Duration COMMIT_OVERLAP = Duration.ofHours(1);
-    static final Duration PULL_OVERLAP = Duration.ofMinutes(2);
     /** PR/MR 창을 이어 읽을 때 다음 실행까지 — 주기를 다 기다리지 않는다 */
     static final Duration CONTINUE_DELAY = Duration.ofMinutes(1);
     private static final int BATCH = 20;
@@ -197,7 +196,7 @@ public class ScmSyncRunner {
             if (exhausted != null && exhausted.isAfter(next)) next = exhausted;
             Instant nextRun = next;
             finish(lease, e -> e.succeeded(now, nextRun, exhausted, outcome.commitsCursor(), outcome.commitsEtag(),
-                    outcome.pullsCursor(), outcome.pullsEtag(), outcome.pullsWindowUntil(), outcome.pullsWindowMax(),
+                    outcome.pullsCursor(), outcome.pullsCursorNumber(), outcome.pullsPage(), outcome.pullsEtag(),
                     clip(outcome.message())));
             log.info("저장소 동기화: sync={} repo={} {}", id, sync.getRepositoryUrl(), outcome.message());
         } catch (LeaseLostException e) {
@@ -222,9 +221,8 @@ public class ScmSyncRunner {
         finish(lease, r -> r.failed(now, next, clip(message)));
     }
 
-    private record Outcome(Instant commitsCursor, String commitsEtag, Instant pullsCursor, String pullsEtag,
-                           Instant pullsWindowUntil, Instant pullsWindowMax, boolean continueSoon, Instant exhaustedUntil,
-                           String message) {}
+    private record Outcome(Instant commitsCursor, String commitsEtag, Instant pullsCursor, Long pullsCursorNumber, Integer pullsPage,
+                           String pullsEtag, boolean continueSoon, Instant exhaustedUntil, String message) {}
 
     private Outcome poll(RepositoryScmSync sync, Instant now, Lease lease) {
         String token = cipher.decrypt(sync.getTokenEnc());
@@ -246,12 +244,13 @@ public class ScmSyncRunner {
         if (commitsCursor == null && !cb.notModified()) commitsCursor = commitsSince.plus(COMMIT_OVERLAP); // 빈 저장소 — 다음엔 이 구간부터
         String commitsEtag = cb.notModified() ? sync.getCommitsEtag() : cb.etag();
 
-        // 2) 갱신된 PR/MR — 상태·연결, 열린 것은 커밋까지. 창(상한을 넘은 구간)이 열려 있으면 이미 처리한 것보다 새 것을 건너뛰고 이어 읽는다
-        Instant windowUntil = sync.getPullsWindowUntil();
-        boolean inWindow = windowUntil != null;
-        Instant pullsSince = sync.getPullsCursor() == null ? firstSince : sync.getPullsCursor().minus(PULL_OVERLAP);
-        String sentEtag = sync.getPullsCursor() == null || inWindow ? null : sync.getPullsEtag();
-        ScmProvider.PullBatch pb = provider.pulls(target, pullsSince, windowUntil, sentEtag);
+        // 2) PR/MR — updated_at 오름차순 키셋(오래된 것부터 차례로 따라잡는다). 첫 동기화는 initial-lookback 이전을 건너뛴다.
+        //    다 따라잡았을 때만 탐침 ETag를 남겨, 다음 실행이 "그 뒤 갱신 없음"(304)이면 목록을 읽지 않는다
+        ScmProvider.PullCursor cursor = sync.getPullsCursor() == null
+                ? new ScmProvider.PullCursor(firstSince, 0, sync.getPullsPage())
+                : new ScmProvider.PullCursor(sync.getPullsCursor(), sync.getPullsCursorNumber() == null ? 0 : sync.getPullsCursorNumber(),
+                        sync.getPullsPage());
+        ScmProvider.PullBatch pb = provider.pulls(target, cursor, sync.getPullsEtag());
         for (ScmProvider.PullItem pull : pb.pulls()) {
             lease.renew();
             if (pull.url() == null) continue;
@@ -265,36 +264,30 @@ public class ScmSyncRunner {
                 ingest(sync, pull.sourceBranch(), provider.pullCommits(target, pull), stats);
             }
         }
-        Instant pullsCursor = sync.getPullsCursor();
-        String pullsEtag = sync.getPullsEtag();
-        Instant newWindowUntil = null;
-        Instant newWindowMax = null;
+        Instant pullsCursor;
+        Long pullsCursorNumber;
+        Integer pullsPage;
+        String pullsEtag;
         boolean continueSoon = false;
         if (pb.notModified()) {
-            // 바뀐 것 없음 — 커서·ETag 그대로(창은 ETag를 쓰지 않으니 여기 오지 않는다)
-        } else if (pb.truncated()) {
-            // 창을 끝까지 처리할 때까지 커서·ETag를 움직이지 않는다 — 다음 실행은 처리한 가장 오래된 시각보다 새 것을 건너뛴다
-            newWindowMax = inWindow ? later(sync.getPullsWindowMax(), pb.maxUpdatedAt()) : pb.maxUpdatedAt();
-            newWindowUntil = pb.oldestUpdatedAt() != null ? pb.oldestUpdatedAt() : windowUntil;
-            if (newWindowUntil != null && windowUntil != null && !newWindowUntil.isBefore(windowUntil)) {
-                newWindowUntil = windowUntil.minusMillis(1); // 같은 시각만 잔뜩이면 진척이 없다 — 한 칸 앞으로
-            }
-            pullsEtag = null;
-            continueSoon = true;
+            pullsCursor = sync.getPullsCursor();
+            pullsCursorNumber = sync.getPullsCursorNumber();
+            pullsPage = sync.getPullsPage();
+            pullsEtag = sync.getPullsEtag();
         } else {
-            Instant target2 = inWindow ? later(sync.getPullsWindowMax(), pb.maxUpdatedAt()) : pb.maxUpdatedAt();
-            pullsCursor = later(sync.getPullsCursor(), target2);
-            if (pullsCursor == null) pullsCursor = pullsSince.plus(PULL_OVERLAP);
-            // 창을 마친 실행의 첫 쪽 ETag는 저장하지 않는다 — 건너뛴(창보다 새) 항목까지 담은 첫 쪽이라 다음 실행이 304로 그것들을 놓친다
-            pullsEtag = inWindow ? null : pb.etag();
+            pullsCursor = pb.next().updatedAt();
+            pullsCursorNumber = pb.next().number();
+            pullsPage = pb.next().page();
+            pullsEtag = pb.caughtUp() ? pb.probeEtag() : null;
+            continueSoon = !pb.caughtUp();
         }
 
         String message = stats.commits == 0 && stats.pulls == 0 ? "변경 없음"
                 : "커밋 " + stats.commits + "건(새로 저장 " + stats.stored + " · 새 연결 " + stats.links + ") · PR " + stats.pulls
                 + "건(새 연결 " + stats.pullLinks + ")";
-        if (pb.truncated()) message += " · PR이 많아 이어서 읽는 중";
+        if (!pb.notModified() && !pb.caughtUp()) message += " · PR이 많아 이어서 읽는 중";
         if (cb.truncated()) message += " · 한 번에 다 못 읽은 오래된 커밋은 sync-commits 스크립트로 메우세요";
-        return new Outcome(commitsCursor, commitsEtag, pullsCursor, pullsEtag, newWindowUntil, newWindowMax, continueSoon,
+        return new Outcome(commitsCursor, commitsEtag, pullsCursor, pullsCursorNumber, pullsPage, pullsEtag, continueSoon,
                 call.exhaustedUntil(), message);
     }
 

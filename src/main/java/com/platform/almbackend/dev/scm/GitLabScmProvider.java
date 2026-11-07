@@ -61,41 +61,40 @@ public class GitLabScmProvider implements ScmProvider {
     }
 
     @Override
-    public PullBatch pulls(Target target, Instant since, Instant skipNewerThan, String etag) {
-        String base = projectApi(target) + "/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=50&updated_after="
-                + ScmEndpoints.encode(since.toString());
+    public PullBatch pulls(Target target, PullCursor cursor, String probeEtag) {
+        // 1) 변경 탐침 — 가장 최근 갱신 1건(ETag가 없으면 그냥 지나간다)
+        ScmHttp.Response probe = target.call().get(URI.create(projectApi(target)
+                + "/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=1"), probeEtag);
+        if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor);
+        String newProbeEtag = probe.etag();
+
+        // 2) 오름차순 키셋 — updated_after(커서 시각 포함)로 거르니 늘 1쪽부터. 같은 시각은 iid로 잇는다
+        String base = projectApi(target) + "/merge_requests?state=all&order_by=updated_at&sort=asc&per_page=50&updated_after="
+                + ScmEndpoints.encode(cursor.updatedAt().minusSeconds(1).toString());
         List<PullItem> out = new ArrayList<>();
-        Instant max = null;
-        Instant oldest = null;
-        String firstEtag = null;
+        PullCursor at = cursor;
         String nextPage = "1";
-        int page = 0;
-        boolean truncated = false;
-        while (nextPage != null && page < settings.maxPages() && !truncated) {
-            ScmHttp.Response r = target.call().get(URI.create(base + "&page=" + nextPage), page == 0 ? etag : null);
-            if (page == 0) {
-                if (r.notModified()) return new PullBatch(List.of(), etag, true, null, false, null);
-                firstEtag = r.etag();
-            }
+        int read = 0;
+        boolean full = false;
+        while (nextPage != null && read < settings.maxPages() && !full) {
+            ScmHttp.Response r = target.call().get(URI.create(base + "&page=" + nextPage), null);
+            read++;
             for (JsonNode mr : array(r)) {
                 Instant updated = instant(mr.path("updated_at").asText(null));
-                if (updated != null && skipNewerThan != null && updated.isAfter(skipNewerThan)) continue; // 창 이어 읽기
+                long iid = mr.path("iid").asLong();
+                if (updated == null || !cursor.before(updated, iid)) continue;
                 if (out.size() >= settings.maxPullRequests()) {
-                    truncated = true;
+                    full = true;
                     break;
                 }
-                if (updated != null && (max == null || updated.isAfter(max))) max = updated;
-                if (updated != null) oldest = updated;
-                long iid = mr.path("iid").asLong();
-                out.add(new PullItem(mr.path("web_url").asText(null), String.valueOf(iid), "!" + iid + " " + mr.path("title").asText(""),
+                out.add(new PullItem(mr.path("web_url").asText(null), iid, "!" + iid + " " + mr.path("title").asText(""),
                         mr.path("source_branch").asText(null), WebhookPayloads.gitLabState(mr.path("state").asText(null)), updated,
                         String.valueOf(iid)));
+                at = new PullCursor(updated, iid, null);
             }
-            nextPage = next(r);
-            page++;
+            nextPage = full ? null : next(r);
         }
-        if (!truncated && nextPage != null) truncated = true; // 쪽 상한
-        return new PullBatch(out, firstEtag, false, max, truncated, oldest);
+        return new PullBatch(out, newProbeEtag, false, !full && nextPage == null, at);
     }
 
     @Override

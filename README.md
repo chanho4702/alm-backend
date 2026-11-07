@@ -1034,10 +1034,15 @@ GitLab: Settings › Webhooks — URL, Secret token, "Push events"·"Merge reque
 | GitHub Enterprise Server | `<오리진>/api/v3` | 같음 |
 | gitlab.com · self-managed | `<오리진>/api/v4` | `PRIVATE-TOKEN`(개인·프로젝트·그룹 토큰, `read_api`) |
 
-한 번의 실행: 기본 브랜치 커밋(`since` = 커밋 시각 커서 − 1시간 겹침, 첫 실행은 14일) → 갱신된 PR/MR(`updated_at` 커서) — 제목·원본 브랜치의 키로
-PR 링크 + **상태 OPEN·MERGED·CLOSED**(`PullRequestView.state`, 웹훅도 채운다) → 열린 PR/MR의 커밋(브랜치 = 원본 브랜치). 첫 쪽은 ETag로
-`If-None-Match`(바뀐 게 없으면 304 — "변경 없음"). 쪽 상한(기본 5쪽)을 넘는 오래된 커밋은 `sync-commits.ps1`로 메운다. PR/MR이 상한(`max-pull-requests` 30)을 넘으면 **창을 끝까지 처리할 때까지 커서·ETag를 움직이지 않고**(V46 `pulls_window_*`) 1분 뒤 처리한 것보다 오래된 쪽을 이어 읽는다. 응답 본문까지 포함한 데드라인(요청 20초)이 있어 본문을 멈춘 서버가 폴링 스레드를 붙잡지 못한다.
+한 번의 실행: 기본 브랜치 커밋(`since` = 커밋 시각 커서 − 1시간 겹침, 첫 실행은 14일, 첫 쪽 ETag `If-None-Match` — 304면 "변경 없음")
+→ PR/MR(**`updated_at` 오름차순 키셋** — 오래된 것부터 차례로 따라잡는다) — 제목·원본 브랜치의 키로 PR 링크 + **상태 OPEN·MERGED·CLOSED**
+(`PullRequestView.state`, 웹훅도 채운다) → 열린 PR/MR의 커밋(브랜치 = 원본 브랜치). 쪽 상한(기본 5쪽)을 넘는 오래된 커밋은 `sync-commits.ps1`로 메운다.
 
+- **PR/MR 커서**(V47) — 마지막으로 처리한 `(updated_at, PR 번호·MR iid)` 튜플. 그 뒤만 처리하고 한 번에 `max-pull-requests`(30)건까지,
+  남으면 1분 뒤 이어 읽는다 — 쪽 상한을 넘는 백로그도, 같은 시각 PR이 상한보다 많아도 번호로 이어 가 빠뜨리지 않는다.
+  GitHub 목록에는 시각 필터가 없어 쪽 번호 힌트(`pulls_page`)에서 한 쪽 겹쳐 시작하고, 시작 쪽 첫 항목이 이미 커서 뒤면(앞쪽 PR이 갱신돼
+  당겨졌다) 물러서서 다시 본다. GitLab은 `updated_after`로 거른다. 다 따라잡았을 때만 "가장 최근 갱신 1건" 탐침의 ETag를 남겨,
+  다음 실행이 304면 목록을 읽지 않는다. 응답 본문까지 포함한 데드라인(요청 20초)이 있어 본문을 멈춘 서버가 폴링 스레드를 붙잡지 못한다.
 - **주기·백오프** — `ALM_SCM_POLL_INTERVAL`(기본 5m, 1분 이상). 실패하면 주기 × 2^실패 횟수(`ALM_SCM_MAX_BACKOFF` 6h까지), 실패한 실행은 커서를 움직이지 않는다.
 - **레이트 리밋** — 429·`Retry-After`·`x-ratelimit-remaining`/`ratelimit-remaining` 0이면 reset 시각까지 미룬다(`RATE_LIMITED`).
 - **중복 실행 방지** — 행 임대(`lease_owner`·`lease_until`, 15분). 조건부 UPDATE로 잡은 인스턴스만 돈다. 만료는 저장소마다 잡는 순간부터, 실행 중 단계마다 갱신하고, 완료 기록은 행 잠금 + 임대 토큰이 아직 내 것일 때만(잃었으면 결과를 버린다). 주기 실행은 자기 스레드 하나(`ALM_SCM_SCHEDULER_ENABLED`, 기본 켬).

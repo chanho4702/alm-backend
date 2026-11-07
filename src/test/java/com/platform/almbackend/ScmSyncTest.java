@@ -328,37 +328,82 @@ class ScmSyncTest {
     // ── Codex 지적 회귀 ──
 
     @Test
-    void PR이_상한을_넘으면_창을_다_읽을_때까지_커서와_ETag를_움직이지_않는다() throws Exception {
-        Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        StringBuilder pulls = new StringBuilder("[");
-        for (int i = 0; i < 35; i++) { // 최신 갱신 순 35건 — 상한 30
-            if (i > 0) pulls.append(',');
-            pulls.append(ghPull(100 + i, "PR " + i, "plat-2-pr" + i, "open", null, base.minusSeconds(i * 60L).toString()));
-        }
-        pulls.append(']');
+    void PR_260건은_쪽_상한을_넘어도_오름차순_키셋으로_끝까지_따라잡고_다_따라잡으면_탐침_ETag로_건너뛴다() throws Exception {
+        Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(5, ChronoUnit.DAYS);
+        List<String> prs = new java.util.ArrayList<>(); // 오름차순(오래된 것부터) 260건 — 쪽 50 × 상한 5쪽 = 250을 넘는다
+        for (int i = 0; i < 260; i++) prs.add(ghPull(1000 + i, "PR " + i, "plat-2-pr" + i, "closed", null, base.plusSeconds(i * 60L).toString()));
         routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
-        routes.put("/api/v3/repos/acme/app/pulls", s -> Reply.json(pulls.toString(), "ETag", "\"pp\""));
-        for (int i = 0; i < 35; i++) routes.put("/api/v3/repos/acme/app/pulls/" + (100 + i) + "/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-260\""));
         long id = register(repo, "GITHUB", null);
 
-        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.containsString("이어서 읽는 중")));
-        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(30);
-        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class)).isNull();
-        assertThat(jdbc.queryForObject("select pulls_etag from repository_scm_sync", String.class)).isNull();
-        assertThat(jdbc.queryForObject("select pulls_window_until from repository_scm_sync", Timestamp.class).toInstant())
-                .isEqualTo(base.minusSeconds(29 * 60L));
-        // 다음 실행은 주기가 아니라 곧바로(이어 읽기)
-        assertThat(jdbc.queryForObject("select next_run_at from repository_scm_sync", Timestamp.class).toInstant())
-                .isBefore(Instant.now().plusSeconds(2 * 60));
+        int runs = 0;
+        String message;
+        do {
+            message = JSON.readTree(run(id).andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                    .path("lastMessage").asText();
+            runs++;
+            assertThat(runs).as("끝내 따라잡아야 한다").isLessThan(20);
+        } while (message.contains("이어서 읽는 중"));
+        assertThat(runs).isEqualTo(9); // 30건씩
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(260);
+        assertThat(jdbc.queryForObject("select pulls_cursor_number from repository_scm_sync", Long.class)).isEqualTo(1259L);
+        assertThat(jdbc.queryForObject("select pulls_page from repository_scm_sync", Integer.class)).isEqualTo(6);
+        assertThat(jdbc.queryForObject("select pulls_etag from repository_scm_sync", String.class)).isEqualTo("\"probe-260\"");
 
+        // 다 따라잡은 뒤에는 탐침만 — 304면 목록을 읽지 않는다
         seen.clear();
-        run(id).andExpect(status().isOk());
-        assertThat(seen.stream().filter(s -> s.path().endsWith("/pulls")).findFirst().orElseThrow().headers().get("if-none-match")).isNull();
-        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(35);
-        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(base);
-        assertThat(jdbc.queryForObject("select pulls_window_until from repository_scm_sync", Timestamp.class)).isNull();
-        // 창을 마친 실행의 첫 쪽 ETag는 저장하지 않는다(창보다 새 항목을 건너뛴 응답이라)
-        assertThat(jdbc.queryForObject("select pulls_etag from repository_scm_sync", String.class)).isNull();
+        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value("변경 없음"));
+        assertThat(seen.stream().filter(x -> x.path().endsWith("/pulls")).toList()).hasSize(1)
+                .allSatisfy(x -> assertThat(x.query()).contains("direction=desc").contains("per_page=1"));
+
+        // 오래된 PR 하나가 갱신되면 맨 뒤로 간다 — 탐침이 바뀌고, 끝 쪽에서 그것만 새로 처리한다
+        prs.add(prs.remove(3).replace(base.plusSeconds(3 * 60L).toString(), Instant.now().truncatedTo(ChronoUnit.SECONDS).toString())
+                .replace("\"closed\"", "\"open\"").replace("\"merged_at\":null", "\"merged_at\":null"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-261\""));
+        routes.put("/api/v3/repos/acme/app/pulls/1003/commits", s -> Reply.json("[]"));
+        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value("커밋 0건(새로 저장 0 · 새 연결 0) · PR 1건(새 연결 0)"));
+        assertThat(jdbc.queryForObject("select state from issue_web_link where url like '%/pull/1003'", String.class)).isEqualTo("OPEN");
+    }
+
+    @Test
+    void 같은_updated_at이_상한보다_많아도_번호로_이어_읽어_하나도_빠뜨리지_않는다() throws Exception {
+        String same = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(1, ChronoUnit.DAYS).toString();
+        List<String> prs = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) prs.add(ghPull(500 + i, "같은 시각 " + i, "plat-2-same" + i, "closed", null, same));
+        routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-same\""));
+        long id = register(repo, "GITHUB", null);
+
+        run(id).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.containsString("이어서 읽는 중")));
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select pulls_cursor_number from repository_scm_sync", Long.class)).isEqualTo(529L);
+        run(id).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("이어서 읽는 중"))));
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(40);
+    }
+
+    /** 가짜 GitHub PR 목록 — 탐침(desc·per_page=1, If-None-Match 304)과 오름차순 쪽 나누기(Link rel=next) */
+    private static Function<Seen, Reply> ghPullsRoute(List<String> ascending, String probeEtag) {
+        List<String> snapshot = List.copyOf(ascending);
+        return s -> {
+            Map<String, String> q = new java.util.HashMap<>();
+            for (String kv : s.query() == null ? new String[0] : s.query().split("&")) {
+                int eq = kv.indexOf('=');
+                if (eq > 0) q.put(kv.substring(0, eq), kv.substring(eq + 1));
+            }
+            if ("desc".equals(q.get("direction"))) {
+                if (probeEtag.equals(s.headers().get("if-none-match"))) return new Reply(304, null, Map.of());
+                return Reply.json("[" + (snapshot.isEmpty() ? "" : snapshot.getLast()) + "]", "ETag", probeEtag);
+            }
+            int per = Integer.parseInt(q.getOrDefault("per_page", "30"));
+            int page = Integer.parseInt(q.getOrDefault("page", "1"));
+            int from = Math.min(snapshot.size(), (page - 1) * per);
+            int to = Math.min(snapshot.size(), from + per);
+            String body = "[" + String.join(",", snapshot.subList(from, to)) + "]";
+            return to < snapshot.size()
+                    ? Reply.json(body, "Link", "<http://127.0.0.1:" + port + s.path() + "?state=all&sort=updated&direction=asc&per_page="
+                            + per + "&page=" + (page + 1) + ">; rel=\"next\"")
+                    : Reply.json(body);
+        };
     }
 
     @Test

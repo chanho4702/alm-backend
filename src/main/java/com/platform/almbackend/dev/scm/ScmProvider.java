@@ -19,24 +19,40 @@ public interface ScmProvider {
      */
     record CommitBatch(List<CommitInput> commits, String etag, boolean notModified, boolean truncated, Instant maxCommittedAt) {}
 
-    /** PR/MR 한 건 — state는 OPEN·MERGED·CLOSED */
-    record PullItem(String url, String number, String title, String sourceBranch, String state, Instant updatedAt, String apiRef) {}
+    /** PR/MR 한 건 — state는 OPEN·MERGED·CLOSED. number는 GitHub PR 번호·GitLab MR iid(키셋의 동점 깨기) */
+    record PullItem(String url, long number, String title, String sourceBranch, String state, Instant updatedAt, String apiRef) {}
 
     /**
-     * @param truncated     상한(max-pull-requests·쪽)에 걸려 since까지 다 읽지 못했다 — 러너가 창을 이어 읽는다(커서·ETag를 움직이지 않는다)
-     * @param oldestUpdatedAt 이번에 처리한 것 중 가장 오래된 updated_at(다음 실행은 이보다 새 것을 건너뛴다)
+     * PR/MR 키셋 커서 — 마지막으로 처리한 (updated_at, number). 그보다 큰 것만 처리한다(오름차순).
+     *
+     * @param page GitHub 이어 읽기 쪽 번호 힌트(null = 1쪽부터). GitLab은 updated_after로 거르니 쓰지 않는다
      */
-    record PullBatch(List<PullItem> pulls, String etag, boolean notModified, Instant maxUpdatedAt, boolean truncated,
-                     Instant oldestUpdatedAt) {}
+    record PullCursor(Instant updatedAt, long number, Integer page) {
+        boolean before(Instant updated, long n) {
+            int c = updated.compareTo(updatedAt);
+            return c > 0 || (c == 0 && n > number);
+        }
+    }
+
+    /**
+     * @param pulls      처리할 것(커서 뒤, 오름차순, 상한까지)
+     * @param probeEtag  "가장 최근 갱신 1건" 탐침의 ETag — 다 따라잡았을 때 저장해 다음 실행이 304로 건너뛴다
+     * @param notModified 탐침이 304 — 그 뒤 갱신된 PR이 없다(pulls는 비고 커서는 그대로)
+     * @param caughtUp   목록 끝까지 읽었다(상한에 걸리지 않았다)
+     * @param next       다음 커서(처리한 마지막 항목, 없으면 받은 커서 그대로)와 쪽 힌트
+     */
+    record PullBatch(List<PullItem> pulls, String probeEtag, boolean notModified, boolean caughtUp, PullCursor next) {}
 
     Map<String, String> authHeaders(String token);
 
     CommitBatch commits(Target target, String branch, Instant since, String etag);
 
     /**
-     * since 이후 갱신된 PR/MR — 최신 갱신 순. {@code skipNewerThan}이 있으면(창 이어 읽기) 그보다 새 항목은 이미 처리했으니 건너뛴다.
+     * 커서 뒤의 PR/MR을 updated_at 오름차순으로 — 오래된 것부터 차례로 따라잡는다. 한 번에 max-pull-requests건·max-pages쪽까지,
+     * 넘으면 caughtUp=false이고 다음 실행이 next 커서에서 잇는다. {@code probeEtag}가 있으면(직전에 다 따라잡았다) 먼저
+     * "가장 최근 갱신 1건"을 If-None-Match로 물어 304면 아무것도 읽지 않는다.
      */
-    PullBatch pulls(Target target, Instant since, Instant skipNewerThan, String etag);
+    PullBatch pulls(Target target, PullCursor cursor, String probeEtag);
 
     /** 열린 PR/MR의 커밋(호스팅 상한까지) */
     List<CommitInput> pullCommits(Target target, PullItem pull);

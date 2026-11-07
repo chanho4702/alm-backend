@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
  */
 @Component
 public class GitHubScmProvider implements ScmProvider {
+    static final int PAGE = 50;
     private static final Pattern NEXT = Pattern.compile("<([^>]+)>\\s*;\\s*rel=\"next\"");
     /** PR 커밋 API 상한(GitHub는 250건까지 준다) */
     private static final int PULL_COMMIT_PAGES = 3;
@@ -68,47 +69,69 @@ public class GitHubScmProvider implements ScmProvider {
     }
 
     @Override
-    public PullBatch pulls(Target target, Instant since, Instant skipNewerThan, String etag) {
-        URI next = URI.create(repoApi(target) + "/pulls?state=all&sort=updated&direction=desc&per_page=50");
+    public PullBatch pulls(Target target, PullCursor cursor, String probeEtag) {
+        // 1) 변경 탐침 — 가장 최근 갱신 1건. 무엇이든 갱신되면 그 PR이 맨 앞에 와 ETag가 바뀐다
+        ScmHttp.Response probe = target.call().get(URI.create(repoApi(target) + "/pulls?state=all&sort=updated&direction=desc&per_page=1"), probeEtag);
+        if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor);
+        String newProbeEtag = probe.etag();
+
+        // 2) 오름차순 키셋 — 목록에 시각 필터가 없어 쪽 힌트에서 한 쪽 겹쳐 시작한다. 시작 쪽 첫 항목이 이미 커서 뒤면
+        //    (그사이 앞쪽 PR이 갱신돼 뒤로 빠지며 당겨졌다) 처리하지 않은 것이 더 앞에 있을 수 있으니 물러서서 다시 본다
+        int start = Math.max(1, (cursor.page() == null ? 1 : cursor.page()) - 1);
+        int budget = settings.maxPages() * 2; // 물러서기까지 포함한 이번 실행의 쪽 상한
         List<PullItem> out = new ArrayList<>();
-        Instant max = null;
-        Instant oldest = null;
-        String firstEtag = null;
-        int page = 0;
-        boolean done = false;
-        boolean truncated = false;
-        while (next != null && page < settings.maxPages() && !done) {
-            ScmHttp.Response r = target.call().get(next, page == 0 ? etag : null);
-            if (page == 0) {
-                if (r.notModified()) return new PullBatch(List.of(), etag, true, null, false, null);
-                firstEtag = r.etag();
+        PullCursor at = cursor;
+        int page = start;
+        boolean caughtUp = false;
+        boolean first = true;
+        int read = 0;
+        while (read < budget) {
+            ScmHttp.Response r = target.call().get(URI.create(repoApi(target)
+                    + "/pulls?state=all&sort=updated&direction=asc&per_page=" + PAGE + "&page=" + page), null);
+            read++;
+            JsonNode items = array(r);
+            if (first && page > 1 && items.size() > 0 && firstAfter(items, cursor)) {
+                page = Math.max(1, page - settings.maxPages());
+                first = page > 1; // 1쪽까지 물러섰으면 더 볼 것 없다
+                continue;
             }
-            for (JsonNode pr : array(r)) {
+            first = false;
+            boolean full = false;
+            for (JsonNode pr : items) {
                 Instant updated = instant(pr.path("updated_at").asText(null));
-                if (updated == null || updated.isBefore(since)) {
-                    done = true; // 갱신 시각 내림차순 — 커서보다 오래된 것부터는 볼 필요 없다
-                    break;
-                }
-                if (skipNewerThan != null && updated.isAfter(skipNewerThan)) continue; // 창 이어 읽기 — 이미 처리했다
+                long number = pr.path("number").asLong();
+                if (updated == null || !cursor.before(updated, number)) continue; // 이미 처리했다(또는 첫 동기화 범위 밖)
                 if (out.size() >= settings.maxPullRequests()) {
-                    done = true;
-                    truncated = true; // 남은 것은 다음 실행이 이어 읽는다
+                    full = true;
                     break;
                 }
-                if (max == null || updated.isAfter(max)) max = updated;
-                oldest = updated;
                 boolean merged = !pr.path("merged_at").isNull() && !pr.path("merged_at").isMissingNode();
-                out.add(new PullItem(pr.path("html_url").asText(null), String.valueOf(pr.path("number").asLong()),
-                        "#" + pr.path("number").asLong() + " " + pr.path("title").asText(""),
-                        pr.path("head").path("ref").asText(null),
-                        WebhookPayloads.gitHubState(pr.path("state").asText(null), merged), updated,
-                        String.valueOf(pr.path("number").asLong())));
+                out.add(new PullItem(pr.path("html_url").asText(null), number, "#" + number + " " + pr.path("title").asText(""),
+                        pr.path("head").path("ref").asText(null), WebhookPayloads.gitHubState(pr.path("state").asText(null), merged),
+                        updated, String.valueOf(number)));
+                at = new PullCursor(updated, number, page);
             }
-            next = done ? null : nextLink(r);
+            if (full) break;
+            if (nextLink(r) == null) {
+                caughtUp = true;
+                at = new PullCursor(at.updatedAt(), at.number(), page);
+                break;
+            }
+            if (read >= settings.maxPages() && !out.isEmpty()) {
+                at = new PullCursor(at.updatedAt(), at.number(), page + 1);
+                break;
+            }
             page++;
+            at = new PullCursor(at.updatedAt(), at.number(), page);
         }
-        if (next != null) truncated = true; // 쪽 상한
-        return new PullBatch(out, firstEtag, false, max, truncated, oldest);
+        return new PullBatch(out, newProbeEtag, false, caughtUp, at);
+    }
+
+    /** 이 쪽의 첫 항목이 이미 커서 뒤인가(= 처리하지 않은 것이 더 앞쪽에 있을 수 있다) */
+    private static boolean firstAfter(JsonNode items, PullCursor cursor) {
+        JsonNode head = items.get(0);
+        Instant updated = instant(head.path("updated_at").asText(null));
+        return updated != null && cursor.before(updated, head.path("number").asLong());
     }
 
     @Override
