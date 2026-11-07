@@ -1042,7 +1042,8 @@ GitLab: Settings › Webhooks — URL, Secret token, "Push events"·"Merge reque
   남으면 1분 뒤 이어 읽는다 — 쪽 상한을 넘는 백로그도, 같은 시각 PR이 상한보다 많아도 번호로 이어 가 빠뜨리지 않는다.
   GitHub 목록에는 시각 필터가 없어 쪽 번호 힌트(`pulls_page`)에서 한 쪽 겹쳐 시작하고, 시작 쪽 첫 항목이 이미 커서 뒤면(앞쪽 PR이 갱신돼
   당겨졌다) 물러서서 다시 본다. GitLab은 `updated_after`로 거른다. 다 따라잡았을 때만 "가장 최근 갱신 1건" 탐침의 ETag를 남겨,
-  다음 실행이 304면 목록을 읽지 않는다. 응답 본문까지 포함한 데드라인(요청 20초)이 있어 본문을 멈춘 서버가 폴링 스레드를 붙잡지 못한다.
+  다음 실행이 304면 목록을 읽지 않는다. 한계: GitHub의 같은 `updated_at` 안 순서가 번호 순이라고 가정한다(관측상 그렇다), GitLab에서
+  정확히 같은 시각의 MR이 250건(5쪽)을 넘으면 그 시각에서 진척이 멈춘다. 응답 본문까지 포함한 데드라인(요청 20초)이 있어 본문을 멈춘 서버가 폴링 스레드를 붙잡지 못한다.
 - **주기·백오프** — `ALM_SCM_POLL_INTERVAL`(기본 5m, 1분 이상). 실패하면 주기 × 2^실패 횟수(`ALM_SCM_MAX_BACKOFF` 6h까지), 실패한 실행은 커서를 움직이지 않는다.
 - **레이트 리밋** — 429·`Retry-After`·`x-ratelimit-remaining`/`ratelimit-remaining` 0이면 reset 시각까지 미룬다(`RATE_LIMITED`).
 - **중복 실행 방지** — 행 임대(`lease_owner`·`lease_until`, 15분). 조건부 UPDATE로 잡은 인스턴스만 돈다. 만료는 저장소마다 잡는 순간부터, 실행 중 단계마다 갱신하고, 완료 기록은 행 잠금 + 임대 토큰이 아직 내 것일 때만(잃었으면 결과를 버린다). 주기 실행은 자기 스레드 하나(`ALM_SCM_SCHEDULER_ENABLED`, 기본 켬).
