@@ -68,9 +68,10 @@ public class GitLabScmProvider implements ScmProvider {
         if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor, false);
         String newProbeEtag = probe.etag();
 
-        // 2) 오름차순 — updated_after(커서 시각 포함)로 거르니 늘 1쪽부터. 같은 시각 묶음 규칙은 PullScan
+        // 2) 오름차순 — updated_after(이상 비교, 밀리초까지)로 커서 시각부터 거르니 늘 1쪽부터. 같은 시각 묶음 규칙은 PullScan.
+        //    여유를 빼지 않는다: 경계를 끝낸 실행이 남기는 "커서 + 1ms"가 경계 묶음을 다시 읽느라 쪽 예산을 쓰지 않게
         String base = projectApi(target) + "/merge_requests?state=all&order_by=updated_at&sort=asc&per_page=50&updated_after="
-                + ScmEndpoints.encode(cursor.updatedAt().minusSeconds(1).toString());
+                + ScmEndpoints.encode(cursor.updatedAt().toString());
         PullScan scan = new PullScan(cursor.updatedAt(), settings.maxPullRequests(), GitHubScmProvider.HARD_CAP);
         String nextPage = "1";
         int read = 0;

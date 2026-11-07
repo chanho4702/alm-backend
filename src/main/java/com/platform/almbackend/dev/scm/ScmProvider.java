@@ -53,6 +53,7 @@ public interface ScmProvider {
         private Instant group;        // 지금 처리 중인 시각 묶음
         private Instant completed;    // 끝까지 처리한 마지막 묶음(커서보다 뒤)
         private int fresh;            // 커서 뒤 항목 수(경계 재처리는 세지 않는다)
+        private boolean boundaryClosed; // 경계 묶음(커서와 같은 시각)을 끝까지 봤다 — 그 뒤 시각의 항목을 받았다
         private boolean stopped;
 
         public PullScan(Instant cursor, int softCap, int hardCap) {
@@ -67,6 +68,7 @@ public interface ScmProvider {
             if (t == null || t.isBefore(cursor)) return true; // 이미 지나간 것(또는 첫 동기화 범위 밖)
             if (group != null && t.isAfter(group)) {
                 if (group.isAfter(cursor)) completed = group; // 이전 묶음을 끝까지 봤다
+                else boundaryClosed = true;
                 if (fresh >= softCap) {
                     stopped = true;
                     return false;
@@ -101,16 +103,26 @@ public interface ScmProvider {
         }
 
         /**
-         * 막힘 — 끝까지 읽지도 못했는데 커서가 그대로이고 묶음 하나를 붙들고 있다(같은 시각이 예산보다 많다).
-         * 이때는 그 묶음 시각을 지나 강제로 전진한다(나머지는 건너뛴다) — 다른 PR 갱신이 영원히 막히는 것보다 낫다.
+         * 끝까지 읽지 못한 채 끝났을 때의 다음 커서와 강제 여부.
+         * <ul>
+         *   <li>끝낸 새 묶음이 있으면 그 시각(일반).</li>
+         *   <li>경계 묶음은 끝까지 봤는데(그 뒤 시각 U의 항목을 받았다) 예산이 다해 U가 미완이면 — 막힌 것이 아니다. 경계 시각
+         *       바로 뒤(커서 + 1ms)로만 옮긴다: 경계는 방금 끝까지 처리했으니 다음 실행이 그것을 다시 읽느라 예산을 쓰지 않고 U를
+         *       처음부터 읽는다(U는 건너뛰지 않는다).</li>
+         *   <li>한 묶음 안에서 예산이 다했다(같은 시각이 예산보다 많다) — 진짜 막힘. 그 시각을 지나 강제로 전진한다(나머지는
+         *       건너뛴다, 경고) — 다른 PR 갱신이 영원히 막히는 것보다 낫다.</li>
+         * </ul>
+         *
          */
-        public Instant forcedNext() {
-            return group == null ? null : group.plusMillis(1);
+        public Unfinished unfinished() {
+            if (completed != null) return new Unfinished(completed, false);
+            if (boundaryClosed) return new Unfinished(cursor.plusMillis(1), false);
+            if (group != null) return new Unfinished(group.plusMillis(1), true);
+            return new Unfinished(cursor, false); // 아무것도 처리하지 않았다(GitHub 첫 동기화가 옛 쪽을 지나는 중 — 쪽 힌트로 전진)
         }
 
-        public boolean inGroup() {
-            return group != null;
-        }
+        /** 끝까지 못 읽고 끝난 실행의 다음 커서와 강제 전진 여부 */
+        public record Unfinished(Instant next, boolean forced) {}
     }
 
     Map<String, String> authHeaders(String token);

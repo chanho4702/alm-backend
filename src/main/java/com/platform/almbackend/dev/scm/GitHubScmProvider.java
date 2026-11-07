@@ -122,20 +122,19 @@ public class GitHubScmProvider implements ScmProvider {
 
     /** 읽기 결과 → 배치. 막혔으면 묶음 시각을 지나 강제 전진(ScmSyncRunner가 경고를 남긴다) */
     static PullBatch finish(PullScan scan, PullCursor cursor, String probeEtag, boolean reachedEnd, Integer page) {
-        Instant next = scan.next();
-        boolean forced = false;
-        if (!reachedEnd && next.equals(cursor.updatedAt()) && scan.inGroup() && !scan.items().isEmpty()) {
-            next = scan.forcedNext();
-            forced = true;
-        }
-        return new PullBatch(scan.items(), probeEtag, false, reachedEnd, new PullCursor(next, page), forced);
+        if (reachedEnd) return new PullBatch(scan.items(), probeEtag, false, true, new PullCursor(scan.next(), page), false);
+        PullScan.Unfinished unfinished = scan.unfinished();
+        return new PullBatch(scan.items(), probeEtag, false, false, new PullCursor(unfinished.next(), page), unfinished.forced());
     }
 
-    /** 이 쪽의 첫 항목이 이미 커서 뒤인가(= 처리하지 않은 것이 더 앞쪽에 있을 수 있다) */
+    /**
+     * 이 쪽의 첫 항목이 커서 <b>이상</b>인가 — 커서와 같은 시각이어도 경계 묶음이 앞쪽에서 시작했을 수 있으니(Codex P1) 물러선다.
+     * 첫 항목 시각이 커서보다 작은 쪽을 찾을 때까지(또는 1쪽까지) 물러선다.
+     */
     private static boolean firstAfter(JsonNode items, PullCursor cursor) {
         JsonNode head = items.get(0);
         Instant updated = instant(head.path("updated_at").asText(null));
-        return updated != null && updated.isAfter(cursor.updatedAt());
+        return updated != null && !updated.isBefore(cursor.updatedAt());
     }
 
     @Override

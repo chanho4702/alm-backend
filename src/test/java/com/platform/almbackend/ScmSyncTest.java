@@ -418,6 +418,59 @@ class ScmSyncTest {
         assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(base.plusSeconds(29 * 60L));
     }
 
+    @Test
+    void 경계_묶음_499건을_다시_처리하느라_예산을_써도_뒤_시각_U를_건너뛰지_않고_다음_실행에서_전부_처리한다() throws Exception {
+        Instant boundary = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(2, ChronoUnit.DAYS);
+        Instant u = boundary.plusSeconds(60);
+        List<String> prs = new java.util.ArrayList<>();
+        for (int i = 0; i < 499; i++) prs.add(ghPull(4000 + i, "경계 " + i, "bnd-" + i, "closed", null, boundary.toString())); // 키 없음
+        for (int i = 0; i < 5; i++) prs.add(ghPull(4600 + i, "U " + i, "plat-2-u" + i, "closed", null, u.toString()));
+        routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-u\""));
+        long id = register(repo, "GITHUB", null);
+        // 경계 묶음까지는 이미 처리했다(커서 = 경계 시각)
+        jdbc.update("update repository_scm_sync set pulls_cursor = ?, pulls_page = 1 where id = ?", Timestamp.from(boundary), id);
+
+        run(id).andExpect(status().isOk())
+                .andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("동일 시각"))));
+        Instant cursorAfter = jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant();
+        assertThat(cursorAfter).isAfter(boundary).isBefore(u); // 경계 바로 뒤까지만 — U는 건너뛰지 않았다
+
+        run(id).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR' and url like '%/pull/46%'", Long.class))
+                .isEqualTo(5);
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(u);
+    }
+
+    @Test
+    void 여러_쪽에_걸친_경계_묶음은_쪽_힌트가_가운데를_가리켜도_앞쪽부터_다시_처리한다() throws Exception {
+        Instant old = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(4, ChronoUnit.DAYS);
+        Instant boundary = old.plusSeconds(3600);
+        List<String> prs = new java.util.ArrayList<>();
+        for (int i = 0; i < 60; i++) prs.add(ghPull(5000 + i, "옛 " + i, "old-" + i, "closed", null, old.plusSeconds(i).toString()));
+        for (int i = 0; i < 120; i++) prs.add(ghPull(5100 + i, "경계 " + i, "plat-2-b" + i, "closed", null, boundary.toString())); // 2~4쪽
+        for (int i = 0; i < 10; i++) prs.add(ghPull(5300 + i, "뒤 " + i, "plat-2-a" + i, "closed", null, boundary.plusSeconds(60 + i).toString()));
+        routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-mid\""));
+        long id = register(repo, "GITHUB", null);
+        // 커서 = 경계 시각, 힌트는 경계 묶음 한가운데(4쪽 → 시작 3쪽 — 첫 항목이 경계 시각이다)
+        jdbc.update("update repository_scm_sync set pulls_cursor = ?, pulls_page = 4 where id = ?", Timestamp.from(boundary), id);
+
+        seen.clear();
+        run(id).andExpect(status().isOk());
+        // 경계 묶음 120건(2쪽에서 시작하는 것 포함) + 뒤 10건이 전부 이어졌다 — 3쪽부터 읽었다면 2쪽의 40건을 놓쳤다
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR' and url like '%/pull/51%'", Long.class))
+                .isEqualTo(100L + 0); // 5100~5199
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR' and (url like '%/pull/52%')", Long.class))
+                .isEqualTo(20L); // 5200~5219
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR' and url like '%/pull/53%'", Long.class))
+                .isEqualTo(10L);
+        assertThat(seen.stream().filter(x -> x.path().endsWith("/pulls") && x.query().contains("direction=asc"))
+                .map(x -> x.query()).findFirst().orElseThrow()).contains("page=3");
+        assertThat(seen.stream().anyMatch(x -> x.path().endsWith("/pulls") && x.query().contains("direction=asc") && x.query().endsWith("page=1")))
+                .isTrue();
+    }
+
     /** 가짜 GitHub PR 목록 — 탐침(desc·per_page=1, If-None-Match 304)과 오름차순 쪽 나누기(Link rel=next) */
     private static Function<Seen, Reply> ghPullsRoute(List<String> ascending, String probeEtag) {
         List<String> snapshot = List.copyOf(ascending);
