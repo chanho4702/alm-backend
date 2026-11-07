@@ -125,6 +125,15 @@ platform:
       # 인스턴스가 여럿이면 한 곳에서만 켜 둔다 — 겹쳐 돌아도 결과는 같지만 경합이 생긴다
       purge-cron: ${ALM_TRASH_PURGE_CRON:0 0 3 * * *}
       purge-enabled: ${ALM_TRASH_PURGE_ENABLED:true}
+    # 설정 비밀값 암호화 키(AES-256-GCM, 32바이트 hex 64자) — 지금은 저장소 웹훅 시크릿(V44)만 쓴다.
+    # 없으면 웹훅을 만들 수 없고(400) 나머지는 그대로 동작한다. 바꾸면 기존 웹훅 시크릿을 못 읽는다 — 재발급해야 한다.
+    settings-enc-key: ${ALM_SETTINGS_ENC_KEY:}
+    webhook:
+      # 화면에 보여 줄 페이로드 URL의 공개 주소(예: https://alm.example.com). 비우면 화면이 자기 오리진으로 만든다.
+      # GitHub·GitLab이 이 주소에 도달할 수 있어야 한다(사내망 전용 설치면 프록시·터널 필요).
+      public-base-url: ${ALM_WEBHOOK_PUBLIC_URL:}
+      # 수신 본문 상한 — nginx(/api/alm/webhooks/ 5m)와 맞춘다. GitHub 페이로드 상한은 25 MB지만 커밋 메시지·파일 목록만 읽는다
+      max-body-bytes: ${ALM_WEBHOOK_MAX_BODY_BYTES:5242880}
     storage:
       # 첨부 바이트 저장소. S3를 끄면 로컬 파일(개발·테스트) — 운영 compose는 MinIO를 켠다.
       files-dir: ${ALM_FILES_DIR:./data/attachments}

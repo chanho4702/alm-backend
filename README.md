@@ -980,6 +980,46 @@ Refs: PLAT-13",
 
 AQL `development`/`hasCommits` 필드는 아직 없다.
 
+### 저장소 웹훅 (V44, 2026-11-07)
+
+push 후 사람이 `sync-commits.ps1`을 돌리지 않아도 되게, GitHub·GitLab이 보내는 웹훅을 받아 **위 수집 계약에 그대로 넣는다**
+(새 커밋 모델 없음 — `DevCommitService.ingest`와 PR은 `issue_web_link kind=PR`).
+
+| 이벤트 | 처리 |
+|---|---|
+| GitHub `push` · GitLab `Push Hook` | `refs/heads/*`의 커밋 목록 → `ingest`(브랜치 = ref). 태그 push·브랜치 삭제·커밋 없는 push는 `IGNORED`. GitHub는 한 push에 최대 2048건, GitLab은 20건만 싣는다 — 넘친 커밋은 스크립트가 메운다 |
+| GitHub `pull_request` · GitLab `Merge Request Hook` | **제목과 원본 브랜치 이름**의 이슈 키 → PR 웹 링크(제목 `#7 …`/`!7 …`). 본문의 언급은 잇지 않는다. 모든 action에서 멱등 |
+| GitHub `ping` | 저장소 대조만 → `PING` |
+| 그 밖의 이벤트 | `IGNORED`(200) |
+
+**관리**(프로젝트 ADMIN, JWT·PAT `admin` 스코프)
+
+- `GET /api/alm/projects/{projectId}/settings/webhooks` → `{ encryptionConfigured, webhooks: [{ id, repositoryUrl, provider, payloadPath, payloadUrl, actorId, createdAt, secretRotatedAt, lastDeliveryAt, lastEvent, lastOutcome, lastMessage, recentDeliveries: [{ deliveryId, event, outcome, message, receivedAt }] }] }` — 시크릿은 싣지 않는다.
+- `POST …/settings/webhooks` `{ repositoryUrl, provider: "GITHUB"|"GITLAB" }` → `{ webhook, secret }`. **등록된 저장소만**(아니면 400). 이미 있으면
+  경로(`payloadPath`)는 그대로 두고 시크릿만 재발급한다 — `secret`(16진 64자)은 이 응답에서 한 번만 보인다.
+- `DELETE …/settings/webhooks/{webhookId}` → 204. 저장소 목록 교체(`PUT …/settings/repositories`)에서 빠진 저장소의 웹훅도 함께 지워진다.
+
+**수신** — `POST /api/alm/webhooks/{github|gitlab}/{publicId}`, **JWT 없음**(서비스·게이트웨이 permitAll, 게이트웨이 IP당 10 r/s·순간 30).
+
+1. 경로의 웹훅이 없거나 제공자가 다르면 404.
+2. 인증 — GitHub `X-Hub-Signature-256: sha256=<HMAC-SHA256(secret, 받은 바이트 그대로)>`, GitLab `X-Gitlab-Token` = 시크릿. 둘 다 상수 시간 비교. 틀리면 **401**.
+   Content type은 `application/json`만(415), 본문은 `ALM_WEBHOOK_MAX_BODY_BYTES`(기본 5 MiB, nginx 5m)까지(413).
+3. 본문의 저장소(`repository.html_url`·`project.web_url`, 정규화)가 웹훅의 저장소와 다르면 **422** — 한 저장소의 시크릿으로 다른 저장소 커밋을 넣지 못한다.
+4. 전달 멱등 — GitHub `X-GitHub-Delivery`(필수, "Redeliver"도 같은 값), GitLab `Idempotency-Key`·`X-Gitlab-Event-UUID`(없으면 멱등 없이 수집 멱등만).
+   전달 기록은 처리와 **한 트랜잭션** — 처리한 전달의 재전송은 `DUPLICATE`, 실패한 전달(예: org 불능 **503**)은 남지 않아 재전송하면 다시 처리된다. 웹훅마다 최근 100건 보존.
+5. 처리 주체 = **시크릿을 마지막으로 발급한 관리자**(`actorId`) — 연결 권한은 PAT 수집과 같다(키마다 대상 프로젝트 EDIT, 없으면 그 키만 `NO_PERMISSION`으로 건너뜀).
+
+응답은 `{ outcome: PROCESSED|IGNORED|PING|DUPLICATE, message }`(오류는 `{error}`). 마지막 결과(`REJECTED`·`FAILED` 포함)는 웹훅 행의 `last*`에 남아 화면에 뜬다.
+
+**비밀값** — 시크릿은 HMAC 검증에 원문이 필요해 해시로 둘 수 없다 → `ALM_SETTINGS_ENC_KEY`(32바이트 hex) AES-256-GCM 암호문만 저장한다
+(org-service `ORG_SETTINGS_ENC_KEY`와 같은 규칙). 키가 없으면 발급만 400이고 나머지는 그대로, 형식이 틀리면 기동하지 않는다, 키를 바꾸면
+수신이 503이 된다(재발급 필요). `ALM_WEBHOOK_PUBLIC_URL`을 주면 `payloadUrl`이 채워지고, 없으면 화면이 브라우저 오리진 + `payloadPath`로 보여 준다.
+
+**호스팅에 등록하기** — 외부(GitHub.com·GitLab.com)가 그 URL에 **도달할 수 있어야** 한다. 사내망 전용 설치면 리버스 프록시·터널이 필요하고,
+nginx는 `localhost`가 아닌 Host를 301로 돌리므로(GitHub는 리다이렉트를 따라가지 않는다) 공개 호스트명을 `server_name`에 넣어야 한다.
+GitHub: 저장소 Settings › Webhooks › Add webhook — Payload URL, Content type `application/json`, Secret, 이벤트 "Pushes"·"Pull requests".
+GitLab: Settings › Webhooks — URL, Secret token, "Push events"·"Merge request events".
+
 ## 이슈 키·브랜치 이름 규칙
 
 git 브랜치 이름은 프론트가 만든다(백엔드 API 없음). 백엔드가 보장하는 재료:

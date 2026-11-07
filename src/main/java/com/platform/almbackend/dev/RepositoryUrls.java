@@ -65,18 +65,24 @@ public final class RepositoryUrls {
 
     /** 커밋 링크 — http(s)만, 계정 정보 금지, 500자 이하 */
     public static String commitUrl(String raw) {
+        return webUrl(raw, "커밋");
+    }
+
+    /** 웹 링크(커밋·PR) — http(s)만, 계정 정보 금지, 500자 이하. {@code what}은 오류 문구의 주어 */
+    public static String webUrl(String raw, String what) {
+        if (raw == null || raw.isBlank()) throw new IllegalArgumentException(what + " URL이 비었습니다");
         String value = raw.trim();
         URI uri;
         try {
             uri = new URI(value);
         } catch (URISyntaxException e) {
-            throw new IllegalArgumentException("커밋 URL 형식이 올바르지 않습니다");
+            throw new IllegalArgumentException(what + " URL 형식이 올바르지 않습니다");
         }
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!scheme.equals("https") && !scheme.equals("http") || uri.getHost() == null || uri.getRawUserInfo() != null) {
-            throw new IllegalArgumentException("커밋 URL은 계정 정보 없는 http(s) 주소여야 합니다");
+            throw new IllegalArgumentException(what + " URL은 계정 정보 없는 http(s) 주소여야 합니다");
         }
-        if (value.length() > 500) throw new IllegalArgumentException("커밋 URL이 너무 깁니다(500자 이하)");
+        if (value.length() > 500) throw new IllegalArgumentException(what + " URL이 너무 깁니다(500자 이하)");
         return value;
     }
 }

@@ -36,6 +36,8 @@ platform:
     trash:
       # 테스트는 잡 메서드를 직접 부른다 — 시계는 사실상 돌지 않게(매년 1월 1일)
       purge-cron: "0 0 3 1 1 *"
+    # 테스트 전용 키(저장소 웹훅 시크릿 암호화) — 운영 값이 아니다
+    settings-enc-key: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
     storage:
       files-dir: build/test-attachments
       s3:

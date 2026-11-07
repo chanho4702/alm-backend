@@ -10,6 +10,7 @@ import com.platform.almbackend.dev.DevDtos.DevelopmentSummary;
 import com.platform.almbackend.dev.DevDtos.IngestRequest;
 import com.platform.almbackend.dev.DevDtos.IngestResponse;
 import com.platform.almbackend.dev.DevDtos.IssueRef;
+import com.platform.almbackend.dev.DevDtos.PullRequestLinkResult;
 import com.platform.almbackend.dev.DevDtos.PullRequestView;
 import com.platform.almbackend.dev.DevDtos.SkippedKey;
 import com.platform.almbackend.domain.CodeRepository;
@@ -200,6 +201,48 @@ public class DevCommitService {
             domainEvents.commitsLinked(userId, issue, shas.size());
         }
         return new IngestResponse(repoUrl, inputs.size(), stored, duplicates, skipped, invalid, linksCreated, results);
+    }
+
+    /**
+     * PR을 제목·브랜치 이름 안 이슈 키의 이슈에 웹 링크(kind=PR)로 잇는다(저장소 웹훅, V44). 권한·멱등 규칙은 커밋 수집과 같다 —
+     * 키마다 대상 프로젝트 EDIT, 같은 (이슈, URL)은 다시 만들지 않는다(재전송·PR 수정 이벤트가 여러 번 와도 한 줄).
+     */
+    public PullRequestLinkResult linkPullRequest(long userId, String url, String title, List<String> keyTexts) {
+        String prUrl = RepositoryUrls.webUrl(url, "PR");
+        String prTitle = trimTo(title, 200);
+        Set<String> projectKeys = projects.findAll().stream().map(Project::getKey).collect(Collectors.toSet());
+        Set<String> keys = new java.util.LinkedHashSet<>();
+        for (String text : keyTexts == null ? List.<String>of() : keyTexts) {
+            for (String key : IssueKeyParser.parse(text, projectKeys)) {
+                if (keys.size() < IssueKeyParser.MAX_KEYS) keys.add(key);
+            }
+        }
+        Map<Long, String> denial = new HashMap<>();
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        List<IssueRef> linked = new ArrayList<>();
+        List<IssueRef> already = new ArrayList<>();
+        List<SkippedKey> skipped = new ArrayList<>();
+        for (String key : keys) {
+            Optional<Issue> issue = issues.findByKey(key);
+            if (issue.isEmpty()) {
+                skipped.add(new SkippedKey(key, "ISSUE_NOT_FOUND"));
+                continue;
+            }
+            String reason = denial(userId, issue.get().getProjectId(), denial);
+            if (reason != null) {
+                skipped.add(new SkippedKey(key, reason));
+                continue;
+            }
+            IssueRef ref = new IssueRef(issue.get().getId(), issue.get().getKey());
+            if (webLinks.insertIfAbsent(issue.get().getId(), prUrl, prTitle, "PR", userId, now) == 1) {
+                linked.add(ref);
+                String detail = "PR: " + (prTitle != null ? prTitle : prUrl);
+                activityLog.record(issue.get().getId(), userId, "web_link_added", detail.length() > 500 ? detail.substring(0, 500) : detail, now);
+            } else {
+                already.add(ref);
+            }
+        }
+        return new PullRequestLinkResult(prUrl, linked, already, skipped);
     }
 
     /** 프로젝트에 이을 수 있나 — null이면 된다. 결과는 요청 동안 캐시. org 불능은 그대로 올린다(503) */

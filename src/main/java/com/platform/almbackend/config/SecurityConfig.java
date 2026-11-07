@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -39,6 +40,9 @@ public class SecurityConfig {
                         // 계정 상태 게이트는 /api/alm/**에만 걸려 있어 이 경로는 org를 부르지 않는다(WebMvcConfig).
                         // prometheus는 Alloy가 도커 내부망에서 긁는 메트릭이다(같은 이유로 org를 부르지 않는다).
                         .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
+                        // 저장소 웹훅 수신(V44) — GitHub·GitLab은 JWT를 실을 수 없다. 서명(X-Hub-Signature-256·X-Gitlab-Token)이
+                        // 인증이고 WebhookReceiver가 검증한다. 관리 API(/api/alm/projects/*/settings/webhooks)는 여전히 JWT다.
+                        .requestMatchers(HttpMethod.POST, "/api/alm/webhooks/*/*").permitAll()
                         .anyRequest().authenticated())
                 // 401/403에도 플랫폼 본문 {"error"}를 싣는다(P-11). Security 기본은 본문이 없다.
                 .oauth2ResourceServer(oauth2 -> oauth2

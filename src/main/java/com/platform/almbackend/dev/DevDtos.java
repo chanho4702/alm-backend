@@ -80,6 +80,9 @@ public final class DevDtos {
                                  @Schema(description = "새로 만든 이슈↔커밋 연결 수") int linksCreated,
                                  List<CommitResult> results) {}
 
+    @Schema(description = "PR 연결 결과(저장소 웹훅) — 제목·브랜치 이름 안 이슈 키마다")
+    public record PullRequestLinkResult(String url, List<IssueRef> linked, List<IssueRef> alreadyLinked, List<SkippedKey> skipped) {}
+
     // ── 조회 ──
 
     @Schema(description = "커밋(조회용)")
