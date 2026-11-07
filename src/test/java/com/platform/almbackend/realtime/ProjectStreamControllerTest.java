@@ -89,12 +89,29 @@ class ProjectStreamControllerTest {
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asLong();
     }
 
+    /**
+     * needle이 든 이벤트가 <b>끝까지 쓰일 때까지</b> 기다린다. SseEmitter는 한 이벤트를 여러 번에 나눠 쓴다
+     * ("event:…\ndata:" → JSON → "\n\n") — 전송 실행기 스레드가 쓰는 중에 읽으면 needle(JSON 안)은 보이는데 그 이벤트의
+     * 끝 줄바꿈이 아직 없어 {@link #events}가 마지막 이벤트를 세지 못한다(487번에 1번 꼴로 6건 중 5건 — 2026-11-07 CI).
+     */
     private static String awaitContent(MvcResult result, String needle) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (true) {
             String body = result.getResponse().getContentAsString();
-            if (body.contains(needle)) return body;
+            int at = body.indexOf(needle);
+            if (at >= 0 && body.indexOf("\n\n", at) >= 0) return body;
             if (System.nanoTime() > deadline) throw new AssertionError("'" + needle + "'를 기다리다 시간 초과:\n" + body);
+            Thread.sleep(20);
+        }
+    }
+
+    /** 이름이 name인 완성된 이벤트가 count개 이상 쌓일 때까지 기다린다(개수 기준) */
+    private static String awaitEvents(MvcResult result, String name, int count) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            String body = result.getResponse().getContentAsString();
+            if (events(body, name).size() >= count) return body;
+            if (System.nanoTime() > deadline) throw new AssertionError(name + " 이벤트 " + count + "개를 기다리다 시간 초과:\n" + body);
             Thread.sleep(20);
         }
     }
@@ -160,8 +177,9 @@ class ProjectStreamControllerTest {
         mvc.perform(post("/api/alm/sprints/{id}/start", sprint).with(asUser(1, "Alice"))).andExpect(status().isOk());
         mvc.perform(delete("/api/alm/issues/{id}", other).with(asUser(1, "Alice"))).andExpect(status().isNoContent());
 
-        String body = awaitContent(stream, "issue.deleted");
-        body = awaitContent(stream, "sprint.started");
+        awaitContent(stream, "issue.deleted");
+        awaitEvents(stream, "sprint", 2);
+        String body = awaitEvents(stream, "issue", 6);
 
         List<String> issues = events(body, "issue");
         assertThat(issues).hasSize(6);
