@@ -43,11 +43,15 @@ springdoc:
 # Actuator — 내부 네트워크 전용이다. 게이트웨이 라우트는 /api/**뿐이고 nginx도 /actuator를 넘기지 않는다.
 # 인디케이터는 db·redis 기본값만 쓴다. MinIO·OpenSearch·org gRPC는 넣지 않는다 — 프로브가
 # 남의 서비스를 때리면 그 서비스 장애가 이 서비스의 DOWN으로 번지고, 프로브 자체가 부하가 된다.
+# prometheus는 Alloy가 도커 내부망에서 긁는 메트릭이다(infra-settings observability).
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}   # 모든 미터에 서비스 이름 태그(Grafana 서비스별 분리)
   endpoint:
     health:
       show-details: always

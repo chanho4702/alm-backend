@@ -13,8 +13,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -72,7 +74,20 @@ class ActuatorEndpointTest {
         assertThat(directory.calls()).isEmpty();
     }
 
-    /** health·info 밖은 노출 목록에 없고, 그 앞에서 시큐리티가 401로 끊는다. */
+    /** 메트릭은 Alloy가 내부망에서 토큰 없이 긁는다 — 서비스 태그가 붙고, 게이트(org)를 타지 않는다. */
+    @Test
+    void prometheus는_토큰_없이_200이고_org를_부르지_않는다() throws Exception {
+        directory.setUnavailable(true);
+
+        mvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("jvm_memory_used_bytes")))
+                .andExpect(content().string(containsString("application=\"alm-backend\"")));
+
+        assertThat(directory.calls()).isEmpty();
+    }
+
+    /** health·info·prometheus 밖은 노출 목록에 없고, 그 앞에서 시큐리티가 401로 끊는다. */
     @Test
     void 다른_액추에이터_엔드포인트는_노출되지_않는다() throws Exception {
         mvc.perform(get("/actuator/env")).andExpect(status().isUnauthorized());

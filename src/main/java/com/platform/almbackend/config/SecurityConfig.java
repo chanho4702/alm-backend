@@ -37,7 +37,8 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs", "/v3/api-docs/**").permitAll()
                         // 헬스·빌드 정보 — 게이트웨이 상태판이 토큰 없이 프로브한다.
                         // 계정 상태 게이트는 /api/alm/**에만 걸려 있어 이 경로는 org를 부르지 않는다(WebMvcConfig).
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        // prometheus는 Alloy가 도커 내부망에서 긁는 메트릭이다(같은 이유로 org를 부르지 않는다).
+                        .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
                         .anyRequest().authenticated())
                 // 401/403에도 플랫폼 본문 {"error"}를 싣는다(P-11). Security 기본은 본문이 없다.
                 .oauth2ResourceServer(oauth2 -> oauth2
