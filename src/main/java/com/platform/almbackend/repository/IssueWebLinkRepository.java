@@ -13,6 +13,9 @@ public interface IssueWebLinkRepository extends JpaRepository<IssueWebLink, Long
     List<IssueWebLink> findByIssueIdOrderByIdDesc(long issueId);
     Optional<IssueWebLink> findByIssueIdAndUrl(long issueId, String url);
 
+    /** 같은 URL의 링크 전부(PR 상태 갱신 — 제목에서 키가 빠져도 이미 이어진 이슈를 찾는다) */
+    List<IssueWebLink> findByUrlAndKind(String url, String kind);
+
     /**
      * 없을 때만 넣는다 — 이미 같은 (issue_id, url)이 있으면 0을 돌려준다. 유니크 위반을 예외로 받으면
      * Postgres가 트랜잭션 전체를 중단시켜 기존 행을 다시 읽을 수 없으므로 ON CONFLICT로 피한다.

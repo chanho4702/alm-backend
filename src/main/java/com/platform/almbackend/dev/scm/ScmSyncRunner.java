@@ -55,6 +55,8 @@ public class ScmSyncRunner {
     public static final Duration LEASE = Duration.ofMinutes(15);
     static final Duration COMMIT_OVERLAP = Duration.ofHours(1);
     static final Duration PULL_OVERLAP = Duration.ofMinutes(2);
+    /** PR/MR 창을 이어 읽을 때 다음 실행까지 — 주기를 다 기다리지 않는다 */
+    static final Duration CONTINUE_DELAY = Duration.ofMinutes(1);
     private static final int BATCH = 20;
 
     private final RepositoryScmSyncRepository syncs;
@@ -120,9 +122,10 @@ public class ScmSyncRunner {
         if (!settings.mode().polling()) return 0;
         int ran = 0;
         for (Long id : syncs.findDueIds(now, Limit.of(BATCH))) {
-            Integer claimed = tx.execute(s -> syncs.claimDue(id, owner, now, now.plus(LEASE)));
-            if (claimed == null || claimed != 1) continue;
-            run(id);
+            // 임대 만료는 저장소마다 "잡는 순간"부터 센다 — 앞 저장소가 오래 걸려도 뒤 저장소가 이미 만료된 임대로 시작하지 않게
+            Lease lease = claim(id, true);
+            if (lease == null) continue;
+            run(id, lease);
             ran++;
         }
         return ran;
@@ -130,50 +133,100 @@ public class ScmSyncRunner {
 
     /** "지금 동기화" — 잡지 못하면(실행 중·레이트 리밋 대기) false */
     public boolean runNow(long id) {
-        Instant now = Instant.now();
-        Integer claimed = tx.execute(s -> syncs.claimNow(id, owner, now, now.plus(LEASE)));
-        if (claimed == null || claimed != 1) return false;
-        run(id);
+        Lease lease = claim(id, false);
+        if (lease == null) return false;
+        run(id, lease);
         return true;
     }
 
-    private void run(long id) {
+    /**
+     * 임대 한 번 — 잡을 때마다 새 토큰(인스턴스:임의값). 실행 중 갱신·완료 기록은 이 토큰이 아직 행에 있을 때만 한다(울타리):
+     * 만료돼 다른 인스턴스가 가져갔으면 갱신이 실패해 실행을 멈추고, 늦게 끝난 쪽이 남의 커서·임대를 덮어쓰지 않는다.
+     */
+    private final class Lease {
+        final long id;
+        final String token;
+
+        Lease(long id, String token) {
+            this.id = id;
+            this.token = token;
+        }
+
+        /** 남은 임대를 다시 LEASE만큼 늘린다 — 잃었으면 LeaseLostException */
+        void renew() {
+            Instant now = Instant.now();
+            Integer renewed = tx.execute(st -> syncs.renewLease(id, token, now.plus(LEASE)));
+            if (renewed == null || renewed != 1) throw new LeaseLostException();
+        }
+    }
+
+    /** 임대를 잃었다 — 다른 인스턴스가 이어받았으니 이 실행의 결과는 버린다 */
+    static final class LeaseLostException extends RuntimeException {
+        LeaseLostException() {
+            super("동기화 임대를 잃었습니다 — 다른 인스턴스가 이어받았습니다");
+        }
+    }
+
+    private Lease claim(long id, boolean due) {
+        String token = owner + ":" + UUID.randomUUID().toString().substring(0, 8);
+        Integer claimed = tx.execute(st -> {
+            Instant now = Instant.now();
+            return due ? syncs.claimDue(id, token, now, now.plus(LEASE)) : syncs.claimNow(id, token, now, now.plus(LEASE));
+        });
+        return claimed != null && claimed == 1 ? new Lease(id, token) : null;
+    }
+
+    /** 완료 기록 — 행을 잠그고 임대 토큰이 아직 내 것일 때만 바꾼다 */
+    private void finish(Lease lease, java.util.function.Consumer<RepositoryScmSync> change) {
+        Boolean applied = tx.execute(st -> syncs.findForUpdate(lease.id).map(e -> {
+            if (!lease.token.equals(e.getLeaseOwner())) return false;
+            change.accept(e);
+            return true;
+        }).orElse(false));
+        if (!Boolean.TRUE.equals(applied)) log.warn("저장소 동기화 결과를 버림(임대를 잃음): sync={}", lease.id);
+    }
+
+    private void run(long id, Lease lease) {
         RepositoryScmSync sync = syncs.findById(id).orElse(null);
         if (sync == null) return;
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
         try {
-            Outcome outcome = poll(sync, now);
-            Instant next = now.plus(settings.pollInterval());
+            Outcome outcome = poll(sync, now, lease);
+            Instant next = outcome.continueSoon() ? now.plus(CONTINUE_DELAY) : now.plus(settings.pollInterval());
             Instant exhausted = outcome.exhaustedUntil();
             if (exhausted != null && exhausted.isAfter(next)) next = exhausted;
             Instant nextRun = next;
-            tx.executeWithoutResult(s -> syncs.findById(id).ifPresent(e -> e.succeeded(now, nextRun, exhausted,
-                    outcome.commitsCursor(), outcome.commitsEtag(), outcome.pullsCursor(), outcome.pullsEtag(), clip(outcome.message()))));
+            finish(lease, e -> e.succeeded(now, nextRun, exhausted, outcome.commitsCursor(), outcome.commitsEtag(),
+                    outcome.pullsCursor(), outcome.pullsEtag(), outcome.pullsWindowUntil(), outcome.pullsWindowMax(),
+                    clip(outcome.message())));
             log.info("저장소 동기화: sync={} repo={} {}", id, sync.getRepositoryUrl(), outcome.message());
+        } catch (LeaseLostException e) {
+            log.warn("저장소 동기화 중단(임대를 잃음): sync={} repo={}", id, sync.getRepositoryUrl());
         } catch (ScmHttp.RateLimitedException e) {
-            tx.executeWithoutResult(s -> syncs.findById(id).ifPresent(r -> r.rateLimited(now, e.until(), clip(e.getMessage()))));
+            finish(lease, r -> r.rateLimited(now, e.until(), clip(e.getMessage())));
             log.warn("저장소 동기화 레이트 리밋: sync={} until={}", id, e.until());
         } catch (ScmHttp.ScmException | IllegalArgumentException | IllegalStateException | ServiceUnavailableException e) {
-            failed(id, sync, now, e.getMessage());
+            failed(lease, sync, now, e.getMessage());
             log.warn("저장소 동기화 실패: sync={} repo={} {}", id, sync.getRepositoryUrl(), e.getMessage());
         } catch (RuntimeException e) {
-            failed(id, sync, now, "동기화하지 못했습니다 — 서버 로그를 확인하세요");
+            failed(lease, sync, now, "동기화하지 못했습니다 — 서버 로그를 확인하세요");
             log.error("저장소 동기화 오류: sync={} repo={}", id, sync.getRepositoryUrl(), e);
         }
     }
 
-    private void failed(long id, RepositoryScmSync sync, Instant now, String message) {
+    private void failed(Lease lease, RepositoryScmSync sync, Instant now, String message) {
         int exponent = Math.min(sync.getFailureCount(), 10);
         Duration backoff = settings.pollInterval().multipliedBy(1L << exponent);
         if (backoff.compareTo(settings.maxBackoff()) > 0) backoff = settings.maxBackoff();
         Instant next = now.plus(backoff);
-        tx.executeWithoutResult(s -> syncs.findById(id).ifPresent(r -> r.failed(now, next, clip(message))));
+        finish(lease, r -> r.failed(now, next, clip(message)));
     }
 
-    private record Outcome(Instant commitsCursor, String commitsEtag, Instant pullsCursor, String pullsEtag, Instant exhaustedUntil,
+    private record Outcome(Instant commitsCursor, String commitsEtag, Instant pullsCursor, String pullsEtag,
+                           Instant pullsWindowUntil, Instant pullsWindowMax, boolean continueSoon, Instant exhaustedUntil,
                            String message) {}
 
-    private Outcome poll(RepositoryScmSync sync, Instant now) {
+    private Outcome poll(RepositoryScmSync sync, Instant now, Lease lease) {
         String token = cipher.decrypt(sync.getTokenEnc());
         String branch = codeRepositories.findByProjectIdOrderByPositionAscIdAsc(sync.getProjectId()).stream()
                 .filter(r -> r.getUrl().equals(sync.getRepositoryUrl())).map(CodeRepository::getDefaultBranch).findFirst()
@@ -186,16 +239,21 @@ public class ScmSyncRunner {
         // 1) 기본 브랜치 커밋
         Instant commitsSince = sync.getCommitsCursor() == null ? firstSince : sync.getCommitsCursor().minus(COMMIT_OVERLAP);
         ScmProvider.CommitBatch cb = provider.commits(target, branch, commitsSince, sync.getCommitsCursor() == null ? null : sync.getCommitsEtag());
+        lease.renew();
         Stats stats = new Stats();
         ingest(sync, branch, cb.commits(), stats);
         Instant commitsCursor = cb.notModified() ? sync.getCommitsCursor() : later(sync.getCommitsCursor(), cb.maxCommittedAt());
         if (commitsCursor == null && !cb.notModified()) commitsCursor = commitsSince.plus(COMMIT_OVERLAP); // 빈 저장소 — 다음엔 이 구간부터
         String commitsEtag = cb.notModified() ? sync.getCommitsEtag() : cb.etag();
 
-        // 2) 갱신된 PR/MR — 상태·연결, 열린 것은 커밋까지
+        // 2) 갱신된 PR/MR — 상태·연결, 열린 것은 커밋까지. 창(상한을 넘은 구간)이 열려 있으면 이미 처리한 것보다 새 것을 건너뛰고 이어 읽는다
+        Instant windowUntil = sync.getPullsWindowUntil();
+        boolean inWindow = windowUntil != null;
         Instant pullsSince = sync.getPullsCursor() == null ? firstSince : sync.getPullsCursor().minus(PULL_OVERLAP);
-        ScmProvider.PullBatch pb = provider.pulls(target, pullsSince, sync.getPullsCursor() == null ? null : sync.getPullsEtag());
+        String sentEtag = sync.getPullsCursor() == null || inWindow ? null : sync.getPullsEtag();
+        ScmProvider.PullBatch pb = provider.pulls(target, pullsSince, windowUntil, sentEtag);
         for (ScmProvider.PullItem pull : pb.pulls()) {
+            lease.renew();
             if (pull.url() == null) continue;
             List<String> texts = new ArrayList<>();
             if (pull.title() != null) texts.add(pull.title());
@@ -207,15 +265,37 @@ public class ScmSyncRunner {
                 ingest(sync, pull.sourceBranch(), provider.pullCommits(target, pull), stats);
             }
         }
-        Instant pullsCursor = pb.notModified() ? sync.getPullsCursor() : later(sync.getPullsCursor(), pb.maxUpdatedAt());
-        if (pullsCursor == null && !pb.notModified()) pullsCursor = pullsSince.plus(PULL_OVERLAP);
-        String pullsEtag = pb.notModified() ? sync.getPullsEtag() : pb.etag();
+        Instant pullsCursor = sync.getPullsCursor();
+        String pullsEtag = sync.getPullsEtag();
+        Instant newWindowUntil = null;
+        Instant newWindowMax = null;
+        boolean continueSoon = false;
+        if (pb.notModified()) {
+            // 바뀐 것 없음 — 커서·ETag 그대로(창은 ETag를 쓰지 않으니 여기 오지 않는다)
+        } else if (pb.truncated()) {
+            // 창을 끝까지 처리할 때까지 커서·ETag를 움직이지 않는다 — 다음 실행은 처리한 가장 오래된 시각보다 새 것을 건너뛴다
+            newWindowMax = inWindow ? later(sync.getPullsWindowMax(), pb.maxUpdatedAt()) : pb.maxUpdatedAt();
+            newWindowUntil = pb.oldestUpdatedAt() != null ? pb.oldestUpdatedAt() : windowUntil;
+            if (newWindowUntil != null && windowUntil != null && !newWindowUntil.isBefore(windowUntil)) {
+                newWindowUntil = windowUntil.minusMillis(1); // 같은 시각만 잔뜩이면 진척이 없다 — 한 칸 앞으로
+            }
+            pullsEtag = null;
+            continueSoon = true;
+        } else {
+            Instant target2 = inWindow ? later(sync.getPullsWindowMax(), pb.maxUpdatedAt()) : pb.maxUpdatedAt();
+            pullsCursor = later(sync.getPullsCursor(), target2);
+            if (pullsCursor == null) pullsCursor = pullsSince.plus(PULL_OVERLAP);
+            // 창을 마친 실행의 첫 쪽 ETag는 저장하지 않는다 — 건너뛴(창보다 새) 항목까지 담은 첫 쪽이라 다음 실행이 304로 그것들을 놓친다
+            pullsEtag = inWindow ? null : pb.etag();
+        }
 
         String message = stats.commits == 0 && stats.pulls == 0 ? "변경 없음"
                 : "커밋 " + stats.commits + "건(새로 저장 " + stats.stored + " · 새 연결 " + stats.links + ") · PR " + stats.pulls
                 + "건(새 연결 " + stats.pullLinks + ")";
+        if (pb.truncated()) message += " · PR이 많아 이어서 읽는 중";
         if (cb.truncated()) message += " · 한 번에 다 못 읽은 오래된 커밋은 sync-commits 스크립트로 메우세요";
-        return new Outcome(commitsCursor, commitsEtag, pullsCursor, pullsEtag, call.exhaustedUntil(), message);
+        return new Outcome(commitsCursor, commitsEtag, pullsCursor, pullsEtag, newWindowUntil, newWindowMax, continueSoon,
+                call.exhaustedUntil(), message);
     }
 
     private static final class Stats {

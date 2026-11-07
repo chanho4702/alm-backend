@@ -66,6 +66,13 @@ public class RepositoryScmSync {
     @Column(name = "pulls_etag", length = 200)
     private String pullsEtag;
 
+    /** PR/MR 창 이어 읽기(V46) — 처리한 가장 오래된 updated_at(이보다 새 것은 건너뛴다), 창을 연 실행이 본 가장 새 updated_at */
+    @Column(name = "pulls_window_until")
+    private Instant pullsWindowUntil;
+
+    @Column(name = "pulls_window_max")
+    private Instant pullsWindowMax;
+
     @Column(name = "next_run_at", nullable = false)
     private Instant nextRunAt;
 
@@ -137,15 +144,19 @@ public class RepositoryScmSync {
         this.commitsEtag = null;
         this.pullsCursor = null;
         this.pullsEtag = null;
+        this.pullsWindowUntil = null;
+        this.pullsWindowMax = null;
     }
 
     /** 성공 — 커서·ETag를 앞으로, 다음 실행은 주기 뒤(소진된 레이트 리밋이 있으면 그 뒤) */
     public void succeeded(Instant now, Instant nextRunAt, Instant rateLimitedUntil, Instant commitsCursor, String commitsEtag,
-                          Instant pullsCursor, String pullsEtag, String message) {
+                          Instant pullsCursor, String pullsEtag, Instant pullsWindowUntil, Instant pullsWindowMax, String message) {
         this.commitsCursor = commitsCursor;
         this.commitsEtag = commitsEtag;
         this.pullsCursor = pullsCursor;
         this.pullsEtag = pullsEtag;
+        this.pullsWindowUntil = pullsWindowUntil;
+        this.pullsWindowMax = pullsWindowMax;
         this.failureCount = 0;
         this.rateLimitedUntil = rateLimitedUntil;
         this.lastRunAt = now;

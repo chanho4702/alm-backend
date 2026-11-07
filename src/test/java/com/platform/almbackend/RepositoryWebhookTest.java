@@ -245,6 +245,14 @@ class RepositoryWebhookTest {
                 .replace("\"number\":7,", "\"number\":7,\"state\":\"closed\",\"merged\":true,")).andExpect(status().isOk());
         assertThat(jdbc.queryForList("select distinct state from issue_web_link where url = ?", String.class, REPO + "/pull/7"))
                 .containsExactly("MERGED");
+        // 제목·브랜치에서 키를 지운 뒤 닫혀도(재오픈 → 닫힘) 이미 이어진 링크의 상태가 따라간다(Codex P2)
+        String noKey = "{\"action\":\"closed\",\"repository\":{\"html_url\":\"" + REPO + "\"},\"pull_request\":{"
+                + "\"html_url\":\"" + REPO + "/pull/7\",\"number\":7,\"state\":\"closed\",\"merged\":false,\"title\":\"이름만 바꿈\","
+                + "\"head\":{\"ref\":\"feature/no-key\"}}}";
+        github(path, secret, "pull_request", "d-pr-4", noKey).andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("PR — 새 연결 0 (제목·브랜치에 이슈 키 없음)"));
+        assertThat(jdbc.queryForList("select distinct state from issue_web_link where url = ?", String.class, REPO + "/pull/7"))
+                .containsExactly("CLOSED");
         mvc.perform(get("/api/alm/issues/{id}/development", plat2).with(asUser(ADMIN, "Alice")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.pullRequests[0].url").value(REPO + "/pull/7"))

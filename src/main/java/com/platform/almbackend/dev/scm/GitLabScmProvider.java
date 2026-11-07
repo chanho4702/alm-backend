@@ -61,24 +61,31 @@ public class GitLabScmProvider implements ScmProvider {
     }
 
     @Override
-    public PullBatch pulls(Target target, Instant since, String etag) {
+    public PullBatch pulls(Target target, Instant since, Instant skipNewerThan, String etag) {
         String base = projectApi(target) + "/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=50&updated_after="
                 + ScmEndpoints.encode(since.toString());
         List<PullItem> out = new ArrayList<>();
         Instant max = null;
+        Instant oldest = null;
         String firstEtag = null;
         String nextPage = "1";
         int page = 0;
-        while (nextPage != null && page < settings.maxPages() && out.size() < settings.maxPullRequests()) {
+        boolean truncated = false;
+        while (nextPage != null && page < settings.maxPages() && !truncated) {
             ScmHttp.Response r = target.call().get(URI.create(base + "&page=" + nextPage), page == 0 ? etag : null);
             if (page == 0) {
-                if (r.notModified()) return new PullBatch(List.of(), etag, true, null);
+                if (r.notModified()) return new PullBatch(List.of(), etag, true, null, false, null);
                 firstEtag = r.etag();
             }
             for (JsonNode mr : array(r)) {
-                if (out.size() >= settings.maxPullRequests()) break;
                 Instant updated = instant(mr.path("updated_at").asText(null));
+                if (updated != null && skipNewerThan != null && updated.isAfter(skipNewerThan)) continue; // 창 이어 읽기
+                if (out.size() >= settings.maxPullRequests()) {
+                    truncated = true;
+                    break;
+                }
                 if (updated != null && (max == null || updated.isAfter(max))) max = updated;
+                if (updated != null) oldest = updated;
                 long iid = mr.path("iid").asLong();
                 out.add(new PullItem(mr.path("web_url").asText(null), String.valueOf(iid), "!" + iid + " " + mr.path("title").asText(""),
                         mr.path("source_branch").asText(null), WebhookPayloads.gitLabState(mr.path("state").asText(null)), updated,
@@ -87,7 +94,8 @@ public class GitLabScmProvider implements ScmProvider {
             nextPage = next(r);
             page++;
         }
-        return new PullBatch(out, firstEtag, false, max);
+        if (!truncated && nextPage != null) truncated = true; // 쪽 상한
+        return new PullBatch(out, firstEtag, false, max, truncated, oldest);
     }
 
     @Override

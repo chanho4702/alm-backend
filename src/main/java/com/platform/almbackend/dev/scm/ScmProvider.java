@@ -22,14 +22,21 @@ public interface ScmProvider {
     /** PR/MR 한 건 — state는 OPEN·MERGED·CLOSED */
     record PullItem(String url, String number, String title, String sourceBranch, String state, Instant updatedAt, String apiRef) {}
 
-    record PullBatch(List<PullItem> pulls, String etag, boolean notModified, Instant maxUpdatedAt) {}
+    /**
+     * @param truncated     상한(max-pull-requests·쪽)에 걸려 since까지 다 읽지 못했다 — 러너가 창을 이어 읽는다(커서·ETag를 움직이지 않는다)
+     * @param oldestUpdatedAt 이번에 처리한 것 중 가장 오래된 updated_at(다음 실행은 이보다 새 것을 건너뛴다)
+     */
+    record PullBatch(List<PullItem> pulls, String etag, boolean notModified, Instant maxUpdatedAt, boolean truncated,
+                     Instant oldestUpdatedAt) {}
 
     Map<String, String> authHeaders(String token);
 
     CommitBatch commits(Target target, String branch, Instant since, String etag);
 
-    /** since 이후 갱신된 PR/MR — 최신 갱신 순 */
-    PullBatch pulls(Target target, Instant since, String etag);
+    /**
+     * since 이후 갱신된 PR/MR — 최신 갱신 순. {@code skipNewerThan}이 있으면(창 이어 읽기) 그보다 새 항목은 이미 처리했으니 건너뛴다.
+     */
+    PullBatch pulls(Target target, Instant since, Instant skipNewerThan, String etag);
 
     /** 열린 PR/MR의 커밋(호스팅 상한까지) */
     List<CommitInput> pullCommits(Target target, PullItem pull);

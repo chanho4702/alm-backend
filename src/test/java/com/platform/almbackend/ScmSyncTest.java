@@ -325,6 +325,77 @@ class ScmSyncTest {
         mvc.perform(delete("/api/alm/projects/{p}/settings/scm-sync/{s}", plat, id).with(asUser(ADMIN, "Alice"))).andExpect(status().isNoContent());
     }
 
+    // ── Codex 지적 회귀 ──
+
+    @Test
+    void PR이_상한을_넘으면_창을_다_읽을_때까지_커서와_ETag를_움직이지_않는다() throws Exception {
+        Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        StringBuilder pulls = new StringBuilder("[");
+        for (int i = 0; i < 35; i++) { // 최신 갱신 순 35건 — 상한 30
+            if (i > 0) pulls.append(',');
+            pulls.append(ghPull(100 + i, "PR " + i, "plat-2-pr" + i, "open", null, base.minusSeconds(i * 60L).toString()));
+        }
+        pulls.append(']');
+        routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", s -> Reply.json(pulls.toString(), "ETag", "\"pp\""));
+        for (int i = 0; i < 35; i++) routes.put("/api/v3/repos/acme/app/pulls/" + (100 + i) + "/commits", s -> Reply.json("[]"));
+        long id = register(repo, "GITHUB", null);
+
+        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.containsString("이어서 읽는 중")));
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class)).isNull();
+        assertThat(jdbc.queryForObject("select pulls_etag from repository_scm_sync", String.class)).isNull();
+        assertThat(jdbc.queryForObject("select pulls_window_until from repository_scm_sync", Timestamp.class).toInstant())
+                .isEqualTo(base.minusSeconds(29 * 60L));
+        // 다음 실행은 주기가 아니라 곧바로(이어 읽기)
+        assertThat(jdbc.queryForObject("select next_run_at from repository_scm_sync", Timestamp.class).toInstant())
+                .isBefore(Instant.now().plusSeconds(2 * 60));
+
+        seen.clear();
+        run(id).andExpect(status().isOk());
+        assertThat(seen.stream().filter(s -> s.path().endsWith("/pulls")).findFirst().orElseThrow().headers().get("if-none-match")).isNull();
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(35);
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(base);
+        assertThat(jdbc.queryForObject("select pulls_window_until from repository_scm_sync", Timestamp.class)).isNull();
+        // 창을 마친 실행의 첫 쪽 ETag는 저장하지 않는다(창보다 새 항목을 건너뛴 응답이라)
+        assertThat(jdbc.queryForObject("select pulls_etag from repository_scm_sync", String.class)).isNull();
+    }
+
+    @Test
+    void 실행_중_임대를_잃으면_결과를_버리고_남의_임대를_덮지_않는다() throws Exception {
+        routes.put("/api/v3/repos/acme/app/commits", s -> {
+            // 커밋을 읽는 사이 다른 인스턴스가 만료된 임대를 가져갔다
+            jdbc.update("update repository_scm_sync set lease_owner = 'other:1', lease_until = ?", Timestamp.from(Instant.now().plusSeconds(600)));
+            return Reply.json("[" + ghCommit('f', "feat: PLAT-1", Instant.now().toString()) + "]");
+        });
+        routes.put("/api/v3/repos/acme/app/pulls", s -> Reply.json("[]"));
+        long id = register(repo, "GITHUB", null);
+
+        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastOutcome").doesNotExist());
+        assertThat(jdbc.queryForObject("select lease_owner from repository_scm_sync", String.class)).isEqualTo("other:1");
+        assertThat(jdbc.queryForObject("select commits_cursor from repository_scm_sync", Timestamp.class)).isNull();
+        assertThat(jdbc.queryForObject("select count(*) from dev_commit", Long.class)).isZero(); // 임대를 잃은 뒤에는 수집도 하지 않는다
+    }
+
+    @Test
+    void 수정은_PATCH_의미_API_주소와_꺼짐을_보내지_않으면_그대로() throws Exception {
+        String custom = "http://127.0.0.1:" + port + "/ghe/api/v3";
+        long id = register(repo, "GITHUB", custom);
+        mvc.perform(put("/api/alm/projects/{id}/settings/scm-sync", plat).with(asUser(ADMIN, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"repositoryUrl\":\"" + repo + "\",\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.apiBaseUrl").value(custom))
+                .andExpect(jsonPath("$.enabled").value(false));
+        // 토큰만 바꿔도 API 주소·꺼짐이 유지된다
+        mvc.perform(put("/api/alm/projects/{id}/settings/scm-sync", plat).with(asUser(ADMIN, "Alice"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"repositoryUrl\":\"" + repo + "\",\"token\":\"ghp_new\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.apiBaseUrl").value(custom))
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.provider").value("GITHUB"));
+    }
+
     // ── 도우미 ──
 
     private long register(String url, String provider, String apiBase) throws Exception {

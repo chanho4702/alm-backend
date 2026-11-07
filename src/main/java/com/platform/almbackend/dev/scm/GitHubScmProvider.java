@@ -68,17 +68,19 @@ public class GitHubScmProvider implements ScmProvider {
     }
 
     @Override
-    public PullBatch pulls(Target target, Instant since, String etag) {
+    public PullBatch pulls(Target target, Instant since, Instant skipNewerThan, String etag) {
         URI next = URI.create(repoApi(target) + "/pulls?state=all&sort=updated&direction=desc&per_page=50");
         List<PullItem> out = new ArrayList<>();
         Instant max = null;
+        Instant oldest = null;
         String firstEtag = null;
         int page = 0;
         boolean done = false;
+        boolean truncated = false;
         while (next != null && page < settings.maxPages() && !done) {
             ScmHttp.Response r = target.call().get(next, page == 0 ? etag : null);
             if (page == 0) {
-                if (r.notModified()) return new PullBatch(List.of(), etag, true, null);
+                if (r.notModified()) return new PullBatch(List.of(), etag, true, null, false, null);
                 firstEtag = r.etag();
             }
             for (JsonNode pr : array(r)) {
@@ -87,11 +89,14 @@ public class GitHubScmProvider implements ScmProvider {
                     done = true; // 갱신 시각 내림차순 — 커서보다 오래된 것부터는 볼 필요 없다
                     break;
                 }
-                if (max == null || updated.isAfter(max)) max = updated;
+                if (skipNewerThan != null && updated.isAfter(skipNewerThan)) continue; // 창 이어 읽기 — 이미 처리했다
                 if (out.size() >= settings.maxPullRequests()) {
                     done = true;
+                    truncated = true; // 남은 것은 다음 실행이 이어 읽는다
                     break;
                 }
+                if (max == null || updated.isAfter(max)) max = updated;
+                oldest = updated;
                 boolean merged = !pr.path("merged_at").isNull() && !pr.path("merged_at").isMissingNode();
                 out.add(new PullItem(pr.path("html_url").asText(null), String.valueOf(pr.path("number").asLong()),
                         "#" + pr.path("number").asLong() + " " + pr.path("title").asText(""),
@@ -102,7 +107,8 @@ public class GitHubScmProvider implements ScmProvider {
             next = done ? null : nextLink(r);
             page++;
         }
-        return new PullBatch(out, firstEtag, false, max);
+        if (next != null) truncated = true; // 쪽 상한
+        return new PullBatch(out, firstEtag, false, max, truncated, oldest);
     }
 
     @Override

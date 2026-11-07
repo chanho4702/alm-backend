@@ -62,14 +62,24 @@ public class ScmSyncService {
                 .map(CodeRepository::getUrl).anyMatch(url::equals);
         if (!registered) throw new IllegalArgumentException("먼저 저장소를 프로젝트에 등록하세요: " + url);
 
-        String provider = request.provider() == null || request.provider().isBlank()
-                ? ScmEndpoints.guessProvider(url) : request.provider().trim().toUpperCase(Locale.ROOT);
+        // PATCH 의미 — 이미 있는 행이면 보내지 않은 필드(provider·apiBaseUrl·enabled·token)는 그대로 둔다(Codex P2:
+        // 토글·토큰 교체가 GHES·사내 GitLab의 API 주소를 기본값으로 덮어쓰거나 꺼 둔 폴링을 다시 켜지 않게)
+        RepositoryScmSync sync = syncs.findByProjectIdAndRepositoryUrl(projectId, url).orElse(null);
+        boolean providerGiven = request.provider() != null && !request.provider().isBlank();
+        String provider = providerGiven ? request.provider().trim().toUpperCase(Locale.ROOT)
+                : sync != null ? sync.getProvider() : ScmEndpoints.guessProvider(url);
         if (provider == null) throw new IllegalArgumentException("이 저장소의 제공자(GITHUB·GITLAB)를 고르세요");
         if (!provider.equals(RepositoryWebhook.GITHUB) && !provider.equals(RepositoryWebhook.GITLAB)) {
             throw new IllegalArgumentException("제공자는 GITHUB 또는 GITLAB이어야 합니다");
         }
-        String apiBase = request.apiBaseUrl() == null || request.apiBaseUrl().isBlank()
-                ? ScmEndpoints.defaultApiBase(provider, url) : ScmEndpoints.validateApiBase(request.apiBaseUrl(), url);
+        String apiBase;
+        if (request.apiBaseUrl() != null && !request.apiBaseUrl().isBlank()) {
+            apiBase = ScmEndpoints.validateApiBase(request.apiBaseUrl(), url);
+        } else if (sync != null && sync.getProvider().equals(provider)) {
+            apiBase = sync.getApiBaseUrl(); // 같은 제공자면 저장된 주소 유지
+        } else {
+            apiBase = ScmEndpoints.defaultApiBase(provider, url);
+        }
         String token = request.token() == null ? null : request.token().trim();
         if (token != null && token.isEmpty()) token = null;
         if (token != null && (token.length() > MAX_TOKEN || token.chars().anyMatch(ch -> ch <= ' ' || ch == 0x7f))) {
@@ -78,16 +88,15 @@ public class ScmSyncService {
         if (token != null && !cipher.isConfigured()) {
             throw new IllegalArgumentException("토큰을 저장하려면 서버에 ALM_SETTINGS_ENC_KEY(32바이트 hex)가 필요합니다");
         }
-        boolean enabled = request.enabled() == null || request.enabled();
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        RepositoryScmSync sync = syncs.findByProjectIdAndRepositoryUrl(projectId, url).orElse(null);
         if (sync == null) {
             if (token == null) throw new IllegalArgumentException("읽기 토큰을 입력하세요");
+            boolean enabled = request.enabled() == null || request.enabled();
             sync = syncs.save(RepositoryScmSync.create(projectId, url, provider, apiBase, cipher.encrypt(token), userId, enabled, now));
         } else {
             sync.retarget(provider, apiBase, now);
             if (token != null) sync.replaceToken(cipher.encrypt(token), userId, now);
-            sync.setEnabled(enabled, now);
+            if (request.enabled() != null) sync.setEnabled(request.enabled(), now);
         }
         return view(sync, now);
     }

@@ -9,7 +9,7 @@ import java.util.List;
 public final class ScmSyncDtos {
     private ScmSyncDtos() {}
 
-    @Schema(description = "폴링 동기화 등록·수정 — 같은 저장소면 고친다. token은 처음엔 필수, 이후엔 바꿀 때만")
+    @Schema(description = "폴링 동기화 등록·수정 — 같은 저장소면 고친다(PATCH 의미: 보내지 않은 provider·apiBaseUrl·enabled·token은 그대로). token은 처음엔 필수")
     public record ScmSyncRequest(
             @Schema(description = "프로젝트에 등록된 저장소 URL", example = "https://github.com/chanho4702/alm-backend") String repositoryUrl,
             @Schema(description = "GITHUB · GITLAB — 비우면 github.com·gitlab.com만 짐작한다", example = "GITHUB") String provider,

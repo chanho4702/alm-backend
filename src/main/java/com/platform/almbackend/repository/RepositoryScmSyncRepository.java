@@ -46,6 +46,16 @@ public interface RepositoryScmSyncRepository extends JpaRepository<RepositoryScm
             """)
     int claimNow(long id, String owner, Instant now, Instant until);
 
+    /** 실행 중 임대 갱신 — 토큰이 아직 내 것일 때만(1). 0이면 임대를 잃었다 */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update RepositoryScmSync s set s.leaseUntil = :until where s.id = :id and s.leaseOwner = :owner")
+    int renewLease(long id, String owner, Instant until);
+
+    /** 완료 기록용 — 행을 잠그고 읽어 임대 토큰을 확인한 뒤 바꾼다(그사이 다른 인스턴스가 임대를 가져가지 못한다) */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from RepositoryScmSync s where s.id = :id")
+    Optional<RepositoryScmSync> findForUpdate(long id);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("delete from RepositoryScmSync s where s.projectId = :projectId and s.repositoryUrl not in :keep")
     int deleteByProjectIdAndRepositoryUrlNotIn(long projectId, Collection<String> keep);

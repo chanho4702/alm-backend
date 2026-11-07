@@ -1036,11 +1036,11 @@ GitLab: Settings › Webhooks — URL, Secret token, "Push events"·"Merge reque
 
 한 번의 실행: 기본 브랜치 커밋(`since` = 커밋 시각 커서 − 1시간 겹침, 첫 실행은 14일) → 갱신된 PR/MR(`updated_at` 커서) — 제목·원본 브랜치의 키로
 PR 링크 + **상태 OPEN·MERGED·CLOSED**(`PullRequestView.state`, 웹훅도 채운다) → 열린 PR/MR의 커밋(브랜치 = 원본 브랜치). 첫 쪽은 ETag로
-`If-None-Match`(바뀐 게 없으면 304 — "변경 없음"). 쪽 상한(기본 5쪽)을 넘는 오래된 커밋은 `sync-commits.ps1`로 메운다.
+`If-None-Match`(바뀐 게 없으면 304 — "변경 없음"). 쪽 상한(기본 5쪽)을 넘는 오래된 커밋은 `sync-commits.ps1`로 메운다. PR/MR이 상한(`max-pull-requests` 30)을 넘으면 **창을 끝까지 처리할 때까지 커서·ETag를 움직이지 않고**(V46 `pulls_window_*`) 1분 뒤 처리한 것보다 오래된 쪽을 이어 읽는다. 응답 본문까지 포함한 데드라인(요청 20초)이 있어 본문을 멈춘 서버가 폴링 스레드를 붙잡지 못한다.
 
 - **주기·백오프** — `ALM_SCM_POLL_INTERVAL`(기본 5m, 1분 이상). 실패하면 주기 × 2^실패 횟수(`ALM_SCM_MAX_BACKOFF` 6h까지), 실패한 실행은 커서를 움직이지 않는다.
 - **레이트 리밋** — 429·`Retry-After`·`x-ratelimit-remaining`/`ratelimit-remaining` 0이면 reset 시각까지 미룬다(`RATE_LIMITED`).
-- **중복 실행 방지** — 행 임대(`lease_owner`·`lease_until`, 15분). 조건부 UPDATE로 잡은 인스턴스만 돈다. 주기 실행은 자기 스레드 하나(`ALM_SCM_SCHEDULER_ENABLED`, 기본 켬).
+- **중복 실행 방지** — 행 임대(`lease_owner`·`lease_until`, 15분). 조건부 UPDATE로 잡은 인스턴스만 돈다. 만료는 저장소마다 잡는 순간부터, 실행 중 단계마다 갱신하고, 완료 기록은 행 잠금 + 임대 토큰이 아직 내 것일 때만(잃었으면 결과를 버린다). 주기 실행은 자기 스레드 하나(`ALM_SCM_SCHEDULER_ENABLED`, 기본 켬).
 - **SSRF 가드** — API 주소의 호스트는 저장소 URL 호스트 또는 `api.<호스트>`만(사내 Git의 사설 IP는 본래 대상이라 막지 않는다). 요청은 그 오리진으로만,
   리다이렉트는 따라가지 않고(3xx는 실패), 다음 쪽 링크도 같은 검사, 연결 5초·요청 20초, 응답 5 MiB 상한.
 - **토큰** — 웹훅 시크릿과 같은 `ALM_SETTINGS_ENC_KEY` AES-256-GCM 암호문만 저장, 어떤 응답에도 싣지 않는다. 수집 주체 = 토큰을 마지막으로 넣은 관리자(키별 EDIT).
@@ -1048,7 +1048,7 @@ PR 링크 + **상태 OPEN·MERGED·CLOSED**(`PullRequestView.state`, 웹훅도 �
 **관리**(프로젝트 ADMIN)
 
 - `GET /api/alm/projects/{projectId}/settings/scm-sync` → `{ syncMode, webhooksEnabled, pollingEnabled, schedulerActive, encryptionConfigured, pollIntervalSeconds, repositories: [{ id, repositoryUrl, provider, apiBaseUrl, enabled, actorId, createdAt, tokenUpdatedAt, lastRunAt, lastSuccessAt, lastOutcome(OK·RATE_LIMITED·FAILED), lastMessage, nextRunAt, rateLimitedUntil, failureCount, running }] }`
-- `PUT …/settings/scm-sync` `{ repositoryUrl, provider?, apiBaseUrl?, token?, enabled? }` — 등록된 저장소만, 처음엔 `token` 필수(이후엔 바꿀 때만). 제공자를 비우면 github.com·gitlab.com만 짐작한다. 제공자·API 주소가 바뀌면 커서를 버린다.
+- `PUT …/settings/scm-sync` `{ repositoryUrl, provider?, apiBaseUrl?, token?, enabled? }` — 등록된 저장소만, 처음엔 `token` 필수. 이미 있으면 **PATCH 의미**(보내지 않은 필드는 그대로 — 같은 제공자면 저장된 API 주소 유지). 새로 만들 때 제공자를 비우면 github.com·gitlab.com만 짐작한다. 제공자·API 주소가 바뀌면 커서를 버린다.
 - `DELETE …/settings/scm-sync/{syncId}` → 204(수집한 커밋·연결은 남는다). 저장소 등록에서 빠지면 함께 지워진다.
 - `POST …/settings/scm-sync/{syncId}/run` — 요청 안에서 한 번 돌리고 상태를 돌려준다. 실행 중·레이트 리밋 대기면 409.
 

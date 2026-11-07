@@ -5,12 +5,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -72,48 +79,54 @@ public class ScmHttp {
                     .header("User-Agent", "platform-alm-scm-sync");
             authHeaders.forEach(builder::header);
             if (etag != null && !etag.isBlank()) builder.header("If-None-Match", etag);
-            HttpResponse<InputStream> response;
+            // 본문까지 포함한 데드라인 — 헤더만 보내고 본문을 멈추는 서버가 폴링 스레드를 무한히 붙잡지 않게(Codex P1).
+            // request.timeout은 헤더까지만 센다. 만료되면 교환을 취소한다(cancel → 연결을 닫는다).
+            CompletableFuture<HttpResponse<byte[]>> pending = client.sendAsync(builder.build(), info ->
+                    info.statusCode() >= 200 && info.statusCode() < 300
+                            ? new LimitedBody(settings.maxResponseBytes())
+                            : HttpResponse.BodySubscribers.replacing(new byte[0]));
+            HttpResponse<byte[]> response;
             try {
-                response = client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
-            } catch (HttpTimeoutException e) {
+                response = pending.get(settings.requestTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                pending.cancel(true);
                 throw new ScmException("Git 서버 응답 시간 초과(" + uri.getHost() + ")");
-            } catch (IOException e) {
-                throw new ScmException("Git 서버에 연결할 수 없습니다(" + uri.getHost() + ") — " + e.getClass().getSimpleName());
             } catch (InterruptedException e) {
+                pending.cancel(true);
                 Thread.currentThread().interrupt();
                 throw new ScmException("동기화가 중단되었습니다");
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof TooLargeException) throw new ScmException("Git 서버 응답이 너무 큽니다");
+                if (cause instanceof HttpTimeoutException) throw new ScmException("Git 서버 응답 시간 초과(" + uri.getHost() + ")");
+                throw new ScmException("Git 서버에 연결할 수 없습니다(" + uri.getHost() + ") — "
+                        + (cause == null ? "알 수 없음" : cause.getClass().getSimpleName()));
             }
             int status = response.statusCode();
             Optional<Long> remaining = longHeader(response, "x-ratelimit-remaining").or(() -> longHeader(response, "ratelimit-remaining"));
             Optional<Long> reset = longHeader(response, "x-ratelimit-reset").or(() -> longHeader(response, "ratelimit-reset"));
             Optional<Long> retryAfter = longHeader(response, "retry-after");
-            try (InputStream in = response.body()) {
-                if (status == 429 || (status == 403 && (retryAfter.isPresent() || remaining.orElse(1L) == 0L))) {
-                    throw new RateLimitedException(retryAfter.map(s -> Instant.now().plusSeconds(Math.max(1, s)))
-                            .or(() -> reset.map(Instant::ofEpochSecond))
-                            .orElse(Instant.now().plusSeconds(60)));
-                }
-                if (remaining.orElse(1L) == 0L) {
-                    exhaustedUntil = reset.map(Instant::ofEpochSecond).orElse(Instant.now().plusSeconds(60));
-                }
-                if (status == 304) return new Response(304, null, etagOf(response), response.headers().map());
-                if (status >= 300 && status < 400) throw new ScmException("Git 서버가 다른 주소로 보냈습니다(" + status + ") — 리다이렉트는 따라가지 않습니다. API 주소를 확인하세요");
-                if (status == 401) throw new ScmException("토큰이 거부되었습니다(401) — 토큰을 확인하거나 다시 넣으세요");
-                if (status == 403) throw new ScmException("권한이 없습니다(403) — 토큰에 저장소 읽기 권한이 있는지 확인하세요");
-                if (status == 404) throw new ScmException("저장소를 찾을 수 없습니다(404) — 저장소 URL·API 주소·토큰 권한을 확인하세요");
-                if (status >= 400) throw new ScmException("Git 서버 오류(" + status + ")");
-                byte[] bytes = in.readNBytes(settings.maxResponseBytes() + 1);
-                if (bytes.length > settings.maxResponseBytes()) throw new ScmException("Git 서버 응답이 너무 큽니다");
-                JsonNode body;
-                try {
-                    body = json.readTree(bytes);
-                } catch (IOException e) {
-                    throw new ScmException("Git 서버 응답이 JSON이 아닙니다 — API 주소를 확인하세요");
-                }
-                return new Response(status, body, etagOf(response), response.headers().map());
-            } catch (IOException e) {
-                throw new ScmException("Git 서버 응답을 읽지 못했습니다");
+            if (status == 429 || (status == 403 && (retryAfter.isPresent() || remaining.orElse(1L) == 0L))) {
+                throw new RateLimitedException(retryAfter.map(s -> Instant.now().plusSeconds(Math.max(1, s)))
+                        .or(() -> reset.map(Instant::ofEpochSecond))
+                        .orElse(Instant.now().plusSeconds(60)));
             }
+            if (remaining.orElse(1L) == 0L) {
+                exhaustedUntil = reset.map(Instant::ofEpochSecond).orElse(Instant.now().plusSeconds(60));
+            }
+            if (status == 304) return new Response(304, null, etagOf(response), response.headers().map());
+            if (status >= 300 && status < 400) throw new ScmException("Git 서버가 다른 주소로 보냈습니다(" + status + ") — 리다이렉트는 따라가지 않습니다. API 주소를 확인하세요");
+            if (status == 401) throw new ScmException("토큰이 거부되었습니다(401) — 토큰을 확인하거나 다시 넣으세요");
+            if (status == 403) throw new ScmException("권한이 없습니다(403) — 토큰에 저장소 읽기 권한이 있는지 확인하세요");
+            if (status == 404) throw new ScmException("저장소를 찾을 수 없습니다(404) — 저장소 URL·API 주소·토큰 권한을 확인하세요");
+            if (status >= 400) throw new ScmException("Git 서버 오류(" + status + ")");
+            JsonNode body;
+            try {
+                body = json.readTree(response.body());
+            } catch (IOException e) {
+                throw new ScmException("Git 서버 응답이 JSON이 아닙니다 — API 주소를 확인하세요");
+            }
+            return new Response(status, body, etagOf(response), response.headers().map());
         }
 
         private void guard(URI uri) {
@@ -126,6 +139,56 @@ public class ScmHttp {
             if (uri.getRawUserInfo() != null || !origin.equals(allowedOrigin)) {
                 throw new ScmException("허용되지 않은 호스트로 요청하지 않습니다(" + uri.getHost() + ")");
             }
+        }
+    }
+
+    /** 본문 상한 초과 */
+    static final class TooLargeException extends IOException {
+        TooLargeException() {
+            super("response too large");
+        }
+    }
+
+    /** 상한까지만 모으고 넘으면 구독을 끊는 본문 수신기 — 끝없이 쏟아내는 서버에 메모리를 내주지 않는다 */
+    static final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
+        private final int max;
+        private final java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        private final CompletableFuture<byte[]> result = new CompletableFuture<>();
+        private Flow.Subscription subscription;
+
+        LimitedBody(int max) {
+            this.max = max;
+        }
+
+        @Override public CompletionStage<byte[]> getBody() {
+            return result;
+        }
+
+        @Override public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override public void onNext(List<ByteBuffer> items) {
+            if (result.isDone()) return;
+            for (ByteBuffer item : items) {
+                if (buffer.size() + item.remaining() > max) {
+                    subscription.cancel();
+                    result.completeExceptionally(new TooLargeException());
+                    return;
+                }
+                byte[] chunk = new byte[item.remaining()];
+                item.get(chunk);
+                buffer.writeBytes(chunk);
+            }
+        }
+
+        @Override public void onError(Throwable throwable) {
+            result.completeExceptionally(throwable);
+        }
+
+        @Override public void onComplete() {
+            result.complete(buffer.toByteArray());
         }
     }
 

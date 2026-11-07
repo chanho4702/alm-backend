@@ -247,11 +247,18 @@ public class DevCommitService {
                 already.add(ref);
             }
         }
-        if (state != null && (!linked.isEmpty() || !already.isEmpty())) {
-            List<Long> ids = new ArrayList<>();
+        if (state != null) {
+            // 상태는 이번 키와 무관하게 이 URL로 이미 이어진 PR 링크 전부에 — 제목·브랜치에서 키를 지운 뒤 병합·닫혀도 OPEN에 고착되지 않게.
+            // 권한은 그대로: 처리 주체가 그 이슈 프로젝트에 EDIT가 있는 링크만 고친다
+            Set<Long> ids = new java.util.LinkedHashSet<>();
             linked.forEach(r -> ids.add(r.issueId()));
             already.forEach(r -> ids.add(r.issueId()));
-            webLinks.updatePullRequestState(prUrl, ids, state);
+            for (IssueWebLink existing : webLinks.findByUrlAndKind(prUrl, "PR")) {
+                if (ids.contains(existing.getIssueId())) continue;
+                Optional<Issue> owner = issues.findById(existing.getIssueId());
+                if (owner.isPresent() && denial(userId, owner.get().getProjectId(), denial) == null) ids.add(existing.getIssueId());
+            }
+            if (!ids.isEmpty()) webLinks.updatePullRequestState(prUrl, ids, state);
         }
         return new PullRequestLinkResult(prUrl, linked, already, skipped);
     }
