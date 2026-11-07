@@ -346,7 +346,9 @@ class ScmSyncTest {
         } while (message.contains("이어서 읽는 중"));
         assertThat(runs).isEqualTo(9); // 30건씩
         assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(260);
-        assertThat(jdbc.queryForObject("select pulls_cursor_number from repository_scm_sync", Long.class)).isEqualTo(1259L);
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant())
+                .isEqualTo(base.plusSeconds(259 * 60L));
+        assertThat(jdbc.queryForObject("select pulls_cursor_number from repository_scm_sync", Long.class)).isNull();
         assertThat(jdbc.queryForObject("select pulls_page from repository_scm_sync", Integer.class)).isEqualTo(6);
         assertThat(jdbc.queryForObject("select pulls_etag from repository_scm_sync", String.class)).isEqualTo("\"probe-260\"");
 
@@ -361,24 +363,59 @@ class ScmSyncTest {
                 .replace("\"closed\"", "\"open\"").replace("\"merged_at\":null", "\"merged_at\":null"));
         routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-261\""));
         routes.put("/api/v3/repos/acme/app/pulls/1003/commits", s -> Reply.json("[]"));
-        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value("커밋 0건(새로 저장 0 · 새 연결 0) · PR 1건(새 연결 0)"));
+        // 경계(커서와 같은 시각 — 마지막 PR)는 다시 처리한다(멱등). 새로 갱신된 것 1건 + 경계 1건
+        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value("커밋 0건(새로 저장 0 · 새 연결 0) · PR 2건(새 연결 0)"));
         assertThat(jdbc.queryForObject("select state from issue_web_link where url like '%/pull/1003'", String.class)).isEqualTo("OPEN");
     }
 
     @Test
-    void 같은_updated_at이_상한보다_많아도_번호로_이어_읽어_하나도_빠뜨리지_않는다() throws Exception {
+    void 같은_시각_40건을_번호_내림차순으로_받아도_묶음을_끝까지_처리한다() throws Exception {
         String same = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(1, ChronoUnit.DAYS).toString();
         List<String> prs = new java.util.ArrayList<>();
-        for (int i = 0; i < 40; i++) prs.add(ghPull(500 + i, "같은 시각 " + i, "plat-2-same" + i, "closed", null, same));
+        for (int i = 39; i >= 0; i--) prs.add(ghPull(500 + i, "같은 시각 " + i, "plat-2-same" + i, "closed", null, same)); // 번호 내림차순
         routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
         routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-same\""));
         long id = register(repo, "GITHUB", null);
 
-        run(id).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.containsString("이어서 읽는 중")));
-        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(30);
-        assertThat(jdbc.queryForObject("select pulls_cursor_number from repository_scm_sync", Long.class)).isEqualTo(529L);
-        run(id).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("이어서 읽는 중"))));
+        run(id).andExpect(jsonPath("$.lastMessage").value("커밋 0건(새로 저장 0 · 새 연결 0) · PR 40건(새 연결 40)"));
         assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR'", Long.class)).isEqualTo(40);
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(Instant.parse(same));
+    }
+
+    @Test
+    void 같은_시각이_한_실행_예산보다_많으면_경고와_함께_그_시각을_지나_전진하고_다음_PR은_정상_처리한다() throws Exception {
+        Instant same = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(2, ChronoUnit.DAYS);
+        List<String> prs = new java.util.ArrayList<>();
+        for (int i = 0; i < 520; i++) prs.add(ghPull(2000 + i, "대량 " + i, "bulk-" + i, "closed", null, same.toString())); // 키 없음
+        prs.add(ghPull(9000, "뒤의 PR", "plat-2-after", "closed", null, same.plusSeconds(60).toString()));
+        routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-bulk\""));
+        long id = register(repo, "GITHUB", null);
+
+        run(id).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.containsString("동일 시각 PR이 너무 많아 일부를 건너뛰었을 수 있음")));
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isAfter(same);
+        run(id).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("동일 시각"))));
+        assertThat(jdbc.queryForObject("select count(*) from issue_web_link where url like '%/pull/9000'", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    void 물러서기_예산을_다_써도_줄인_쪽_힌트를_남겨_다음_실행이_이어서_물러선다() throws Exception {
+        Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(3, ChronoUnit.DAYS);
+        List<String> prs = new java.util.ArrayList<>(); // 6쪽(300건) — 전부 커서 뒤
+        for (int i = 0; i < 300; i++) prs.add(ghPull(3000 + i, "PR " + i, "nokey-" + i, "closed", null, base.plusSeconds(i * 60L).toString()));
+        routes.put("/api/v3/repos/acme/app/commits", s -> Reply.json("[]"));
+        routes.put("/api/v3/repos/acme/app/pulls", ghPullsRoute(prs, "\"probe-back\""));
+        long id = register(repo, "GITHUB", null);
+        // 힌트가 목록 끝을 한참 넘었다(PR이 지워졌거나 당겨졌다)
+        jdbc.update("update repository_scm_sync set pulls_cursor = ?, pulls_page = 60 where id = ?", Timestamp.from(base.minusSeconds(60)), id);
+
+        run(id).andExpect(status().isOk());
+        Integer hint = jdbc.queryForObject("select pulls_page from repository_scm_sync", Integer.class);
+        assertThat(hint).isLessThan(60).isGreaterThan(1); // 예산 안에서 59 → 54 → … 로 물러섰고 그 자리를 남겼다
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(base.minusSeconds(60));
+
+        run(id).andExpect(status().isOk()).andExpect(jsonPath("$.lastMessage").value(org.hamcrest.Matchers.containsString("PR 30건")));
+        assertThat(jdbc.queryForObject("select pulls_cursor from repository_scm_sync", Timestamp.class).toInstant()).isEqualTo(base.plusSeconds(29 * 60L));
     }
 
     /** 가짜 GitHub PR 목록 — 탐침(desc·per_page=1, If-None-Match 304)과 오름차순 쪽 나누기(Link rel=next) */

@@ -246,10 +246,8 @@ public class ScmSyncRunner {
 
         // 2) PR/MR — updated_at 오름차순 키셋(오래된 것부터 차례로 따라잡는다). 첫 동기화는 initial-lookback 이전을 건너뛴다.
         //    다 따라잡았을 때만 탐침 ETag를 남겨, 다음 실행이 "그 뒤 갱신 없음"(304)이면 목록을 읽지 않는다
-        ScmProvider.PullCursor cursor = sync.getPullsCursor() == null
-                ? new ScmProvider.PullCursor(firstSince, 0, sync.getPullsPage())
-                : new ScmProvider.PullCursor(sync.getPullsCursor(), sync.getPullsCursorNumber() == null ? 0 : sync.getPullsCursorNumber(),
-                        sync.getPullsPage());
+        ScmProvider.PullCursor cursor = new ScmProvider.PullCursor(
+                sync.getPullsCursor() == null ? firstSince : sync.getPullsCursor(), sync.getPullsPage());
         ScmProvider.PullBatch pb = provider.pulls(target, cursor, sync.getPullsEtag());
         for (ScmProvider.PullItem pull : pb.pulls()) {
             lease.renew();
@@ -276,8 +274,12 @@ public class ScmSyncRunner {
             pullsEtag = sync.getPullsEtag();
         } else {
             pullsCursor = pb.next().updatedAt();
-            pullsCursorNumber = pb.next().number();
+            pullsCursorNumber = null; // V47 열 — 동점 깨기는 쓰지 않는다(경계 시각을 다시 처리한다)
             pullsPage = pb.next().page();
+            if (pb.forced()) {
+                log.warn("저장소 동기화: 같은 시각 PR/MR이 한 실행 예산보다 많아 {}를 건너뛰고 전진 — sync={} repo={}",
+                        pullsCursor, sync.getId(), sync.getRepositoryUrl());
+            }
             pullsEtag = pb.caughtUp() ? pb.probeEtag() : null;
             continueSoon = !pb.caughtUp();
         }
@@ -286,6 +288,7 @@ public class ScmSyncRunner {
                 : "커밋 " + stats.commits + "건(새로 저장 " + stats.stored + " · 새 연결 " + stats.links + ") · PR " + stats.pulls
                 + "건(새 연결 " + stats.pullLinks + ")";
         if (!pb.notModified() && !pb.caughtUp()) message += " · PR이 많아 이어서 읽는 중";
+        if (pb.forced()) message += " · 동일 시각 PR이 너무 많아 일부를 건너뛰었을 수 있음";
         if (cb.truncated()) message += " · 한 번에 다 못 읽은 오래된 커밋은 sync-commits 스크립트로 메우세요";
         return new Outcome(commitsCursor, commitsEtag, pullsCursor, pullsCursorNumber, pullsPage, pullsEtag, continueSoon,
                 call.exhaustedUntil(), message);

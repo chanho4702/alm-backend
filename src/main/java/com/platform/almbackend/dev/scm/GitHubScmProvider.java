@@ -23,6 +23,8 @@ import java.util.regex.Pattern;
 @Component
 public class GitHubScmProvider implements ScmProvider {
     static final int PAGE = 50;
+    /** 같은 시각 묶음을 끝까지 처리할 때의 안전 상한(한 실행) */
+    static final int HARD_CAP = 500;
     private static final Pattern NEXT = Pattern.compile("<([^>]+)>\\s*;\\s*rel=\"next\"");
     /** PR 커밋 API 상한(GitHub는 250건까지 준다) */
     private static final int PULL_COMMIT_PAGES = 3;
@@ -72,66 +74,68 @@ public class GitHubScmProvider implements ScmProvider {
     public PullBatch pulls(Target target, PullCursor cursor, String probeEtag) {
         // 1) 변경 탐침 — 가장 최근 갱신 1건. 무엇이든 갱신되면 그 PR이 맨 앞에 와 ETag가 바뀐다
         ScmHttp.Response probe = target.call().get(URI.create(repoApi(target) + "/pulls?state=all&sort=updated&direction=desc&per_page=1"), probeEtag);
-        if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor);
+        if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor, false);
         String newProbeEtag = probe.etag();
 
-        // 2) 오름차순 키셋 — 목록에 시각 필터가 없어 쪽 힌트에서 한 쪽 겹쳐 시작한다. 시작 쪽 첫 항목이 이미 커서 뒤면
-        //    (그사이 앞쪽 PR이 갱신돼 뒤로 빠지며 당겨졌다) 처리하지 않은 것이 더 앞에 있을 수 있으니 물러서서 다시 본다
-        int start = Math.max(1, (cursor.page() == null ? 1 : cursor.page()) - 1);
-        int budget = settings.maxPages() * 2; // 물러서기까지 포함한 이번 실행의 쪽 상한
-        List<PullItem> out = new ArrayList<>();
-        PullCursor at = cursor;
-        int page = start;
-        boolean caughtUp = false;
-        boolean first = true;
+        // 2) 오름차순 — 목록에 시각 필터가 없어 쪽 힌트에서 한 쪽 겹쳐 시작한다. 시작 쪽 첫 항목이 이미 커서 뒤면(그사이 앞쪽 PR이
+        //    갱신돼 뒤로 빠지며 당겨졌다) 처리하지 않은 것이 더 앞에 있을 수 있으니 물러서서 다시 본다. 물러서다 예산을 다 쓰면
+        //    줄인 쪽을 힌트로 남겨 다음 실행이 이어서 물러선다
+        int page = Math.max(1, (cursor.page() == null ? 1 : cursor.page()) - 1);
+        int budget = settings.maxPages() * 2;
+        PullScan scan = new PullScan(cursor.updatedAt(), settings.maxPullRequests(), HARD_CAP);
+        boolean backingOff = page > 1;
+        boolean reachedEnd = false;
         int read = 0;
         while (read < budget) {
             ScmHttp.Response r = target.call().get(URI.create(repoApi(target)
                     + "/pulls?state=all&sort=updated&direction=asc&per_page=" + PAGE + "&page=" + page), null);
             read++;
             JsonNode items = array(r);
-            if (first && page > 1 && items.size() > 0 && firstAfter(items, cursor)) {
+            // 빈 쪽(힌트가 목록 끝을 넘었다 — PR이 지워졌거나 당겨졌다)도 물러선다: 끝으로 읽으면 앞의 처리하지 않은 것을 놓친다
+            if (backingOff && page > 1 && (items.isEmpty() || firstAfter(items, cursor))) {
                 page = Math.max(1, page - settings.maxPages());
-                first = page > 1; // 1쪽까지 물러섰으면 더 볼 것 없다
                 continue;
             }
-            first = false;
-            boolean full = false;
+            backingOff = false;
+            boolean stop = false;
             for (JsonNode pr : items) {
-                Instant updated = instant(pr.path("updated_at").asText(null));
                 long number = pr.path("number").asLong();
-                if (updated == null || !cursor.before(updated, number)) continue; // 이미 처리했다(또는 첫 동기화 범위 밖)
-                if (out.size() >= settings.maxPullRequests()) {
-                    full = true;
+                boolean merged = !pr.path("merged_at").isNull() && !pr.path("merged_at").isMissingNode();
+                PullItem item = new PullItem(pr.path("html_url").asText(null), number, "#" + number + " " + pr.path("title").asText(""),
+                        pr.path("head").path("ref").asText(null), WebhookPayloads.gitHubState(pr.path("state").asText(null), merged),
+                        instant(pr.path("updated_at").asText(null)), String.valueOf(number));
+                if (!scan.offer(item)) {
+                    stop = true;
                     break;
                 }
-                boolean merged = !pr.path("merged_at").isNull() && !pr.path("merged_at").isMissingNode();
-                out.add(new PullItem(pr.path("html_url").asText(null), number, "#" + number + " " + pr.path("title").asText(""),
-                        pr.path("head").path("ref").asText(null), WebhookPayloads.gitHubState(pr.path("state").asText(null), merged),
-                        updated, String.valueOf(number)));
-                at = new PullCursor(updated, number, page);
             }
-            if (full) break;
+            if (stop) break;
             if (nextLink(r) == null) {
-                caughtUp = true;
-                at = new PullCursor(at.updatedAt(), at.number(), page);
-                break;
-            }
-            if (read >= settings.maxPages() && !out.isEmpty()) {
-                at = new PullCursor(at.updatedAt(), at.number(), page + 1);
+                reachedEnd = true;
+                scan.reachedEnd();
                 break;
             }
             page++;
-            at = new PullCursor(at.updatedAt(), at.number(), page);
         }
-        return new PullBatch(out, newProbeEtag, false, caughtUp, at);
+        return finish(scan, cursor, newProbeEtag, reachedEnd, page);
+    }
+
+    /** 읽기 결과 → 배치. 막혔으면 묶음 시각을 지나 강제 전진(ScmSyncRunner가 경고를 남긴다) */
+    static PullBatch finish(PullScan scan, PullCursor cursor, String probeEtag, boolean reachedEnd, Integer page) {
+        Instant next = scan.next();
+        boolean forced = false;
+        if (!reachedEnd && next.equals(cursor.updatedAt()) && scan.inGroup() && !scan.items().isEmpty()) {
+            next = scan.forcedNext();
+            forced = true;
+        }
+        return new PullBatch(scan.items(), probeEtag, false, reachedEnd, new PullCursor(next, page), forced);
     }
 
     /** 이 쪽의 첫 항목이 이미 커서 뒤인가(= 처리하지 않은 것이 더 앞쪽에 있을 수 있다) */
     private static boolean firstAfter(JsonNode items, PullCursor cursor) {
         JsonNode head = items.get(0);
         Instant updated = instant(head.path("updated_at").asText(null));
-        return updated != null && cursor.before(updated, head.path("number").asLong());
+        return updated != null && updated.isAfter(cursor.updatedAt());
     }
 
     @Override

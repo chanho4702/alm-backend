@@ -19,37 +19,107 @@ public interface ScmProvider {
      */
     record CommitBatch(List<CommitInput> commits, String etag, boolean notModified, boolean truncated, Instant maxCommittedAt) {}
 
-    /** PR/MR 한 건 — state는 OPEN·MERGED·CLOSED. number는 GitHub PR 번호·GitLab MR iid(키셋의 동점 깨기) */
+    /** PR/MR 한 건 — state는 OPEN·MERGED·CLOSED. number는 GitHub PR 번호·GitLab MR iid */
     record PullItem(String url, long number, String title, String sourceBranch, String state, Instant updatedAt, String apiRef) {}
 
     /**
-     * PR/MR 키셋 커서 — 마지막으로 처리한 (updated_at, number). 그보다 큰 것만 처리한다(오름차순).
+     * PR/MR 커서 — <b>시각만</b> 둔다. API가 같은 updated_at 안의 순서를 보장하지 않으니 번호로 동점을 깨지 않는다:
+     * 커서와 같은 시각의 항목은 매번 다시 처리한다(수집·PR 링크가 멱등이라 안전).
      *
      * @param page GitHub 이어 읽기 쪽 번호 힌트(null = 1쪽부터). GitLab은 updated_after로 거르니 쓰지 않는다
      */
-    record PullCursor(Instant updatedAt, long number, Integer page) {
-        boolean before(Instant updated, long n) {
-            int c = updated.compareTo(updatedAt);
-            return c > 0 || (c == 0 && n > number);
-        }
-    }
+    record PullCursor(Instant updatedAt, Integer page) {}
 
     /**
-     * @param pulls      처리할 것(커서 뒤, 오름차순, 상한까지)
-     * @param probeEtag  "가장 최근 갱신 1건" 탐침의 ETag — 다 따라잡았을 때 저장해 다음 실행이 304로 건너뛴다
+     * @param pulls       처리할 것(커서 이상, 오름차순)
+     * @param probeEtag   "가장 최근 갱신 1건" 탐침의 ETag — 다 따라잡았을 때 저장해 다음 실행이 304로 건너뛴다
      * @param notModified 탐침이 304 — 그 뒤 갱신된 PR이 없다(pulls는 비고 커서는 그대로)
-     * @param caughtUp   목록 끝까지 읽었다(상한에 걸리지 않았다)
-     * @param next       다음 커서(처리한 마지막 항목, 없으면 받은 커서 그대로)와 쪽 힌트
+     * @param caughtUp    목록 끝까지 읽었다
+     * @param next        다음 커서 — 끝까지 처리한 마지막 시각 묶음의 시각(+ 쪽 힌트)
+     * @param forced      같은 시각 묶음이 한 실행의 예산보다 커서 그 시각을 건너뛰며 강제로 전진했다(일부 누락 가능)
      */
-    record PullBatch(List<PullItem> pulls, String probeEtag, boolean notModified, boolean caughtUp, PullCursor next) {}
+    record PullBatch(List<PullItem> pulls, String probeEtag, boolean notModified, boolean caughtUp, PullCursor next, boolean forced) {}
+
+    /**
+     * 오름차순으로 받은 항목을 시각 묶음 단위로 고른다. 커서보다 오래된 것은 건너뛰고, 커서와 같은 시각(경계)은 다시 처리한다.
+     * 새로 처리한 것(커서 뒤)이 soft 상한에 닿으면 <b>다음 시각 묶음이 시작될 때</b> 멈춘다 — 같은 시각 묶음은 상한을 넘어도
+     * 끝까지 처리한다(hard 상한까지). 다음 커서는 "끝까지 처리한 마지막 묶음"의 시각이다.
+     */
+    final class PullScan {
+        private final Instant cursor;
+        private final int softCap;
+        private final int hardCap;
+        private final List<PullItem> out = new java.util.ArrayList<>();
+        private Instant group;        // 지금 처리 중인 시각 묶음
+        private Instant completed;    // 끝까지 처리한 마지막 묶음(커서보다 뒤)
+        private int fresh;            // 커서 뒤 항목 수(경계 재처리는 세지 않는다)
+        private boolean stopped;
+
+        public PullScan(Instant cursor, int softCap, int hardCap) {
+            this.cursor = cursor;
+            this.softCap = softCap;
+            this.hardCap = hardCap;
+        }
+
+        /** 받으면 true, 여기서 멈추라면 false */
+        public boolean offer(PullItem item) {
+            Instant t = item.updatedAt();
+            if (t == null || t.isBefore(cursor)) return true; // 이미 지나간 것(또는 첫 동기화 범위 밖)
+            if (group != null && t.isAfter(group)) {
+                if (group.isAfter(cursor)) completed = group; // 이전 묶음을 끝까지 봤다
+                if (fresh >= softCap) {
+                    stopped = true;
+                    return false;
+                }
+            }
+            if (out.size() >= hardCap) {
+                stopped = true;
+                return false;
+            }
+            group = t;
+            out.add(item);
+            if (t.isAfter(cursor)) fresh++;
+            return true;
+        }
+
+        public List<PullItem> items() {
+            return out;
+        }
+
+        public boolean stopped() {
+            return stopped;
+        }
+
+        /** 끝까지 읽었다면 마지막 묶음도 끝난 것이다 */
+        public void reachedEnd() {
+            if (group != null && group.isAfter(cursor)) completed = group;
+        }
+
+        /** 다음 커서 — 끝낸 묶음이 없으면 그대로 */
+        public Instant next() {
+            return completed != null ? completed : cursor;
+        }
+
+        /**
+         * 막힘 — 끝까지 읽지도 못했는데 커서가 그대로이고 묶음 하나를 붙들고 있다(같은 시각이 예산보다 많다).
+         * 이때는 그 묶음 시각을 지나 강제로 전진한다(나머지는 건너뛴다) — 다른 PR 갱신이 영원히 막히는 것보다 낫다.
+         */
+        public Instant forcedNext() {
+            return group == null ? null : group.plusMillis(1);
+        }
+
+        public boolean inGroup() {
+            return group != null;
+        }
+    }
 
     Map<String, String> authHeaders(String token);
 
     CommitBatch commits(Target target, String branch, Instant since, String etag);
 
     /**
-     * 커서 뒤의 PR/MR을 updated_at 오름차순으로 — 오래된 것부터 차례로 따라잡는다. 한 번에 max-pull-requests건·max-pages쪽까지,
-     * 넘으면 caughtUp=false이고 다음 실행이 next 커서에서 잇는다. {@code probeEtag}가 있으면(직전에 다 따라잡았다) 먼저
+     * 커서 이후 PR/MR을 updated_at 오름차순으로 — 오래된 것부터 차례로 따라잡는다({@link PullScan} 규칙). 다 못 읽으면
+     * caughtUp=false이고 다음 실행이 next 커서에서 잇는다. {@code probeEtag}가 있으면(직전에 다 따라잡았다) 먼저
      * "가장 최근 갱신 1건"을 If-None-Match로 물어 304면 아무것도 읽지 않는다.
      */
     PullBatch pulls(Target target, PullCursor cursor, String probeEtag);

@@ -65,36 +65,38 @@ public class GitLabScmProvider implements ScmProvider {
         // 1) 변경 탐침 — 가장 최근 갱신 1건(ETag가 없으면 그냥 지나간다)
         ScmHttp.Response probe = target.call().get(URI.create(projectApi(target)
                 + "/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=1"), probeEtag);
-        if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor);
+        if (probe.notModified()) return new PullBatch(List.of(), probeEtag, true, true, cursor, false);
         String newProbeEtag = probe.etag();
 
-        // 2) 오름차순 키셋 — updated_after(커서 시각 포함)로 거르니 늘 1쪽부터. 같은 시각은 iid로 잇는다
+        // 2) 오름차순 — updated_after(커서 시각 포함)로 거르니 늘 1쪽부터. 같은 시각 묶음 규칙은 PullScan
         String base = projectApi(target) + "/merge_requests?state=all&order_by=updated_at&sort=asc&per_page=50&updated_after="
                 + ScmEndpoints.encode(cursor.updatedAt().minusSeconds(1).toString());
-        List<PullItem> out = new ArrayList<>();
-        PullCursor at = cursor;
+        PullScan scan = new PullScan(cursor.updatedAt(), settings.maxPullRequests(), GitHubScmProvider.HARD_CAP);
         String nextPage = "1";
         int read = 0;
-        boolean full = false;
-        while (nextPage != null && read < settings.maxPages() && !full) {
+        boolean reachedEnd = false;
+        boolean stop = false;
+        while (nextPage != null && read < settings.maxPages() * 2 && !stop) {
             ScmHttp.Response r = target.call().get(URI.create(base + "&page=" + nextPage), null);
             read++;
             for (JsonNode mr : array(r)) {
-                Instant updated = instant(mr.path("updated_at").asText(null));
                 long iid = mr.path("iid").asLong();
-                if (updated == null || !cursor.before(updated, iid)) continue;
-                if (out.size() >= settings.maxPullRequests()) {
-                    full = true;
+                PullItem item = new PullItem(mr.path("web_url").asText(null), iid, "!" + iid + " " + mr.path("title").asText(""),
+                        mr.path("source_branch").asText(null), WebhookPayloads.gitLabState(mr.path("state").asText(null)),
+                        instant(mr.path("updated_at").asText(null)), String.valueOf(iid));
+                if (!scan.offer(item)) {
+                    stop = true;
                     break;
                 }
-                out.add(new PullItem(mr.path("web_url").asText(null), iid, "!" + iid + " " + mr.path("title").asText(""),
-                        mr.path("source_branch").asText(null), WebhookPayloads.gitLabState(mr.path("state").asText(null)), updated,
-                        String.valueOf(iid)));
-                at = new PullCursor(updated, iid, null);
             }
-            nextPage = full ? null : next(r);
+            if (stop) break;
+            nextPage = next(r);
+            if (nextPage == null) {
+                reachedEnd = true;
+                scan.reachedEnd();
+            }
         }
-        return new PullBatch(out, newProbeEtag, false, !full && nextPage == null, at);
+        return GitHubScmProvider.finish(scan, cursor, newProbeEtag, reachedEnd, null);
     }
 
     @Override
