@@ -1,6 +1,7 @@
 package com.platform.almbackend.dev.webhook;
 
 import com.platform.almbackend.dev.RepositoryUrls;
+import com.platform.almbackend.dev.scm.ScmSyncSettings;
 import com.platform.almbackend.dev.webhook.WebhookDtos.DeliveryView;
 import com.platform.almbackend.dev.webhook.WebhookDtos.WebhookListResponse;
 import com.platform.almbackend.dev.webhook.WebhookDtos.WebhookRequest;
@@ -41,18 +42,20 @@ public class RepositoryWebhookService {
     private final RepositoryWebhookRepository webhooks;
     private final RepositoryWebhookDeliveryRepository deliveries;
     private final WebhookSecretCipher cipher;
+    private final ScmSyncSettings scm;
     private final String publicBaseUrl;
     private final SecureRandom random = new SecureRandom();
 
     public RepositoryWebhookService(ProjectService projectService, CodeRepositoryRepository codeRepositories,
                                     RepositoryWebhookRepository webhooks, RepositoryWebhookDeliveryRepository deliveries,
-                                    WebhookSecretCipher cipher,
+                                    WebhookSecretCipher cipher, ScmSyncSettings scm,
                                     @Value("${platform.alm.webhook.public-base-url:}") String publicBaseUrl) {
         this.projectService = projectService;
         this.codeRepositories = codeRepositories;
         this.webhooks = webhooks;
         this.deliveries = deliveries;
         this.cipher = cipher;
+        this.scm = scm;
         String base = publicBaseUrl == null ? "" : publicBaseUrl.trim();
         while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         this.publicBaseUrl = base;
@@ -62,12 +65,15 @@ public class RepositoryWebhookService {
     public WebhookListResponse list(long userId, long projectId) {
         projectService.require(userId, projectId, AlmAction.ADMIN);
         List<WebhookView> views = webhooks.findByProjectIdOrderByIdAsc(projectId).stream().map(this::view).toList();
-        return new WebhookListResponse(cipher.isConfigured(), views);
+        return new WebhookListResponse(cipher.isConfigured(), scm.mode().webhooks(), views);
     }
 
     /** 만들기·재발급 — 시크릿 원문은 이 응답에만 실린다 */
     public WebhookSecretResponse issue(long userId, long projectId, WebhookRequest request) {
         projectService.require(userId, projectId, AlmAction.ADMIN);
+        if (!scm.mode().webhooks()) {
+            throw new IllegalArgumentException("이 설치는 웹훅 수신을 쓰지 않습니다(ALM_SCM_SYNC=" + scm.mode().value() + ") — 폴링 동기화를 쓰세요");
+        }
         if (request == null) throw new IllegalArgumentException("요청 본문이 필요합니다");
         String provider = provider(request.provider());
         String url = RepositoryUrls.normalize(request.repositoryUrl());

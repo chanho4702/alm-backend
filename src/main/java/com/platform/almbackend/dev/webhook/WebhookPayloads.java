@@ -24,7 +24,20 @@ public final class WebhookPayloads {
 
     public enum Kind { PUSH, PULL_REQUEST, PING, IGNORED }
 
-    public record PullRequest(String url, String title, List<String> keyTexts) {}
+    /** @param state OPEN · MERGED · CLOSED(V45) */
+    public record PullRequest(String url, String title, List<String> keyTexts, String state) {}
+
+    /** GitHub PR — merged가 참이면 MERGED, state closed면 CLOSED, 나머지 OPEN */
+    public static String gitHubState(String state, boolean merged) {
+        if (merged) return "MERGED";
+        return "closed".equalsIgnoreCase(state) ? "CLOSED" : "OPEN";
+    }
+
+    /** GitLab MR — merged·closed 그대로, opened·locked는 OPEN */
+    public static String gitLabState(String state) {
+        if ("merged".equalsIgnoreCase(state)) return "MERGED";
+        return "closed".equalsIgnoreCase(state) ? "CLOSED" : "OPEN";
+    }
 
     /**
      * @param event         호스팅이 보낸 이벤트 이름(기록용, 40자)
@@ -56,7 +69,8 @@ public final class WebhookPayloads {
                 String title = text(pr, "title");
                 String head = text(pr.path("head"), "ref");
                 yield new Parsed(Kind.PULL_REQUEST, name, repo, head, List.of(),
-                        new PullRequest(url, number + (title == null ? "" : title), texts(title, head)), null);
+                        new PullRequest(url, number + (title == null ? "" : title), texts(title, head),
+                                gitHubState(text(pr, "state"), pr.path("merged").asBoolean(false))), null);
             }
             default -> Parsed.ignored(name, repo, "처리하지 않는 이벤트입니다(" + name + ")");
         };
@@ -75,7 +89,8 @@ public final class WebhookPayloads {
                 String title = text(mr, "title");
                 String source = text(mr, "source_branch");
                 yield new Parsed(Kind.PULL_REQUEST, name, repo, source, List.of(),
-                        new PullRequest(url, number + (title == null ? "" : title), texts(title, source)), null);
+                        new PullRequest(url, number + (title == null ? "" : title), texts(title, source),
+                                gitLabState(text(mr, "state"))), null);
             }
             default -> Parsed.ignored(name, repo, "처리하지 않는 이벤트입니다(" + name + ")");
         };
@@ -96,7 +111,7 @@ public final class WebhookPayloads {
         return new Parsed(Kind.PUSH, event, repo, branch, commits, null, null);
     }
 
-    private static List<String> texts(String... values) {
+    static List<String> texts(String... values) {
         List<String> out = new ArrayList<>();
         for (String v : values) if (v != null && !v.isBlank()) out.add(v);
         return out;

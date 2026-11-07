@@ -41,6 +41,7 @@ public final class WebhookDtos {
     @Schema(description = "프로젝트 웹훅 목록")
     public record WebhookListResponse(
             @Schema(description = "서버에 시크릿 암호화 키(ALM_SETTINGS_ENC_KEY)가 있나 — 없으면 웹훅을 만들 수 없다") boolean encryptionConfigured,
+            @Schema(description = "설치가 웹훅 수신을 받나(ALM_SCM_SYNC webhook·both). polling이면 false — 수신 경로는 404") boolean webhooksEnabled,
             List<WebhookView> webhooks) {}
 
     @Schema(description = "발급 결과 — secret은 이 응답에서 한 번만 보인다")

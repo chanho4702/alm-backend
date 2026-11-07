@@ -36,6 +36,10 @@ public class IssueWebLink {
     @Column(nullable = false, length = 20, updatable = false)
     private String kind;
 
+    /** PR 상태(V45) — OPEN · MERGED · CLOSED. 웹훅·폴링이 채운다. 사람이 붙인 링크·옛 행은 null(모름) */
+    @Column(length = 10)
+    private String state;
+
     @Column(name = "created_by", nullable = false, updatable = false)
     private Long createdBy;
 

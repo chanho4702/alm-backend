@@ -9,6 +9,7 @@ import com.platform.almbackend.dev.DevDtos.IngestRequest;
 import com.platform.almbackend.dev.DevDtos.IngestResponse;
 import com.platform.almbackend.dev.DevDtos.PullRequestLinkResult;
 import com.platform.almbackend.dev.RepositoryUrls;
+import com.platform.almbackend.dev.scm.ScmSyncSettings;
 import com.platform.almbackend.dev.webhook.WebhookDtos.ReceiveResponse;
 import com.platform.almbackend.dev.webhook.WebhookPayloads.Kind;
 import com.platform.almbackend.dev.webhook.WebhookPayloads.Parsed;
@@ -79,22 +80,27 @@ public class WebhookReceiver {
     private final RepositoryWebhookDeliveryRepository deliveries;
     private final WebhookSecretCipher cipher;
     private final DevCommitService commits;
+    private final ScmSyncSettings scm;
     private final TransactionTemplate tx;
     private final TransactionTemplate separateTx;
 
     public WebhookReceiver(ObjectMapper json, RepositoryWebhookRepository webhooks, RepositoryWebhookDeliveryRepository deliveries,
-                           WebhookSecretCipher cipher, DevCommitService commits, PlatformTransactionManager transactionManager) {
+                           WebhookSecretCipher cipher, DevCommitService commits, ScmSyncSettings scm,
+                           PlatformTransactionManager transactionManager) {
         this.json = json;
         this.webhooks = webhooks;
         this.deliveries = deliveries;
         this.cipher = cipher;
         this.commits = commits;
+        this.scm = scm;
         this.tx = new TransactionTemplate(transactionManager);
         this.separateTx = new TransactionTemplate(transactionManager);
         this.separateTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public ReceiveResponse receive(String provider, String publicId, Headers headers, byte[] body) {
+        // 설치가 폴링만 쓰면(ALM_SCM_SYNC=polling) 수신 경로는 없는 것과 같다 — 서명 검증 전에 끊는다
+        if (!scm.mode().webhooks()) throw new NotFoundException("이 설치는 웹훅 수신을 쓰지 않습니다");
         String providerKey = provider.toUpperCase(Locale.ROOT);
         RepositoryWebhook hook = webhooks.findByPublicId(publicId)
                 .filter(w -> w.getProvider().equals(providerKey))
@@ -195,7 +201,7 @@ public class WebhookReceiver {
 
     private Outcome pullRequest(RepositoryWebhook hook, Parsed parsed) {
         PullRequestLinkResult r = commits.linkPullRequest(hook.getActorId(), parsed.pullRequest().url(),
-                parsed.pullRequest().title(), parsed.pullRequest().keyTexts());
+                parsed.pullRequest().title(), parsed.pullRequest().keyTexts(), parsed.pullRequest().state());
         StringBuilder message = new StringBuilder("PR — 새 연결 ").append(r.linked().size());
         if (!r.alreadyLinked().isEmpty()) message.append(" · 이미 연결 ").append(r.alreadyLinked().size());
         if (!r.skipped().isEmpty()) message.append(" · 건너뛴 키 ").append(r.skipped().size());

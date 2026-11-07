@@ -968,7 +968,7 @@ Refs: PLAT-13",
                  "authoredAt": "…", "branch": "main", "url": "https://github.com/…/commit/…", "issues": null },
                { "id": null, "source": "WEB_LINK", "sha": "0123456…", "shortSha": "0123456", "title": "…", "url": "…", … } ],
   "truncated": false,
-  "pullRequests": [ { "id": 5, "url": "https://github.com/…/pull/9", "title": "PR", "createdBy": 7, "createdAt": "…" } ] }
+  "pullRequests": [ { "id": 5, "url": "https://github.com/…/pull/9", "title": "PR", "createdBy": 7, "createdAt": "…", "state": "MERGED" } ] }
 ```
 
 수집 커밋은 작성 시각 최신 순(최대 200, 넘으면 `truncated`). 기존 웹 링크와 통합한다: `kind=PR` → `pullRequests`(MCP `link_pr`),
@@ -1019,6 +1019,38 @@ push 후 사람이 `sync-commits.ps1`을 돌리지 않아도 되게, GitHub·Git
 nginx는 `localhost`가 아닌 Host를 301로 돌리므로(GitHub는 리다이렉트를 따라가지 않는다) 공개 호스트명을 `server_name`에 넣어야 한다.
 GitHub: 저장소 Settings › Webhooks › Add webhook — Payload URL, Content type `application/json`, Secret, 이벤트 "Pushes"·"Pull requests".
 GitLab: Settings › Webhooks — URL, Secret token, "Push events"·"Merge request events".
+
+### 저장소 폴링 동기화 (V45, 2026-11-07)
+
+들어오는 연결이 막힌 설치(폐쇄망)에서도 커밋·PR/MR이 이슈에 붙게, ALM이 Git API를 주기적으로 읽는다. 웹훅이 놓친 이벤트의 안전망도 겸한다.
+수집은 웹훅과 **같은 경로**(`ingest`·PR 웹 링크)라 같은 커밋·PR이 양쪽에서 와도 한 번만 남는다.
+
+**설치 스위치** `ALM_SCM_SYNC` = `webhook` | `polling` | `both`(기본). `polling`이면 웹훅 수신 경로가 404이고 웹훅 발급은 400,
+`webhook`이면 폴링 등록이 400이다. 모르는 값이면 기동하지 않는다. 저장소별로는 `enabled`로 폴링만 끈다.
+
+| 대상 | API 주소 기본값 | 인증 |
+|---|---|---|
+| github.com | `https://api.github.com` | `Authorization: Bearer <토큰>`(classic·fine-grained PAT, GitHub App 설치 토큰) — 저장소 읽기(contents·pull requests) |
+| GitHub Enterprise Server | `<오리진>/api/v3` | 같음 |
+| gitlab.com · self-managed | `<오리진>/api/v4` | `PRIVATE-TOKEN`(개인·프로젝트·그룹 토큰, `read_api`) |
+
+한 번의 실행: 기본 브랜치 커밋(`since` = 커밋 시각 커서 − 1시간 겹침, 첫 실행은 14일) → 갱신된 PR/MR(`updated_at` 커서) — 제목·원본 브랜치의 키로
+PR 링크 + **상태 OPEN·MERGED·CLOSED**(`PullRequestView.state`, 웹훅도 채운다) → 열린 PR/MR의 커밋(브랜치 = 원본 브랜치). 첫 쪽은 ETag로
+`If-None-Match`(바뀐 게 없으면 304 — "변경 없음"). 쪽 상한(기본 5쪽)을 넘는 오래된 커밋은 `sync-commits.ps1`로 메운다.
+
+- **주기·백오프** — `ALM_SCM_POLL_INTERVAL`(기본 5m, 1분 이상). 실패하면 주기 × 2^실패 횟수(`ALM_SCM_MAX_BACKOFF` 6h까지), 실패한 실행은 커서를 움직이지 않는다.
+- **레이트 리밋** — 429·`Retry-After`·`x-ratelimit-remaining`/`ratelimit-remaining` 0이면 reset 시각까지 미룬다(`RATE_LIMITED`).
+- **중복 실행 방지** — 행 임대(`lease_owner`·`lease_until`, 15분). 조건부 UPDATE로 잡은 인스턴스만 돈다. 주기 실행은 자기 스레드 하나(`ALM_SCM_SCHEDULER_ENABLED`, 기본 켬).
+- **SSRF 가드** — API 주소의 호스트는 저장소 URL 호스트 또는 `api.<호스트>`만(사내 Git의 사설 IP는 본래 대상이라 막지 않는다). 요청은 그 오리진으로만,
+  리다이렉트는 따라가지 않고(3xx는 실패), 다음 쪽 링크도 같은 검사, 연결 5초·요청 20초, 응답 5 MiB 상한.
+- **토큰** — 웹훅 시크릿과 같은 `ALM_SETTINGS_ENC_KEY` AES-256-GCM 암호문만 저장, 어떤 응답에도 싣지 않는다. 수집 주체 = 토큰을 마지막으로 넣은 관리자(키별 EDIT).
+
+**관리**(프로젝트 ADMIN)
+
+- `GET /api/alm/projects/{projectId}/settings/scm-sync` → `{ syncMode, webhooksEnabled, pollingEnabled, schedulerActive, encryptionConfigured, pollIntervalSeconds, repositories: [{ id, repositoryUrl, provider, apiBaseUrl, enabled, actorId, createdAt, tokenUpdatedAt, lastRunAt, lastSuccessAt, lastOutcome(OK·RATE_LIMITED·FAILED), lastMessage, nextRunAt, rateLimitedUntil, failureCount, running }] }`
+- `PUT …/settings/scm-sync` `{ repositoryUrl, provider?, apiBaseUrl?, token?, enabled? }` — 등록된 저장소만, 처음엔 `token` 필수(이후엔 바꿀 때만). 제공자를 비우면 github.com·gitlab.com만 짐작한다. 제공자·API 주소가 바뀌면 커서를 버린다.
+- `DELETE …/settings/scm-sync/{syncId}` → 204(수집한 커밋·연결은 남는다). 저장소 등록에서 빠지면 함께 지워진다.
+- `POST …/settings/scm-sync/{syncId}/run` — 요청 안에서 한 번 돌리고 상태를 돌려준다. 실행 중·레이트 리밋 대기면 409.
 
 ## 이슈 키·브랜치 이름 규칙
 

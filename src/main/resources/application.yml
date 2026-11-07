@@ -134,6 +134,23 @@ platform:
       public-base-url: ${ALM_WEBHOOK_PUBLIC_URL:}
       # 수신 본문 상한 — nginx(/api/alm/webhooks/ 5m)와 맞춘다. GitHub 페이로드 상한은 25 MB지만 커밋 메시지·파일 목록만 읽는다
       max-body-bytes: ${ALM_WEBHOOK_MAX_BODY_BYTES:5242880}
+    # 저장소 이벤트 수신 방식(V45) — 설치 스위치 하나. webhook(Git 서버가 보낸다) · polling(ALM이 Git API를 읽는다, 폐쇄망) ·
+    # both(기본 — 폴링이 웹훅이 놓친 이벤트를 메운다). polling이면 웹훅 수신 경로가 404다. 모르는 값이면 기동하지 않는다.
+    scm:
+      sync: ${ALM_SCM_SYNC:both}
+      # 저장소마다 이 주기로 읽는다(1분 이상). 실패하면 주기 × 2^실패 횟수(max-backoff까지), 레이트 리밋이면 reset 시각까지 미룬다
+      poll-interval: ${ALM_SCM_POLL_INTERVAL:5m}
+      max-backoff: ${ALM_SCM_MAX_BACKOFF:6h}
+      # 처음 등록한 저장소는 이만큼 거슬러 읽는다
+      initial-lookback: ${ALM_SCM_INITIAL_LOOKBACK:14d}
+      # 주기 실행 스위치 — 인스턴스가 여럿이어도 켜 둬도 된다(행 임대로 한 곳만 돈다). 끄면 화면의 "지금 동기화"만
+      scheduler-enabled: ${ALM_SCM_SCHEDULER_ENABLED:true}
+      tick: 60s
+      connect-timeout: 5s
+      request-timeout: 20s
+      max-response-bytes: 5242880
+      max-pages: 5
+      max-pull-requests: 30
     storage:
       # 첨부 바이트 저장소. S3를 끄면 로컬 파일(개발·테스트) — 운영 compose는 MinIO를 켠다.
       files-dir: ${ALM_FILES_DIR:./data/attachments}

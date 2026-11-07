@@ -208,6 +208,11 @@ public class DevCommitService {
      * 키마다 대상 프로젝트 EDIT, 같은 (이슈, URL)은 다시 만들지 않는다(재전송·PR 수정 이벤트가 여러 번 와도 한 줄).
      */
     public PullRequestLinkResult linkPullRequest(long userId, String url, String title, List<String> keyTexts) {
+        return linkPullRequest(userId, url, title, keyTexts, null);
+    }
+
+    /** {@code state}(OPEN·MERGED·CLOSED, null이면 모름)는 이번에 이었거나 이미 이어져 있던(권한 있는) 이슈의 PR 링크에 적는다 */
+    public PullRequestLinkResult linkPullRequest(long userId, String url, String title, List<String> keyTexts, String state) {
         String prUrl = RepositoryUrls.webUrl(url, "PR");
         String prTitle = trimTo(title, 200);
         Set<String> projectKeys = projects.findAll().stream().map(Project::getKey).collect(Collectors.toSet());
@@ -241,6 +246,12 @@ public class DevCommitService {
             } else {
                 already.add(ref);
             }
+        }
+        if (state != null && (!linked.isEmpty() || !already.isEmpty())) {
+            List<Long> ids = new ArrayList<>();
+            linked.forEach(r -> ids.add(r.issueId()));
+            already.forEach(r -> ids.add(r.issueId()));
+            webLinks.updatePullRequestState(prUrl, ids, state);
         }
         return new PullRequestLinkResult(prUrl, linked, already, skipped);
     }
@@ -316,7 +327,7 @@ public class DevCommitService {
         int legacy = 0;
         for (IssueWebLink w : webLinks.findByIssueIdOrderByIdDesc(issueId)) {
             if ("PR".equals(w.getKind())) {
-                pulls.add(new PullRequestView(w.getId(), w.getUrl(), w.getTitle(), w.getCreatedBy(), w.getCreatedAt()));
+                pulls.add(new PullRequestView(w.getId(), w.getUrl(), w.getTitle(), w.getCreatedBy(), w.getCreatedAt(), w.getState()));
             } else if ("COMMIT".equals(w.getKind()) && !urls.contains(w.getUrl())) {
                 legacy++;
                 if (views.size() < MAX_ISSUE_COMMITS) views.add(legacyView(w));

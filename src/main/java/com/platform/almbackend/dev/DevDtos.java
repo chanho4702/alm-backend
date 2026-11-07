@@ -97,7 +97,8 @@ public final class DevDtos {
             @Schema(description = "프로젝트 최근 커밋에서만 — 이어진 이슈(볼 수 있는 프로젝트 것만)") List<IssueRef> issues) {}
 
     @Schema(description = "PR(웹 링크 kind=PR — link_pr 도구·화면에서 붙인 것)")
-    public record PullRequestView(long id, String url, String title, long createdBy, Instant createdAt) {}
+    public record PullRequestView(long id, String url, String title, long createdBy, Instant createdAt,
+                                  @Schema(description = "OPEN · MERGED · CLOSED(V45 — 웹훅·폴링이 채운다). 모르면 null") String state) {}
 
     @Schema(description = "개발 요약")
     public record DevelopmentSummary(

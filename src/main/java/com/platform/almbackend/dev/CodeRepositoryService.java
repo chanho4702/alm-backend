@@ -7,6 +7,7 @@ import com.platform.almbackend.domain.CodeRepository;
 import com.platform.almbackend.permission.AlmAction;
 import com.platform.almbackend.project.ProjectService;
 import com.platform.almbackend.repository.CodeRepositoryRepository;
+import com.platform.almbackend.repository.RepositoryScmSyncRepository;
 import com.platform.almbackend.repository.RepositoryWebhookRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,7 @@ public class CodeRepositoryService {
     private final ProjectService projectService;
     private final CodeRepositoryRepository repositories;
     private final RepositoryWebhookRepository webhooks;
+    private final RepositoryScmSyncRepository scmSyncs;
 
     @Transactional(readOnly = true)
     public List<RepositoryResponse> list(long userId, long projectId) {
@@ -58,8 +60,14 @@ public class CodeRepositoryService {
         }
         repositories.deleteByProjectId(projectId);
         // 등록에서 빠진 저장소의 웹훅(V44)은 함께 지운다 — 남은 저장소의 웹훅은 URL로 묶여 있어 목록 교체(행 id 변경)에도 그대로다
-        if (seen.isEmpty()) webhooks.deleteByProjectId(projectId);
-        else webhooks.deleteByProjectIdAndRepositoryUrlNotIn(projectId, seen);
+        // 폴링 동기화(V45)도 같은 규칙 — 빠진 저장소의 토큰·커서를 남기지 않는다
+        if (seen.isEmpty()) {
+            webhooks.deleteByProjectId(projectId);
+            scmSyncs.deleteByProjectId(projectId);
+        } else {
+            webhooks.deleteByProjectIdAndRepositoryUrlNotIn(projectId, seen);
+            scmSyncs.deleteByProjectIdAndRepositoryUrlNotIn(projectId, seen);
+        }
         return repositories.saveAll(fresh).stream().map(CodeRepositoryService::toResponse).toList();
     }
 

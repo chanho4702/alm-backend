@@ -23,4 +23,12 @@ public interface IssueWebLinkRepository extends JpaRepository<IssueWebLink, Long
             + " VALUES (:issueId, :url, :title, :kind, :createdBy, :createdAt) ON CONFLICT DO NOTHING",
             nativeQuery = true)
     int insertIfAbsent(long issueId, String url, String title, String kind, long createdBy, Instant createdAt);
+
+    /** PR 상태(V45) — 주어진 이슈들의 같은 URL PR 링크. 바뀐 행만 고친다 */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update IssueWebLink w set w.state = :state
+            where w.url = :url and w.kind = 'PR' and w.issueId in :issueIds and (w.state is null or w.state <> :state)
+            """)
+    int updatePullRequestState(String url, java.util.Collection<Long> issueIds, String state);
 }

@@ -238,6 +238,13 @@ class RepositoryWebhookTest {
 
         assertThat(jdbc.queryForObject("select count(*) from issue_web_link where kind = 'PR' and url = ?", Long.class,
                 REPO + "/pull/7")).isEqualTo(2);
+        assertThat(jdbc.queryForList("select distinct state from issue_web_link where url = ?", String.class, REPO + "/pull/7"))
+                .containsExactly("OPEN");
+        // 병합되면(closed + merged) 상태가 따라간다(V45)
+        github(path, secret, "pull_request", "d-pr-3", body.replace("\"opened\"", "\"closed\"")
+                .replace("\"number\":7,", "\"number\":7,\"state\":\"closed\",\"merged\":true,")).andExpect(status().isOk());
+        assertThat(jdbc.queryForList("select distinct state from issue_web_link where url = ?", String.class, REPO + "/pull/7"))
+                .containsExactly("MERGED");
         mvc.perform(get("/api/alm/issues/{id}/development", plat2).with(asUser(ADMIN, "Alice")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.pullRequests[0].url").value(REPO + "/pull/7"))

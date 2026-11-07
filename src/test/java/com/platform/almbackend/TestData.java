@@ -18,7 +18,7 @@ final class TestData {
     /** 이 테스트들이 건드리는 표를 비운다(자식부터) */
     static void clear(JdbcTemplate jdbc) {
         for (String table : new String[] {
-                "repository_webhook_delivery", "repository_webhook", "issue_commit", "dev_commit", "project_code_repository",
+                "repository_scm_sync", "repository_webhook_delivery", "repository_webhook", "issue_commit", "dev_commit", "project_code_repository",
                 "automation_run", "automation_rule", "saved_view", "saved_filter", "notification", "issue_watcher",
                 "issue_activity", "issue_change_log", "issue_link", "issue_comment", "issue_label", "issue_component",
                 "issue", "sprint", "component", "board", "project_settings", "project_planning", "project_dev_settings", "project"}) {
