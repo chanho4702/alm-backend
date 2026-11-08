@@ -24,6 +24,9 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       database: ${REDIS_DB:0}
+      # 명령 타임아웃 — 없으면 Lettuce 기본 60초라, 연결된 뒤 Redis가 죽으면 이슈 생성(Idempotency-Key)이 60초 막힌 뒤에야
+      # 멱등 없이 통과한다. 실시간 XREAD block(platform.alm.realtime.read-block 기본 2s)보다 커야 읽기 루프가 정상 대기를 타임아웃으로 오인하지 않는다
+      timeout: ${REDIS_TIMEOUT:5s}
   servlet:
     multipart:
       # 파일 한도는 ALM_MAX_ATTACHMENT_MB 하나로 정한다. 요청 한도는 multipart 경계·헤더 몫으로 1MB를 더한다 —
