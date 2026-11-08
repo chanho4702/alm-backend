@@ -236,7 +236,8 @@ class OpenApiDocsTest {
             Map.entry("SavedViewService 낙관적 락(D1)", "put /api/alm/views/{id}"),
             Map.entry("AutomationRuleService 낙관적 락", "put /api/alm/automation/rules/{ruleId}"),
             Map.entry("ProjectPlanningService 낙관적 락·첫 저장 경합(V39)", "put /api/alm/projects/{projectId}/planning-settings"),
-            Map.entry("DevSettingsService 낙관적 락·첫 저장 경합(V43)", "put /api/alm/projects/{projectId}/settings/development"));
+            Map.entry("DevSettingsService 낙관적 락·첫 저장 경합(V43)", "put /api/alm/projects/{projectId}/settings/development"),
+            Map.entry("IssueCreateIdempotency 같은 Idempotency-Key 처리 중(N10)", "post /api/alm/projects/{projectId}/issues"));
 
     /** 엔드포인트별 409 사유 — 서비스가 던지는 메시지와 같게 적는다. 둘 이상이면 " / "로 잇는다. */
     private static final Map<String, String> EXPECTED_409 = Map.ofEntries(
@@ -259,7 +260,8 @@ class OpenApiDocsTest {
                     "이미 릴리스된 버전입니다 / 보관된 버전은 릴리스할 수 없습니다"),
             Map.entry("post /api/alm/versions/{versionId}/archive", "이미 보관된 버전입니다"),
             Map.entry("post /api/alm/me/filters", "같은 이름의 필터가 있습니다"),
-            Map.entry("put /api/alm/me/filters/{id}", "같은 이름의 필터가 있습니다"));
+            Map.entry("put /api/alm/me/filters/{id}", "같은 이름의 필터가 있습니다"),
+            Map.entry("post /api/alm/projects/{projectId}/issues", "같은 요청이 처리 중입니다"));
 
     @Test
     void ConflictException을_던지는_엔드포인트는_전부_409를_문서화한다() {

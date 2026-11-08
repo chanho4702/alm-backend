@@ -14,6 +14,7 @@ import com.platform.almbackend.issue.dto.IssueUpdateRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +23,9 @@ import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 
 @RestController
 @RequiredArgsConstructor
@@ -33,6 +37,7 @@ public class IssueController {
     private final IssueRankService ranking;
     private final IssueCloneService cloner;
     private final IssueTransitionService transitions;
+    private final IssueCreateIdempotency idempotency;
 
     @Operation(summary = "프로젝트의 이슈 목록을 조회한다")
     @GetMapping("/api/alm/projects/{projectId}/issues")
@@ -40,14 +45,29 @@ public class IssueController {
         return issues.list(userId(jwt), projectId);
     }
 
-    @Operation(summary = "프로젝트에 이슈를 만든다")
+    @Operation(summary = "프로젝트에 이슈를 만든다 — Idempotency-Key를 주면 같은 키 재요청에 처음 이슈를 200으로 돌려준다",
+            description = "처음 생성은 201. 같은 사용자·같은 Idempotency-Key로 24시간 안에 다시 오면 새로 만들지 않고 처음 이슈를 "
+                    + "200 + `Idempotency-Replayed: true`로 돌려준다(본문이 달라도 처음 이슈). 첫 요청이 아직 처리 중이면 409. "
+                    + "Redis 장애 중에는 멱등 없이 만든다.")
+    @ApiResponse(responseCode = "201", description = "새로 만들었다")
+    @ApiResponse(responseCode = "200", description = "같은 Idempotency-Key의 재요청 — 처음 만든 이슈",
+            headers = @Header(name = IssueCreateIdempotency.REPLAYED_HEADER, description = "재응답이면 true"))
+    @ApiResponse(responseCode = "409", description = "같은 요청이 처리 중입니다")
     @PostMapping("/api/alm/projects/{projectId}/issues")
-    @ResponseStatus(HttpStatus.CREATED)
-    public IssueResponse create(
+    public ResponseEntity<IssueResponse> create(
             @Parameter(description = "프로젝트 ID") @PathVariable long projectId,
             @Valid @RequestBody IssueCreateRequest request,
+            @Parameter(in = ParameterIn.HEADER, name = IssueCreateIdempotency.HEADER,
+                    description = "선택. 1~128자 ASCII(공백 제외, UUID 권장) — 생성 폼을 열 때 하나 만들어 재시도에 그대로 쓴다")
+            @RequestHeader(name = IssueCreateIdempotency.HEADER, required = false) String idempotencyKey,
             @AuthenticationPrincipal Jwt jwt) {
-        return issues.create(userId(jwt), projectId, request);
+        long userId = userId(jwt);
+        var result = idempotency.run(userId, idempotencyKey,
+                () -> issues.create(userId, projectId, request), IssueResponse::id, id -> issues.get(userId, id));
+        if (result.replayed()) {
+            return ResponseEntity.ok().header(IssueCreateIdempotency.REPLAYED_HEADER, "true").body(result.value());
+        }
+        return ResponseEntity.status(HttpStatus.CREATED).body(result.value());
     }
 
     /** 이관·CSV 가져오기 — 200 + 항목별 결과 */

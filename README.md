@@ -77,7 +77,7 @@ dev 오프셋 프로필은 `--args='--spring.profiles.active=dev'`를 붙인다.
 | `DELETE` | `/api/alm/projects/{projectId}` | ADMIN | 휴지통으로 이동 — 그 안의 이슈는 조회·검색·AQL·쓰기 어디서도 닿지 않는다(404/결과 제외) |
 | `GET` | `/api/alm/projects/statuses` | 접근 가능한 프로젝트 | 프로젝트별 해석된 상태 목록을 한 번에(`{ "<projectId>": [status…] }`, order 순) |
 | `GET` | `/api/alm/projects/{projectId}/issues` | VIEW | 이슈 목록 |
-| `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성 |
+| `POST` | `/api/alm/projects/{projectId}/issues` | EDIT | 이슈 생성(201). 선택 헤더 `Idempotency-Key`(1~128자 ASCII) — 같은 사용자·같은 키는 24시간 동안 처음 이슈를 200 + `Idempotency-Replayed: true`로 재응답, 첫 요청 처리 중이면 409 `같은 요청이 처리 중입니다`, Redis 장애 중엔 멱등 없이 생성 |
 | `GET` | `/api/alm/issues/{issueId}` | VIEW | 이슈 조회 |
 | `PUT` | `/api/alm/issues/{issueId}` | EDIT | 이슈 수정 — `details.resolution`(V6), `details.fixVersionId`(같은 프로젝트·보관 아님; V7). **전체 교체**다 — `status`·`sprintId`는 보드 이동·랭크와 version을 공유하지 않으므로 오래된 스냅샷으로 PUT하면 그 사이의 이동을 되돌릴 수 있다 |
 | `POST` | `/api/alm/issues/{issueId}/clone` | 원본 VIEW + EDIT | 복제(201) — 제목 "복제: " 접두·타입·본문·우선순위·라벨·컴포넌트·상위만 복사, 처음 상태·스프린트 없음, 원본과 `clones` 링크 |
