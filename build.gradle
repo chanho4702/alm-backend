@@ -78,6 +78,11 @@ dependencies {
 // /actuator/info의 build.version — 게이트웨이 상태판이 서비스 버전을 여기서 읽는다
 springBoot { buildInfo() }
 
-tasks.named('test') { useJUnitPlatform() }
+tasks.named('test') {
+    useJUnitPlatform()
+    // Gradle 기본 테스트 워커 힙은 512m다. 프로퍼티가 다른 SpringBootTest마다 컨텍스트가 캐시에 따로 쌓여(H2·Postgres·Redis 변형)
+    // 기본값으로는 CI(ubuntu-24.04, 7GB)에서 OOM이 났다(e84f5e1). 러너 메모리 안에서 넉넉하게 2g
+    maxHeapSize = findProperty('testMaxHeap') ?: '2g'  // 좁은 힙 재현: -PtestMaxHeap=1g
+}
 tasks.named('bootJar') { archiveFileName = 'app.jar' }
 
