@@ -56,8 +56,11 @@ public class AttachmentController {
                 .body(item.resource());
     }
 
-    /** 안전한 래스터 이미지만 인라인으로 — 썸네일용 */
-    @Operation(summary = "이미지 첨부를 인라인으로 조회한다")
+    /**
+     * 안전한 형식(래스터 이미지·PDF)만 인라인으로 — 썸네일·PDF 미리보기용.
+     * CSP sandbox: PDF가 스크립트를 품어도 우리 오리진 권한 없이 열린다(Chrome 내장 뷰어는 sandbox에서도 렌더링 — 실측).
+     */
+    @Operation(summary = "이미지·PDF 첨부를 인라인으로 조회한다")
     @GetMapping("/api/alm/attachments/{id}/inline")
     public ResponseEntity<Resource> inline(@Parameter(description = "첨부 ID") @PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         AttachmentService.DownloadItem item = service.inline(userId(jwt), id);
@@ -66,6 +69,7 @@ public class AttachmentController {
                 .header(HttpHeaders.CACHE_CONTROL, "private, max-age=60, no-transform")
                 .header("X-Content-Type-Options", "nosniff")
                 .header("Cross-Origin-Resource-Policy", "same-origin")
+                .header("Content-Security-Policy", "sandbox")
                 .contentType(MediaType.parseMediaType(item.meta().getContentType()))
                 .contentLength(item.meta().getSizeBytes())
                 .body(item.resource());

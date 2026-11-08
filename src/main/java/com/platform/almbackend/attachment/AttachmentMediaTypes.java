@@ -8,13 +8,16 @@ import java.util.Set;
 
 /**
  * 클라이언트가 보낸 Content-Type은 믿지 않고 매직 바이트로 판별한다(wiki-backend와 같은 정책).
- * 인라인 표시는 스크립트를 실을 수 없는 래스터 이미지만 허용한다 — SVG/HTML은 실행 벡터다.
+ * 인라인 표시는 래스터 이미지와 PDF만 허용한다(wiki-backend와 같은 목록) — SVG/HTML은 실행 벡터라 넣지 않는다.
+ * PDF는 브라우저 내장 뷰어가 자체 샌드박스에서 열지만, 스크립트를 품을 수 있으므로 인라인 응답에
+ * CSP sandbox·nosniff·same-origin CORP를 함께 건다(AttachmentController#inline).
  *
  * 아바타(personal)도 같은 판별을 쓴다 — 프로필 사진이라는 이름으로 SVG가 들어오면 안 된다.
  */
 public final class AttachmentMediaTypes {
     public static final String OCTET_STREAM = "application/octet-stream";
-    private static final Set<String> SAFE_INLINE = Set.of("image/png", "image/jpeg", "image/gif", "image/webp");
+    private static final Set<String> SAFE_INLINE = Set.of(
+            "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf");
 
     private AttachmentMediaTypes() {}
 

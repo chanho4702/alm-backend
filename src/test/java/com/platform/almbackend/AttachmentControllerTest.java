@@ -130,6 +130,42 @@ class AttachmentControllerTest {
     }
 
     @Test
+    void PDF는_인라인으로_미리보되_샌드박스와_nosniff를_건다() throws Exception {
+        byte[] pdf = "%PDF-1.4\n%âã\n1 0 obj\n<<>>\nendobj\n".getBytes(StandardCharsets.ISO_8859_1);
+        String body = mvc.perform(multipart("/api/alm/issues/{id}/attachments", issueId)
+                        .file(new MockMultipartFile("file", "제안서.pdf", "application/octet-stream", pdf))
+                        .with(asUser(1, "Alice")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.contentType").value("application/pdf"))
+                .andReturn().getResponse().getContentAsString();
+        long pdfId = JSON.readTree(body).get("id").asLong();
+
+        mvc.perform(get("/api/alm/attachments/{id}/inline", pdfId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/pdf"))
+                .andExpect(header().string("Content-Disposition", "inline; filename*=UTF-8''%EC%A0%9C%EC%95%88%EC%84%9C.pdf"))
+                // PDF는 스크립트를 품을 수 있다 — 우리 오리진 권한 없이 열리게 샌드박스로 가둔다
+                .andExpect(header().string("Content-Security-Policy", "sandbox"))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("Cross-Origin-Resource-Policy", "same-origin"))
+                .andExpect(content().bytes(pdf));
+
+        // 비허용 형식은 여전히 인라인 거부 — 내려받기(attachment)만 된다
+        String bin = mvc.perform(multipart("/api/alm/issues/{id}/attachments", issueId)
+                        .file(new MockMultipartFile("file", "page.html", "text/html",
+                                "<script>alert(1)</script>".getBytes(StandardCharsets.UTF_8)))
+                        .with(asUser(1, "Alice")))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long binId = JSON.readTree(bin).get("id").asLong();
+        mvc.perform(get("/api/alm/attachments/{id}/inline", binId).with(asUser(1, "Alice")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/alm/attachments/{id}", binId).with(asUser(1, "Alice")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", "attachment; filename*=UTF-8''page.html"));
+    }
+
+    @Test
     void 지우면_목록과_다운로드에서_사라진다() throws Exception {
         String body = mvc.perform(multipart("/api/alm/issues/{id}/attachments", issueId)
                         .file(new MockMultipartFile("file", "a.bin", null, new byte[]{1, 2, 3}))
