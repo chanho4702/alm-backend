@@ -194,16 +194,25 @@ public class SchemeService {
 
     @Transactional(readOnly = true)
     public SettingsBody body(long projectId) {
+        return body(projectId, queries.registry());
+    }
+
+    /**
+     * 레지스트리를 호출측이 한 번 읽어 넘긴다 — 여러 프로젝트의 본문을 한 요청에서 풀 때(이슈 카드 배치)
+     * 프로젝트마다 상태·분류 레지스트리를 다시 읽지 않게 한다.
+     */
+    @Transactional(readOnly = true)
+    public SettingsBody body(long projectId, SchemeQueries.Registry registry) {
         Optional<ProjectSettings> ps = projectSettings.findById(projectId);
         if (ps.isPresent()) {
             ProjectSettings entry = ps.get();
-            if (entry.isCustom()) return queries.enrich(queries.parse(entry.getCustomBody()));
+            if (entry.isCustom()) return queries.enrich(queries.parse(entry.getCustomBody()), registry);
             return schemes.findById(entry.getSchemeId())
-                    .map(s -> queries.enrich(queries.parse(s.getBody())))
-                    .orElseGet(() -> queries.enrich(SettingsBody.defaults()));
+                    .map(s -> queries.enrich(queries.parse(s.getBody()), registry))
+                    .orElseGet(() -> queries.enrich(SettingsBody.defaults(), registry));
         }
-        return queries.defaultScheme().map(s -> queries.enrich(queries.parse(s.getBody())))
-                .orElseGet(() -> queries.enrich(SettingsBody.defaults()));
+        return queries.defaultScheme().map(s -> queries.enrich(queries.parse(s.getBody()), registry))
+                .orElseGet(() -> queries.enrich(SettingsBody.defaults(), registry));
     }
 
     public void assertValidStatus(long projectId, String statusId) {

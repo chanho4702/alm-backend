@@ -8,7 +8,18 @@ import com.platform.almbackend.domain.StatusDef;
 import com.platform.almbackend.repository.PriorityDefRepository;
 import com.platform.almbackend.repository.StatusCategoryRepository;
 import com.platform.almbackend.repository.StatusDefRepository;
+import com.platform.almbackend.directory.DirectoryMember;
+import com.platform.almbackend.directory.MemberDirectory;
+import com.platform.almbackend.domain.IssueTypeDef;
+import com.platform.almbackend.domain.Project;
 import com.platform.almbackend.issue.dto.IssueAggregateResponse;
+import com.platform.almbackend.issue.dto.IssueCardResponse;
+import com.platform.almbackend.repository.IssueTypeDefRepository;
+import com.platform.almbackend.repository.ProjectRepository;
+import com.platform.almbackend.settings.SchemeQueries;
+import com.platform.almbackend.settings.SchemeService;
+import com.platform.almbackend.settings.SettingsBody;
+import com.platform.almbackend.settings.StatusIcons;
 import com.platform.almbackend.issue.dto.IssuePageResponse;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import com.platform.almbackend.permission.AccessScope;
@@ -32,6 +43,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -39,11 +51,13 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 서버 검색·페이징 — 클라이언트 전량 필터(BACKLOG #5)를 대체한다. 조건은 전부 선택이고 AND로 묶는다.
@@ -61,6 +75,10 @@ public class IssueSearchService {
     public static final String UNCATEGORIZED = "uncategorized";
     private static final int MAX_SIZE = 200;
     private static final Set<String> SORTS = Set.of("updated", "created", "due", "priority", "key", "title", "status", "type");
+    /** 카드 배치 한도 — W3 스펙 §4.1 임시값(실사용 뒤 조정) */
+    static final int MAX_CARD_KEYS = 50;
+    /** 이슈 키 형식 — 프로젝트 키(ProjectCreateRequest) + 1~9자리 번호. 대문자화한 뒤 본다 */
+    private static final Pattern CARD_KEY = Pattern.compile("^[A-Z][A-Z0-9_-]{1,11}-[0-9]{1,9}$");
     private static final Set<String> GROUPS = Set.of("status", "priority", "assignee", "type", "statusCategory");
 
     private final IssueRepository issues;
@@ -70,6 +88,11 @@ public class IssueSearchService {
     private final ProjectService projectService;
     private final PermissionClient permissions;
     private final IssueResponses responses;
+    private final ProjectRepository projects;
+    private final IssueTypeDefRepository typeDefs;
+    private final SchemeService schemeService;
+    private final SchemeQueries schemeQueries;
+    private final MemberDirectory directory;
 
     @PersistenceContext
     private EntityManager em;
@@ -199,6 +222,145 @@ public class IssueSearchService {
                 .orElseThrow(() -> new NotFoundException("이슈를 찾을 수 없습니다: " + key));
         projectService.require(userId, issue.getProjectId(), AlmAction.VIEW);
         return IssueResponse.from(issue);
+    }
+
+    /**
+     * 이슈 카드 배치 — 위키 스마트 링크용(W3 스펙 §4.1). 볼 수 있는 기존 이슈만 요청 순으로 낸다. 없는 키·권한 없는
+     * 프로젝트·보관(휴지통) 이슈·휴지통 프로젝트는 403/404 없이 조용히 빠진다 — 카드로 존재 여부를 가르쳐 주지 않는다.
+     *
+     * <p>트랜잭션을 열지 않는다: 조회마다 짧게 읽고, org-service 왕복(권한·담당자 이름) 동안 DB 연결을 쥐지 않는다.
+     * 권한 판정의 org 불능은 삼키지 않고 503으로 올린다(canView). 담당자 이름은 부수 정보라 org가 못 읽으면 null.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<IssueCardResponse> cards(long userId, List<String> rawKeys) {
+        List<String> keys = normalizeCardKeys(rawKeys);
+        if (keys.isEmpty()) return List.of();
+
+        // 키 IN 한 번 — issue_key UNIQUE 인덱스. 보관 이슈는 @SQLRestriction으로 빠진다
+        Map<String, Issue> byKey = new HashMap<>();
+        for (Issue issue : issues.findByKeyIn(keys)) byKey.put(issue.getKey(), issue);
+        if (byKey.isEmpty()) return List.of();
+
+        // 권한은 프로젝트마다 한 번 — canView는 휴지통 프로젝트도 거른다
+        Set<Long> visible = new LinkedHashSet<>();
+        Set<Long> seen = new HashSet<>();
+        for (String key : keys) {
+            Issue issue = byKey.get(key);
+            if (issue == null) continue;
+            long projectId = issue.getProjectId();
+            if (seen.add(projectId) && projectService.canView(userId, projectId)) visible.add(projectId);
+        }
+        if (visible.isEmpty()) return List.of();
+
+        Map<Long, Project> projectById = new HashMap<>();
+        for (Project project : projects.findAllById(visible)) projectById.put(project.getId(), project);
+
+        List<Issue> shown = new ArrayList<>();
+        for (String key : keys) {
+            Issue issue = byKey.get(key);
+            if (issue != null && projectById.containsKey(issue.getProjectId())) shown.add(issue);
+        }
+        if (shown.isEmpty()) return List.of();
+
+        // 표시값 — 레지스트리는 요청당 한 번, 상태는 프로젝트의 해석된 설정(스킴·커스텀)으로
+        SchemeQueries.Registry registry = schemeQueries.registry();
+        Map<Long, Map<String, SettingsBody.WorkflowStatus>> statusesByProject = new HashMap<>();
+        for (long projectId : projectById.keySet()) {
+            Map<String, SettingsBody.WorkflowStatus> byId = new HashMap<>();
+            for (SettingsBody.WorkflowStatus s : schemeService.body(projectId, registry).statuses()) byId.put(s.id(), s);
+            statusesByProject.put(projectId, byId);
+        }
+        Set<String> typeIds = new HashSet<>();
+        Set<String> priorityIds = new HashSet<>();
+        Set<Long> assigneeIds = new LinkedHashSet<>();
+        for (Issue issue : shown) {
+            if (issue.getType() != null) typeIds.add(issue.getType());
+            if (issue.getPriority() != null) priorityIds.add(issue.getPriority());
+            if (issue.getAssigneeId() != null) assigneeIds.add(issue.getAssigneeId());
+        }
+        Map<String, IssueTypeDef> types = new HashMap<>();
+        for (IssueTypeDef def : typeDefs.findAllById(typeIds)) types.put(def.getId(), def);
+        Map<String, PriorityDef> prios = new HashMap<>();
+        for (PriorityDef def : priorityDefs.findAllById(priorityIds)) prios.put(def.getId(), def);
+
+        // 담당자 이름 — 한 번에. 장애·실패면 빈 결과로 받고 이름만 null(카드는 버리지 않는다)
+        Map<Long, DirectoryMember> members = assigneeIds.isEmpty()
+                ? Map.of() : directory.lookup(assigneeIds).members();
+
+        List<IssueCardResponse> cards = new ArrayList<>(shown.size());
+        for (Issue issue : shown) {
+            IssueCardResponse.Status status = cardStatus(issue.getStatus(),
+                    statusesByProject.get(issue.getProjectId()), registry);
+            IssueCardResponse.Assignee assignee = null;
+            if (issue.getAssigneeId() != null) {
+                DirectoryMember member = members.get(issue.getAssigneeId());
+                assignee = new IssueCardResponse.Assignee(issue.getAssigneeId(),
+                        member == null ? null : blankToNull(member.displayName()));
+            }
+            IssueTypeDef type = types.get(issue.getType());
+            PriorityDef priority = prios.get(issue.getPriority());
+            cards.add(new IssueCardResponse(
+                    issue.getKey(),
+                    issue.getProjectId(),
+                    projectById.get(issue.getProjectId()).getKey(),
+                    issue.getTitle(),
+                    type == null ? unknownRef(issue.getType())
+                            : new IssueCardResponse.Ref(type.getId(), type.getName(),
+                                    blankToNull(type.getIcon()), blankToNull(type.getColor())),
+                    status,
+                    priority == null ? unknownRef(issue.getPriority())
+                            : new IssueCardResponse.Ref(priority.getId(), priority.getName(),
+                                    blankToNull(priority.getIcon()), blankToNull(priority.getColor())),
+                    assignee,
+                    issue.getDueDate(),
+                    "complete".equals(status.kind()) || issue.getResolution() != null,
+                    "/alm/browse/" + issue.getKey()));
+        }
+        return cards;
+    }
+
+    /**
+     * 키 정규화 — 콤마로 쪼개 trim·대문자, 형식이 틀린 항목은 무시(400 아님), 중복은 첫 자리만 남긴다.
+     * 한도는 정규화 뒤 남은 유효 키 수로 센다.
+     */
+    static List<String> normalizeCardKeys(List<String> rawKeys) {
+        if (rawKeys == null || rawKeys.isEmpty()) return List.of();
+        Set<String> keys = new LinkedHashSet<>();
+        for (String raw : rawKeys) {
+            if (raw == null) continue;
+            for (String part : raw.split(",")) {
+                String key = part.trim().toUpperCase(Locale.ROOT);
+                if (CARD_KEY.matcher(key).matches()) keys.add(key);
+            }
+        }
+        if (keys.size() > MAX_CARD_KEYS) throw new IllegalArgumentException("keys는 최대 " + MAX_CARD_KEYS + "개");
+        return List.copyOf(keys);
+    }
+
+    /** 상태 표시 — 프로젝트 설정에 있으면 그 값, 없으면 전역 레지스트리, 그것도 없으면 name=id */
+    private static IssueCardResponse.Status cardStatus(String statusId, Map<String, SettingsBody.WorkflowStatus> project,
+                                                      SchemeQueries.Registry registry) {
+        SettingsBody.WorkflowStatus resolved = project == null || statusId == null ? null : project.get(statusId);
+        if (resolved != null) {
+            return new IssueCardResponse.Status(resolved.id(), resolved.name(), resolved.kind(),
+                    resolved.color(), resolved.icon());
+        }
+        StatusDef def = statusId == null ? null : registry.defs().get(statusId);
+        if (def != null) {
+            StatusCategory category = registry.cats().get(def.getCategoryId());
+            String kind = category == null ? null : category.getKind();
+            return new IssueCardResponse.Status(def.getId(), def.getName(), kind,
+                    category == null ? null : category.getColor(), StatusIcons.resolve(def.getIcon(), kind));
+        }
+        return new IssueCardResponse.Status(statusId, statusId, null, null, null);
+    }
+
+    private static IssueCardResponse.Ref unknownRef(String id) {
+        return new IssueCardResponse.Ref(id, id, null, null);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     /** 검색·집계 공통 WHERE. 라벨·컴포넌트는 EXISTS라 행이 불지 않는다 — DISTINCT 없이 count·정렬이 맞는다 */

@@ -16,6 +16,8 @@ import java.util.Optional;
 
 public interface IssueRepository extends JpaRepository<Issue, Long>, JpaSpecificationExecutor<Issue> {
     Optional<Issue> findByKey(String key);
+    /** 키 묶음 조회(이슈 카드 배치) — issue_key UNIQUE 인덱스를 탄다. 보관 이슈는 @SQLRestriction으로 빠진다 */
+    List<Issue> findByKeyIn(java.util.Collection<String> keys);
     long countByType(String type);
     long countByPriority(String priority);
 

@@ -1,6 +1,7 @@
 package com.platform.almbackend.issue;
 
 import com.platform.almbackend.issue.dto.IssueAggregateResponse;
+import com.platform.almbackend.issue.dto.IssueCardResponse;
 import com.platform.almbackend.issue.dto.IssuePageResponse;
 import com.platform.almbackend.issue.dto.IssueResponse;
 import lombok.RequiredArgsConstructor;
@@ -131,6 +132,22 @@ public class IssueSearchController {
             @Parameter(description = "이슈 키(예: ALM-42)") @PathVariable String key,
             @AuthenticationPrincipal Jwt jwt) {
         return search.byKey(userId(jwt), key);
+    }
+
+    /**
+     * 이슈 카드 배치 — 위키 스마트 링크가 본문 안 이슈 링크를 한 번에 푼다(W3 스펙 §4.1). GET이라 PAT `alm:read`로 부를 수 있다.
+     */
+    @Operation(summary = "이슈 키 여러 개를 카드(표시용 요약)로 조회한다",
+            description = "`keys`는 콤마 구분(반복 파라미터도 된다). 공백을 자르고 대문자로 바꾸며, 형식이 틀린 항목은 무시하고 중복은 하나로 친다. "
+                    + "유효 키가 50개를 넘으면 400. 볼 수 있는 기존 이슈만 요청 순으로 담는다 — 없는 키·권한 없는 프로젝트·보관된 이슈·"
+                    + "휴지통 프로젝트의 이슈는 오류 없이 빠진다. 타입·상태·우선순위는 표시명·아이콘·색까지, 담당자는 이름까지 채운다"
+                    + "(org-service가 이름을 못 읽으면 displayName만 null).")
+    @GetMapping("/api/alm/issues/cards")
+    public List<IssueCardResponse> cards(
+            @Parameter(description = "이슈 키 목록(콤마 구분, 최대 50개)", example = "PLAT-12,WIKI-3")
+            @RequestParam(required = false) List<String> keys,
+            @AuthenticationPrincipal Jwt jwt) {
+        return search.cards(userId(jwt), keys);
     }
 
     /** 형식이 틀리면 400 {error} — 스프링 기본 변환 오류 응답은 계약 shape이 아니다 */
