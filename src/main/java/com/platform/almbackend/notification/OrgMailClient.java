@@ -69,10 +69,24 @@ public class OrgMailClient {
     /** 캐시 만료를 검증하려면 시계를 밀어야 한다 — 테스트용 생성자 */
     OrgMailClient(String baseUri, String token, LongSupplier clock) {
         this.baseUri = trimTrailingSlash(baseUri);
-        this.token = token == null ? "" : token.trim();
+        this.token = firstToken(token);
         this.clock = clock;
         // org가 멈추면 발송 스레드가 함께 잠긴다 — 예외는 삼켜도 행(hang)은 못 삼킨다.
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+    }
+
+    /**
+     * 보낼 값 하나 — 설정값이 콤마 목록이면 비어 있지 않은 첫 항목(trim). {@code ORG_INTERNAL_TOKEN}(compose가
+     * {@code ORG_MAIL_TOKEN}에서 매핑, N5)은 org 수신 허용 목록과 같은 .env 변수라 회전 중엔 {@code 신,구}가 들어온다 —
+     * 목록째 실으면 403이다. auth-server {@code OrgInternalClient.firstToken}과 같은 의미론.
+     */
+    static String firstToken(String configured) {
+        if (configured == null) return "";
+        for (String item : configured.split(",")) {
+            String v = item.trim();
+            if (!v.isEmpty()) return v;
+        }
+        return "";
     }
 
     /** 주소와 토큰이 다 있어야 부를 수 있다 — 둘 중 하나라도 비면 org는 403만 준다 */

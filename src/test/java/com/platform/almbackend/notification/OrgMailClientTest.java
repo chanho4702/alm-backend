@@ -271,6 +271,35 @@ class OrgMailClientTest {
     }
 
     /** 토큰이 없으면 org는 무조건 403이다 — 왕복하지 않고 메일이 꺼진 것으로 본다 */
+    /** 회전 중 ORG_INTERNAL_TOKEN(ORG_MAIL_TOKEN)=신,구 — 수신 허용 목록과 같은 변수지만 발신은 첫 항목만(목록째 보내면 403). */
+    @Test
+    void 토큰이_콤마_목록이면_발송과_상태_조회_모두_첫_항목만_싣는다() {
+        OrgMailClient client = new OrgMailClient(baseUri, " ,new-token,old-token", now::get);
+
+        assertThat(client.enabled()).isTrue();
+        assertThat(client.send(List.of("bob@org.example"), "제목", "본문")).isEqualTo(SendResult.ACCEPTED);
+
+        assertThat(received).hasSize(2);
+        assertThat(received).extracting(Received::token).containsOnly("new-token");
+    }
+
+    @Test
+    void 콤마뿐인_토큰은_없는_것으로_본다() {
+        OrgMailClient client = new OrgMailClient(baseUri, " , ", now::get);
+
+        assertThat(client.configured()).isFalse();
+        assertThat(client.send(List.of("bob@org.example"), "제목", "본문")).isEqualTo(SendResult.FAILED);
+        assertThat(received).isEmpty();
+    }
+
+    @Test
+    void firstToken은_trim하고_빈_항목을_건너뛴다() {
+        assertThat(OrgMailClient.firstToken("a,b")).isEqualTo("a");
+        assertThat(OrgMailClient.firstToken(" ,b ")).isEqualTo("b");
+        assertThat(OrgMailClient.firstToken(null)).isEmpty();
+        assertThat(OrgMailClient.firstToken("")).isEmpty();
+    }
+
     @Test
     void 토큰이_없으면_부르지_않는다() {
         OrgMailClient client = new OrgMailClient(baseUri, "  ", now::get);
